@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Underground</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #111; color: #eee; font-family: system-ui, sans-serif; text-align: center;
+    }
+    h1 { font-size: 3rem; margin: 0 0 .5rem; letter-spacing: .05em; }
+    p { color: #999; margin: .25rem 0; }
+    .dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: #666; margin-right: .4em; }
+    .dot.ok { background: #3cb44b; }
+    .dot.bad { background: #e6194b; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Underground</h1>
+    <p>Coming soon.</p>
+    <p><span id="dot" class="dot"></span><span id="status">Checking server…</span></p>
+  </main>
+  <script>
+    // Opens a WebSocket to confirm the game server is reachable.
+    const dot = document.getElementById('dot');
+    const status = document.getElementById('status');
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${proto}://${location.host}`);
+    ws.onopen = () => { dot.className = 'dot ok'; status.textContent = 'Server online'; };
+    ws.onclose = () => { dot.className = 'dot bad'; status.textContent = 'Server offline'; };
+  </script>
+</body>
+</html>

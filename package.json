@@ -1,0 +1,21 @@
+{
+  "name": "underground-game",
+  "version": "0.1.0",
+  "description": "Authoritative real-time .io game server over WebSockets",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=21.7"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "bots": "node scripts/bots.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}
