@@ -135,6 +135,15 @@ export class Room {
     for (const c of this.clients) if (c !== except) c.sendRaw(data);
   }
 
+  #bulletsInView(cx, cy) {
+    const range = config.world.viewDistance;
+    const out = [];
+    for (const b of this.world.bullets.values()) {
+      if (Math.abs(b.x - cx) <= range && Math.abs(b.y - cy) <= range) out.push([b.id, Math.round(b.x), Math.round(b.y)]);
+    }
+    return out;
+  }
+
   /** Per-client snapshot containing only what's in that client's view. */
   #sendSnapshots() {
     const tick = this.world.tick;
@@ -147,7 +156,7 @@ export class Room {
       const players = [];
       const food = [];
       for (const e of this.world.queryView(cx, cy)) {
-        if (e.kind === 'player') players.push([e.id, round1(e.x), round1(e.y), round1(e.radius)]);
+        if (e.kind === 'player') players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), e.health]);
         else food.push([e.id, Math.round(e.x), Math.round(e.y)]);
       }
 
@@ -159,6 +168,7 @@ export class Room {
           you: me ? { id: me.id, x: round1(me.x), y: round1(me.y), mass: round1(me.mass) } : null,
           players,
           food,
+          bullets: this.#bulletsInView(cx, cy),
         },
         { droppable: true },
       );

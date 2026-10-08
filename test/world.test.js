@@ -73,3 +73,23 @@ test('similar-sized players do not eat each other', () => {
   a.x = a.y = b.x = b.y = 500;
   assert.equal(world.step(0).deaths.length, 0);
 });
+
+test('bullets damage and eventually kill other players', () => {
+  const world = smallWorld();
+  const shooter = world.spawnPlayer('shooter');
+  const target = world.spawnPlayer('target');
+  shooter.x = 300;
+  shooter.y = target.y = 500;
+  target.x = 400;
+  shooter.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
+
+  world.step(0.1);
+  for (let i = 0; i < 3; i++) world.step(0.05);
+  assert.equal(target.health, config.player.maxHealth - config.gun.damage);
+  assert.equal(shooter.health, config.player.maxHealth);
+
+  let deaths = [];
+  for (let i = 0; i < 100 && !deaths.length; i++) deaths = world.step(0.05).deaths;
+  assert.equal(deaths[0]?.victim, target);
+  assert.equal(deaths[0].killer, shooter);
+});

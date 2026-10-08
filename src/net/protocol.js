@@ -4,7 +4,7 @@ import { config } from '../config.js';
 
 export const ClientMsg = Object.freeze({
   JOIN: 'join', // { t, name }           -> spawn (or respawn) a player
-  INPUT: 'input', // { t, seq, angle, throttle, boost }
+  INPUT: 'input', // { t, seq, angle, throttle, boost, aim, fire }
   PING: 'ping', // { t, ts }
 });
 
@@ -13,7 +13,7 @@ export const ServerMsg = Object.freeze({
   SPAWNED: 'spawned', // { t, playerId, players: [{id,name,color}] }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color }
   PLAYER_LEFT: 'player_left', // { t, id }
-  SNAPSHOT: 'snapshot', // { t, tick, ack, you, players: [[id,x,y,r]], food: [[id,x,y]] }
+  SNAPSHOT: 'snapshot', // { t, tick, ack, you, players: [[id,x,y,r,health]], food: [[id,x,y]], bullets: [[id,x,y]] }
   DIED: 'died', // { t, killedBy, score }
   LEADERBOARD: 'leaderboard', // { t, entries: [{name, score}] }
   PONG: 'pong', // { t, ts, serverTime }
@@ -36,7 +36,8 @@ const validators = {
     if (!Number.isInteger(m.seq) || m.seq < 0) return null;
     if (!isFiniteNumber(m.angle)) return null;
     const throttle = isFiniteNumber(m.throttle) ? Math.min(Math.max(m.throttle, 0), 1) : 1;
-    return { t: m.t, seq: m.seq, angle: m.angle, throttle, boost: m.boost === true };
+    const aim = isFiniteNumber(m.aim) ? m.aim : m.angle;
+    return { t: m.t, seq: m.seq, angle: m.angle, throttle, boost: m.boost === true, aim, fire: m.fire === true };
   },
 
   [ClientMsg.PING]: (m) => (isFiniteNumber(m.ts) ? { t: m.t, ts: m.ts } : null),

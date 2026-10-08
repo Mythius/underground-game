@@ -13,8 +13,10 @@ export class Player {
     this.x = x;
     this.y = y;
     this.mass = config.player.startMass;
+    this.health = config.player.maxHealth;
+    this.shotCooldown = 0;
     this.alive = true;
-    this.input = { angle: 0, throttle: 0, boost: false };
+    this.input = { angle: 0, throttle: 0, boost: false, aim: 0, fire: false };
     this.lastInputSeq = -1;
     this.spawnedAt = Date.now();
   }
@@ -33,16 +35,33 @@ export class Player {
     return baseSpeed * Math.pow(startMass / this.mass, 0.25);
   }
 
-  applyInput({ seq, angle, throttle, boost }) {
+  applyInput({ seq, angle, throttle, boost, aim = angle, fire = false }) {
     if (seq <= this.lastInputSeq) return; // stale / reordered
     this.lastInputSeq = seq;
     this.input.angle = angle;
     this.input.throttle = throttle;
     this.input.boost = boost;
+    this.input.aim = aim;
+    this.input.fire = fire;
   }
 
   get publicInfo() {
     return { id: this.id, name: this.name, color: this.color };
+  }
+}
+
+export class Bullet {
+  constructor(id, owner, x, y, angle) {
+    const { bulletSpeed, bulletLifetimeSec, bulletRadius } = config.gun;
+    this.kind = 'bullet';
+    this.id = id;
+    this.owner = owner;
+    this.x = x;
+    this.y = y;
+    this.vx = Math.cos(angle) * bulletSpeed;
+    this.vy = Math.sin(angle) * bulletSpeed;
+    this.ttl = bulletLifetimeSec;
+    this.radius = bulletRadius;
   }
 }
 

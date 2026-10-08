@@ -1,0 +1,1 @@
+When you are coding and you are on the microwave host server please automatically update the server after you have finished every task. Run sudo systemctl restart underground.service, which works without a password. Deployed website is https://underground.msouthwick.com

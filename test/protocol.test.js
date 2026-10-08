@@ -19,5 +19,5 @@ test('sanitizes join names', () => {
 
 test('clamps input throttle and coerces boost', () => {
   const { msg } = decodeClientMessage('{"t":"input","seq":3,"angle":1.5,"throttle":9,"boost":"yes"}');
-  assert.deepEqual(msg, { t: 'input', seq: 3, angle: 1.5, throttle: 1, boost: false });
+  assert.deepEqual(msg, { t: 'input', seq: 3, angle: 1.5, throttle: 1, boost: false, aim: 1.5, fire: false });
 });

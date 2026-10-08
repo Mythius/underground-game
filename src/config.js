@@ -64,5 +64,14 @@ export const config = Object.freeze({
     decayThreshold: 200,
     eatRatio: 1.15, // must be this much larger (by radius) to eat another player
     spawnSafeDistance: 400,
+    maxHealth: 100,
+  },
+
+  gun: {
+    cooldownSec: 0.2, // time between shots
+    bulletSpeed: 900, // units/sec
+    bulletLifetimeSec: 1.2,
+    bulletRadius: 4,
+    damage: 20,
   },
 });

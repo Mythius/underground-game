@@ -1,17 +1,19 @@
 import { config } from '../config.js';
 import { clamp, distSq, randRange } from '../utils/math.js';
-import { Food, Player } from './entities.js';
+import { Bullet, Food, Player } from './entities.js';
 import { SpatialGrid } from './SpatialGrid.js';
 
 /** Pure simulation state. Knows nothing about sockets. */
 export class World {
-  constructor(opts = config.world, playerOpts = config.player) {
+  constructor(opts = config.world, playerOpts = config.player, gunOpts = config.gun) {
     this.opts = opts;
     this.playerOpts = playerOpts;
+    this.gunOpts = gunOpts;
     this.width = opts.width;
     this.height = opts.height;
     this.players = new Map();
     this.food = new Map();
+    this.bullets = new Map();
     this.grid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
     this.nextEntityId = 1;
     this.tick = 0;
@@ -66,8 +68,10 @@ export class World {
   step(dt) {
     this.tick++;
     this.#movePlayers(dt);
+    this.#fireGuns(dt);
     this.rebuildGrid();
     const deaths = this.#resolveCollisions();
+    deaths.push(...this.#moveBullets(dt));
     while (this.food.size < this.opts.foodCount) this.grid.insert(this.spawnFood());
     return { deaths };
   }
@@ -91,6 +95,51 @@ export class World {
       p.x = clamp(p.x + Math.cos(angle) * speed * dt, r, this.width - r);
       p.y = clamp(p.y + Math.sin(angle) * speed * dt, r, this.height - r);
     }
+  }
+
+  #fireGuns(dt) {
+    const { cooldownSec, bulletRadius } = this.gunOpts;
+    for (const p of this.players.values()) {
+      p.shotCooldown = Math.max(0, p.shotCooldown - dt);
+      if (!p.input.fire || p.shotCooldown > 0) continue;
+      p.shotCooldown = cooldownSec;
+      // Spawn just outside the shooter so it can't hit itself.
+      const offset = p.radius + bulletRadius + 1;
+      const { aim } = p.input;
+      const b = new Bullet(this.nextEntityId++, p, p.x + Math.cos(aim) * offset, p.y + Math.sin(aim) * offset, aim);
+      this.bullets.set(b.id, b);
+    }
+  }
+
+  /** Moves bullets and applies hits. Runs after the grid is rebuilt so it can query players. */
+  #moveBullets(dt) {
+    const deaths = [];
+    const nearby = new Set();
+    for (const b of this.bullets.values()) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.ttl -= dt;
+      if (b.ttl <= 0 || b.x < 0 || b.y < 0 || b.x > this.width || b.y > this.height) {
+        this.bullets.delete(b.id);
+        continue;
+      }
+
+      nearby.clear();
+      this.grid.query(b.x, b.y, b.radius, nearby);
+      for (const p of nearby) {
+        if (p.kind !== 'player' || !p.alive || p === b.owner) continue;
+        const reach = p.radius + b.radius;
+        if (distSq(p.x, p.y, b.x, b.y) >= reach * reach) continue;
+        this.bullets.delete(b.id);
+        p.health -= this.gunOpts.damage;
+        if (p.health <= 0) {
+          this.removePlayer(p.id);
+          deaths.push({ victim: p, killer: b.owner });
+        }
+        break;
+      }
+    }
+    return deaths;
   }
 
   #resolveCollisions() {

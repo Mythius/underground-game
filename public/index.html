@@ -7,7 +7,7 @@
   <style>
     :root { color-scheme: dark; }
     body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      margin: 0; min-height: 100vh; display: grid; place-items: center; overflow: hidden;
       background: #111; color: #eee; font-family: system-ui, sans-serif; text-align: center;
     }
     h1 { font-size: 3rem; margin: 0 0 .5rem; letter-spacing: .05em; }
@@ -15,22 +15,235 @@
     .dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: #666; margin-right: .4em; }
     .dot.ok { background: #3cb44b; }
     .dot.bad { background: #e6194b; }
+    .start { margin-top: 1.5rem; display: flex; gap: .5rem; justify-content: center; }
+    .start input, .start button { font: inherit; padding: .6rem 1rem; border-radius: .4rem; border: 1px solid #444; }
+    .start input { background: #1b1b1b; color: #eee; }
+    .start button { background: #3cb44b; color: #111; border-color: #3cb44b; font-weight: 600; cursor: pointer; }
+    .start button:disabled { background: #333; color: #777; border-color: #444; cursor: default; }
+    main { position: relative; z-index: 1; background: rgba(17, 17, 17, .85); padding: 2rem; border-radius: .75rem; }
+    #game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; }
+    #hint { position: fixed; left: 0; right: 0; bottom: 1rem; color: #777; font-size: .9rem; pointer-events: none; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <main>
+  <canvas id="game"></canvas>
+  <main id="menu">
     <h1>Underground</h1>
-    <p>Coming soon.</p>
+    <p id="subtitle">Coming soon.</p>
     <p><span id="dot" class="dot"></span><span id="status">Checking server…</span></p>
+    <form id="start" class="start">
+      <input id="name" placeholder="Your name" maxlength="16" autocomplete="off">
+      <button id="play" type="submit" disabled>Start</button>
+    </form>
   </main>
+  <p id="hint" hidden>Move with WASD or the arrow keys · aim with the mouse, hold click to shoot</p>
   <script>
-    // Opens a WebSocket to confirm the game server is reachable.
     const dot = document.getElementById('dot');
     const status = document.getElementById('status');
+    const play = document.getElementById('play');
+    const nameInput = document.getElementById('name');
+    const menu = document.getElementById('menu');
+    const hint = document.getElementById('hint');
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const GRID = 50; // world units between grid lines
+
+    let world = { width: 4000, height: 4000 };
+    let myId = null;
+    let playing = false;
+    let snapshot = null; // latest server state
+    const info = new Map(); // player id -> { name, color }
+    const shown = new Map(); // player id -> { x, y, r } smoothed for drawing
+    const camera = { x: world.width / 2, y: world.height / 2 };
+
+    // ---- networking --------------------------------------------------------
+
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}`);
-    ws.onopen = () => { dot.className = 'dot ok'; status.textContent = 'Server online'; };
-    ws.onclose = () => { dot.className = 'dot bad'; status.textContent = 'Server offline'; };
+    const send = (msg) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
+
+    ws.onopen = () => { dot.className = 'dot ok'; status.textContent = 'Server online'; play.disabled = false; };
+    ws.onclose = () => {
+      dot.className = 'dot bad'; status.textContent = 'Server offline'; play.disabled = true;
+      showMenu();
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      switch (msg.t) {
+        case 'welcome':
+          world = msg.world;
+          break;
+        case 'spawned':
+          myId = msg.playerId;
+          for (const p of msg.players) info.set(p.id, p);
+          playing = true;
+          menu.hidden = true;
+          hint.hidden = false;
+          break;
+        case 'player_joined':
+          info.set(msg.id, msg);
+          break;
+        case 'player_left':
+          info.delete(msg.id);
+          shown.delete(msg.id);
+          break;
+        case 'snapshot':
+          snapshot = msg;
+          break;
+        case 'died':
+          document.getElementById('subtitle').textContent = `Killed by ${msg.killedBy} — score ${msg.score}`;
+          play.textContent = 'Play again';
+          play.disabled = false;
+          showMenu();
+          break;
+      }
+    };
+
+    function showMenu() {
+      playing = false;
+      myId = null;
+      menu.hidden = false;
+      hint.hidden = true;
+    }
+
+    document.getElementById('start').onsubmit = (e) => {
+      e.preventDefault();
+      play.disabled = true;
+      send({ t: 'join', name: nameInput.value });
+      nameInput.blur();
+    };
+
+    // ---- input -------------------------------------------------------------
+
+    const keys = new Set();
+    const KEYMAP = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right' };
+    addEventListener('keydown', (e) => {
+      if (!playing || !KEYMAP[e.code]) return;
+      keys.add(KEYMAP[e.code]);
+      e.preventDefault();
+    });
+    addEventListener('keyup', (e) => keys.delete(KEYMAP[e.code]));
+    addEventListener('blur', () => { keys.clear(); firing = false; });
+
+    const mouse = { x: 0, y: 0 };
+    let firing = false;
+    addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    canvas.addEventListener('mousedown', (e) => { if (e.button === 0) firing = true; });
+    addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; });
+
+    // Angle from my player (as drawn on screen) to the mouse.
+    function aimAngle() {
+      const me = shown.get(myId);
+      if (!me) return 0;
+      return Math.atan2(mouse.y - (me.y - camera.y + innerHeight / 2), mouse.x - (me.x - camera.x + innerWidth / 2));
+    }
+
+    // Send the current direction 20 times a second (server limit is 60/s).
+    let seq = 0;
+    setInterval(() => {
+      if (!playing) return;
+      const dx = keys.has('right') - keys.has('left');
+      const dy = keys.has('down') - keys.has('up');
+      send({ t: 'input', seq: seq++, angle: Math.atan2(dy, dx), throttle: dx || dy ? 1 : 0, boost: false, aim: aimAngle(), fire: firing });
+    }, 50);
+
+    // ---- rendering ---------------------------------------------------------
+
+    function resize() {
+      canvas.width = innerWidth * devicePixelRatio;
+      canvas.height = innerHeight * devicePixelRatio;
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    function draw() {
+      requestAnimationFrame(draw);
+      const w = innerWidth, h = innerHeight;
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, w, h);
+
+      // Ease drawn positions toward the latest snapshot so movement looks smooth.
+      if (snapshot) {
+        for (const [id, x, y, r, hp] of snapshot.players) {
+          const s = shown.get(id);
+          if (!s) shown.set(id, { x, y, r, hp });
+          else { s.x += (x - s.x) * 0.3; s.y += (y - s.y) * 0.3; s.r += (r - s.r) * 0.3; s.hp = hp; }
+        }
+        const visible = new Set(snapshot.players.map((p) => p[0]));
+        for (const id of shown.keys()) if (!visible.has(id)) shown.delete(id);
+      }
+      const me = shown.get(myId);
+      const target = me ?? { x: world.width / 2, y: world.height / 2 };
+      camera.x += (target.x - camera.x) * 0.3;
+      camera.y += (target.y - camera.y) * 0.3;
+
+      ctx.save();
+      ctx.translate(Math.round(w / 2 - camera.x), Math.round(h / 2 - camera.y));
+
+      // Grid, clipped to the world bounds.
+      const left = Math.max(0, Math.floor((camera.x - w / 2) / GRID) * GRID);
+      const right = Math.min(world.width, camera.x + w / 2);
+      const top = Math.max(0, Math.floor((camera.y - h / 2) / GRID) * GRID);
+      const bottom = Math.min(world.height, camera.y + h / 2);
+      ctx.strokeStyle = '#262626';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = left; x <= right; x += GRID) { ctx.moveTo(x + .5, top); ctx.lineTo(x + .5, bottom); }
+      for (let y = top; y <= bottom; y += GRID) { ctx.moveTo(left, y + .5); ctx.lineTo(right, y + .5); }
+      ctx.stroke();
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(0, 0, world.width, world.height);
+
+      if (snapshot) {
+        ctx.fillStyle = '#6a6a6a';
+        for (const [, x, y] of snapshot.food) {
+          ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
+      if (snapshot?.bullets) {
+        ctx.fillStyle = '#ffd84a';
+        for (const [, x, y] of snapshot.bullets) {
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const [id, p] of shown) {
+        const pi = info.get(id);
+        // Gun barrel: mine follows the mouse, others' isn't sent so it's hidden.
+        if (id === myId) {
+          const a = aimAngle();
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(a);
+          ctx.fillStyle = '#bbb';
+          ctx.fillRect(p.r * 0.6, -4, p.r * 0.6 + 14, 8);
+          ctx.restore();
+        }
+        ctx.fillStyle = pi?.color ?? '#888';
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+        if (id === myId) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke(); }
+        if (pi) {
+          ctx.fillStyle = '#fff';
+          ctx.font = `600 ${Math.max(12, p.r * 0.5)}px system-ui, sans-serif`;
+          ctx.fillText(pi.name, p.x, p.y);
+        }
+        // Health bar under the player.
+        const bw = Math.max(30, p.r * 1.6);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(p.x - bw / 2, p.y + p.r + 6, bw, 5);
+        ctx.fillStyle = p.hp > 40 ? '#3cb44b' : '#e6194b';
+        ctx.fillRect(p.x - bw / 2, p.y + p.r + 6, bw * Math.max(0, p.hp) / 100, 5);
+      }
+      ctx.restore();
+    }
+    requestAnimationFrame(draw);
   </script>
 </body>
 </html>
