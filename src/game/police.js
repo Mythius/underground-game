@@ -1,0 +1,580 @@
+import { config } from '../config.js';
+import { segmentRectHit } from '../utils/math.js';
+import { Bullet } from './entities.js';
+import { hotbarOf, trunkOf } from './cargo.js';
+import { vehicleMotion } from './vehicles.js';
+
+// Crime and the police.
+//
+// Crimes give the player a wanted level (stars) if the police see them or a townsperson nearby calls it
+// in; alarms always report. Police cruisers patrol the roads; when someone is wanted, up to one car per
+// star chases them. Close to a suspect on foot, the officer gets out, runs them down and arrests them
+// (standing next to an officer for a moment). At 3+ stars, or once they've shot at police, officers shoot.
+// Busted: illegal goods are taken and bail is paid (cash, then bank) — or, if you can't afford it, you sit
+// in the station's cell for a while. Out of police sight for a while, stars fall away one by one.
+
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+export class Police {
+  constructor(world) {
+    this.world = world;
+    this.stations = world.buildings.filter((b) => b.type === 'police');
+    this.units = [];
+    this.events = []; // { player, kind: 'busted' | 'released' | 'crime', … } for the room to tell players
+    this.robCooldown = new Map(); // target key -> economy time it can be robbed again
+    this.nextOfficerId = 1;
+    if (!this.stations.length) return;
+    const cars = Math.max(1, Math.round(world.buildings.length * config.police.carsPerBuildings));
+    for (let i = 0; i < cars; i++) this.#newUnit(this.stations[i % this.stations.length]);
+  }
+
+  get time() {
+    return this.world.economy.time;
+  }
+
+  #newUnit(station) {
+    const car = this.world.parkNewVehicle('police', station.id, null);
+    if (!car) return null;
+    car.police = true;
+    car.lights = true;
+    car.fuel = 100;
+    const unit = {
+      station,
+      car,
+      officer: { id: this.nextOfficerId++, kind: 'officer', name: 'Police', vehicle: null, x: car.x, y: car.y, angle: car.angle, health: config.police.officerHealth, onFoot: false, fireCooldown: 0 },
+      target: null,
+      route: [],
+      stuck: 0,
+      reverse: 0,
+      arrest: 0,
+      respawn: 0,
+    };
+    this.units.push(unit);
+    return unit;
+  }
+
+  // ---- crimes -------------------------------------------------------------------
+
+  /** Can someone at (vx, vy) facing `angle` see (x, y)? A half circle in front of them, within `range`; walls block. */
+  sees(vx, vy, angle, x, y, range) {
+    const dx = x - vx;
+    const dy = y - vy;
+    const d = Math.hypot(dx, dy);
+    if (d > range) return false;
+    if (d > 30 && dx * Math.cos(angle ?? 0) + dy * Math.sin(angle ?? 0) < 0) return false; // behind them
+    return this.world.lineOfSight(vx, vy, x, y);
+  }
+
+  /** How far away player p can be noticed: never in a dumpster; only up close under a tree or sitting in a parked car. */
+  #spotRange(p, range) {
+    if (!p) return range;
+    if (p.hidden) return 0;
+    const close = Math.min(range, config.police.hideSeenRange);
+    if (p.vehicle) return !p.vehicle.ai && Math.hypot(p.vehicle.vx, p.vehicle.vy) < 20 ? close : range;
+    return this.world.trees.some((t) => Math.hypot(t.x - p.x, t.y - p.y) < t.canopy * 0.75) ? close : range;
+  }
+
+  /** Does any officer (in a car or on foot) see (x, y) — or player `target` there? */
+  policeSee(x, y, target = null) {
+    const r = this.#spotRange(target, config.crime.policeSees);
+    return r > 0 && this.units.some((u) => u.officer.health > 0 && this.sees(u.officer.x, u.officer.y, u.officer.angle, x, y, r));
+  }
+
+  /** Would anyone report what happens at (x, y)? An officer, or a townsperson out walking who's facing that way. */
+  witnessed(x, y, target = null) {
+    if (this.policeSee(x, y, target)) return true;
+    const r = this.#spotRange(target, config.crime.witnessSees);
+    return r > 0 && this.world.townsfolk.people.some((t) => t.inside <= 0 && this.sees(t.x, t.y, t.angle, x, y, r));
+  }
+
+  /** Player p did `kind`. With `alarm`, it's reported whatever; otherwise only if someone saw it. */
+  crime(p, kind, alarm = false) {
+    if (!p?.alive || p.kind !== 'player') return false;
+    if (!alarm && !this.witnessed(p.x, p.y, p)) return false;
+    const stars = config.crime.stars[kind] ?? 1;
+    const before = p.wanted;
+    p.wanted = Math.min(5, Math.max(p.wanted, stars));
+    // The search starts from here.
+    this.#lastKnown(p);
+    if (!before) p.reportedAt = this.time;
+    if (p.wanted > before) this.events.push({ player: p, kind: 'crime', crime: kind, stars: p.wanted });
+    return true;
+  }
+
+  /** The Militsiya know where p is right now: the trail starts again from here. */
+  #lastKnown(p) {
+    p.lastSeen = this.time;
+    p.lastKnown = { x: p.vehicle?.x ?? p.x, y: p.vehicle?.y ?? p.y };
+    p.searched = new Set();
+    p.searchSpots = null;
+  }
+
+  // ---- robbery and pickpocketing ------------------------------------------------------
+
+  /** Start robbing the ATM, till (shop/gas) or bank teller you're next to. The alarm goes off at once. */
+  startRobbery(p) {
+    if (p.vehicle || p.robbing || p.jailed) return 'busy';
+    const w = this.world;
+    const near = (list, reach) => list.find((s) => Math.hypot(s.x - p.x, s.y - p.y) < reach + p.radius);
+    const atm = near(w.atms, config.economy.atmReach);
+    const teller = near(w.tellers, config.economy.bankReach);
+    const keeper = near(w.shopkeepers.filter((k) => k.building), config.economy.shopReach);
+    const [kind, target] = atm ? ['atm', atm] : teller ? ['bank', teller] : keeper ? ['shop', keeper] : [null, null];
+    if (!kind) {
+      // Someone's locked warehouse: pick the lock. Only a crime if somebody sees it.
+      const door = w.warehouses.lockedDoorNear(p);
+      if (!door) return 'nothing_to_rob';
+      p.robbing = { kind: 'lockpick', door, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec: config.warehouses.lockpickSec };
+      this.crime(p, 'break_in');
+      return null;
+    }
+    const rule = config.robbery[kind];
+    if (rule.needsGun && !p.weapon) return 'need_gun';
+    const key = `${kind}:${Math.round(target.x)},${Math.round(target.y)}`;
+    if ((this.robCooldown.get(key) ?? 0) > this.time) return 'recently_robbed';
+    p.robbing = { kind, key, x: target.x, y: target.y, elapsed: 0, sec: rule.sec };
+    this.crime(p, `rob_${kind}`, true);
+    return null;
+  }
+
+  #robberies(dt) {
+    for (const p of this.world.players.values()) {
+      // Pressing F starts a robbery at whatever's in reach; letting go (or walking off) abandons it.
+      const pressed = p.input.rob && !p.robHeld;
+      p.robHeld = p.input.rob;
+      if (pressed && !p.robbing) {
+        const error = this.startRobbery(p);
+        if (error && error !== 'nothing_to_rob') this.events.push({ player: p, kind: 'error', code: error });
+      }
+      const r = p.robbing;
+      if (!r) continue;
+      if (!p.input.rob || p.vehicle || p.jailed || Math.hypot(r.x - p.x, r.y - p.y) > 160) {
+        p.robbing = null; // gave up: no money (the alarm already went off)
+        this.events.push({ player: p, kind: 'rob_stopped' });
+        continue;
+      }
+      r.elapsed += dt;
+      if (r.elapsed < r.sec) continue;
+      if (r.kind === 'lockpick') {
+        this.world.warehouses.unlock(r.door);
+        r.door.open = true;
+        this.world.pendingDoors.push(r.door);
+        this.events.push({ player: p, kind: 'picked' });
+        p.robbing = null;
+        continue;
+      }
+      const rule = config.robbery[r.kind];
+      const take = Math.round(rule.min + Math.random() * (rule.max - rule.min));
+      p.cash += take;
+      this.robCooldown.set(r.key, this.time + rule.cooldownSec);
+      this.events.push({ player: p, kind: 'robbed', amount: take, what: r.kind });
+      p.robbing = null;
+    }
+  }
+
+  /** F: lift some cash from the nearest townsperson or player. */
+  pickpocket(p) {
+    const rule = config.pickpocket;
+    if (p.vehicle || p.jailed) return 'busy';
+    if ((p.pickpocketReady ?? 0) > this.time) return 'too_soon';
+    const reach = rule.reach + p.radius;
+    const npc = this.world.townsfolk.people.find((t) => t.inside <= 0 && Math.hypot(t.x - p.x, t.y - p.y) < reach);
+    let take = 0;
+    if (npc) {
+      take = Math.min(Math.floor(npc.wallet), Math.round(rule.npcMin + Math.random() * (rule.npcMax - rule.npcMin)));
+      npc.wallet -= take;
+      npc.mood = Math.max(0, npc.mood - 0.1);
+    } else {
+      const victim = [...this.world.players.values()].find((o) => o !== p && o.alive && !o.vehicle && Math.hypot(o.x - p.x, o.y - p.y) < reach + o.radius);
+      if (!victim) return 'nobody_to_rob';
+      take = Math.floor(victim.cash * rule.playerShare);
+      victim.cash -= take;
+      this.events.push({ player: victim, kind: 'pickpocketed', amount: take });
+    }
+    p.pickpocketReady = this.time + rule.cooldownSec;
+    p.cash += take;
+    this.crime(p, 'pickpocket');
+    return { amount: take };
+  }
+
+  // ---- being shot -------------------------------------------------------------------
+
+  /** An officer hit by bullet path a→b (radius r), or null. */
+  officerHit(ax, ay, bx, by, r, segmentDistSq) {
+    for (const u of this.units) {
+      const o = u.officer;
+      if (o.health <= 0 || !o.onFoot) continue;
+      if (segmentDistSq(ax, ay, bx, by, o.x, o.y) < (20 + r) ** 2) return o;
+    }
+    return null;
+  }
+
+  damageOfficer(officer, damage, attacker) {
+    const alive = officer.health > 0;
+    officer.health -= damage;
+    // A fallen officer leaves a body (with their service rifle on it).
+    if (alive && officer.health <= 0) {
+      this.world.bodies?.add({ x: officer.x, y: officer.y, angle: officer.angle ?? 0, kind: 'officer', look: [0, 0, 0, 0], items: [{ type: 'rifle', ammo: config.weapons.rifle.magazineSize, reloadTimer: 0 }], killer: attacker?.kind === 'player' ? attacker : null });
+    }
+    if (attacker?.kind === 'player') this.crime(attacker, 'attack_police', true);
+    if (attacker) attacker.shotPolice = true;
+  }
+
+  // ---- arrests --------------------------------------------------------------------
+
+  #bust(p) {
+    const w = this.world;
+    if (p.vehicle) {
+      p.vehicle.driver = null;
+      p.vehicle = null;
+    }
+    // Illegal goods are confiscated (from hands and the car with them).
+    const holders = [hotbarOf(p)];
+    const v = w.economy.vehicleOf(p);
+    if (v) holders.push(trunkOf(v));
+    let seized = 0;
+    for (const h of holders) {
+      for (const [g, q] of Object.entries(h.items)) {
+        if (!config.goods[g]?.illegal) continue;
+        h.add(g, -q);
+        seized += q;
+      }
+    }
+    const bail = config.police.bailPerStar * p.wanted;
+    const fromCash = Math.min(p.cash, bail);
+    const fromBank = Math.min(Math.floor(p.account?.bank ?? 0), bail - fromCash);
+    const stars = p.wanted;
+    p.wanted = 0;
+    p.robbing = null;
+    p.arrest = 0;
+    if (fromCash + fromBank >= bail) {
+      p.cash -= fromCash;
+      if (fromBank) {
+        p.account.bank -= fromBank;
+        w.onBankChange?.(p.account);
+      }
+      this.events.push({ player: p, kind: 'busted', bail, jail: 0, seized });
+      return;
+    }
+    // Can't make bail: off to the cells.
+    const station = this.#nearestStation(p.x, p.y);
+    const jailSec = config.police.jailSecPerStar * stars;
+    p.jailed = { until: this.time + jailSec, station };
+    if (station?.jail) {
+      p.x = station.jail.x;
+      p.y = station.jail.y;
+    }
+    this.events.push({ player: p, kind: 'busted', bail, jail: jailSec, seized });
+  }
+
+  #nearestStation(x, y) {
+    return this.stations.reduce((best, s) => (!best || Math.hypot(s.x - x, s.y - y) < Math.hypot(best.x - x, best.y - y) ? s : best), null);
+  }
+
+  #jail() {
+    for (const p of this.world.players.values()) {
+      if (!p.jailed) continue;
+      const { until, station } = p.jailed;
+      if (station?.jail) {
+        p.x = station.jail.x; // stay in the cell
+        p.y = station.jail.y;
+      }
+      if (this.time < until) continue;
+      p.jailed = null;
+      // Out the front door.
+      const d = station?.doors.find((x) => x.exterior);
+      if (d) {
+        p.x = d.x + d.w / 2 + d.nx * 60;
+        p.y = d.y + d.h / 2 + d.ny * 60;
+      }
+      this.events.push({ player: p, kind: 'released' });
+    }
+  }
+
+  // ---- the police AI --------------------------------------------------------------------
+
+  step(dt) {
+    this.#robberies(dt);
+    this.#jail();
+    // While they can see you they know where you are; out of sight long enough (longer for worse
+    // crimes) and they give up.
+    for (const p of this.world.players.values()) {
+      if (!p.wanted) continue;
+      if (p.jailed) continue;
+      if (this.policeSee(p.x, p.y, p)) this.#lastKnown(p);
+      else if (this.time - (p.lastSeen ?? 0) > config.crime.searchSec[p.wanted]) {
+        p.wanted = 0;
+        p.lastKnown = null;
+        this.events.push({ player: p, kind: 'lost_you' });
+      }
+    }
+    this.#assign();
+    for (const u of this.units) this.#runUnit(u, dt);
+  }
+
+  /** Up to one car per star goes after each wanted player, nearest cars first. */
+  #assign() {
+    for (const u of this.units) {
+      if (u.target && (!u.target.alive || !u.target.wanted || u.target.jailed)) u.target = null;
+    }
+    // Cars only go out a little while after the call comes in.
+    const wanted = [...this.world.players.values()].filter((p) => p.alive && p.wanted > 0 && !p.jailed && this.time - (p.reportedAt ?? -Infinity) >= config.police.responseSec);
+    for (const p of wanted.sort((a, b) => b.wanted - a.wanted)) {
+      const chasing = this.units.filter((u) => u.target === p).length;
+      const free = this.units
+        .filter((u) => !u.target && u.officer.health > 0)
+        .sort((a, b) => Math.hypot(a.officer.x - p.x, a.officer.y - p.y) - Math.hypot(b.officer.x - p.x, b.officer.y - p.y));
+      for (const u of free.slice(0, Math.max(0, p.wanted - chasing))) {
+        u.target = p;
+        u.route = [];
+      }
+    }
+  }
+
+  #runUnit(u, dt) {
+    const o = u.officer;
+    const car = u.car && this.world.vehicles.has(u.car.id) ? u.car : null;
+    if (o.health <= 0) {
+      if (car) car.ai = null;
+      u.respawn += dt;
+      if (u.respawn > config.police.respawnSec) {
+        this.units.splice(this.units.indexOf(u), 1);
+        this.#newUnit(u.station);
+      }
+      return;
+    }
+    o.fireCooldown = Math.max(0, o.fireCooldown - dt);
+    const t = u.target;
+    const seen = t && t.lastSeen === this.time; // someone has eyes on them right now
+    if (o.onFoot) {
+      if (car) car.ai = { gas: -0.3, steer: 0, drift: false }; // parked
+      if (t && seen && Math.hypot(t.x - o.x, t.y - o.y) < 900) this.#footChase(u, t, dt);
+      else if (t?.lastKnown) this.#search(u, t, dt);
+      else this.#walkBack(u, car, dt);
+      return;
+    }
+    if (!car) {
+      o.onFoot = true; // their car was destroyed
+      return;
+    }
+    if (car.driver) {
+      // Someone hijacked the cruiser: the officer is left standing.
+      o.onFoot = true;
+      car.ai = null;
+      return;
+    }
+    o.x = car.x;
+    o.y = car.y;
+    o.angle = car.angle;
+    car.siren = Boolean(t);
+    if (t && !seen && t.lastKnown) {
+      // Out of sight: drive to where they were last seen, then search on foot.
+      const lk = t.lastKnown;
+      if (Math.hypot(lk.x - car.x, lk.y - car.y) < 300 || (u.stuck > 0.6 && Math.hypot(lk.x - car.x, lk.y - car.y) < 700)) {
+        o.onFoot = true;
+        o.x = car.x - Math.sin(car.angle) * 50;
+        o.y = car.y + Math.cos(car.angle) * 50;
+        car.ai = { gas: -0.5, steer: 0, drift: false };
+        return;
+      }
+      this.#drive(u, car, lk.x, lk.y, config.police.chaseThrottle, dt);
+      return;
+    }
+    if (t) {
+      const tx = t.vehicle ? t.vehicle.x : t.x;
+      const ty = t.vehicle ? t.vehicle.y : t.y;
+      const d = Math.hypot(tx - car.x, ty - car.y);
+      if (!t.vehicle && (d < config.police.exitRange || (d < config.police.stuckExitRange && (u.stuck > 0.6 || u.reverse > 0)))) {
+        // Out of the car and after them.
+        o.onFoot = true;
+        o.x = car.x - Math.sin(car.angle) * 50;
+        o.y = car.y + Math.cos(car.angle) * 50;
+        car.ai = { gas: -0.5, steer: 0, drift: false };
+        return;
+      }
+      // Next to a stopped car with the suspect in it: pull them out.
+      if (t.vehicle && d < 140 && t.vehicle.speed < 40) this.#arrestTick(u, t, dt);
+      else u.arrest = Math.max(0, u.arrest - dt);
+      this.#drive(u, car, tx, ty, config.police.chaseThrottle, dt);
+      return;
+    }
+    // Patrol along the roads.
+    const graph = this.world.townsfolk.graph;
+    if (!u.route.length && graph.nodes.length) {
+      const node = graph.nodes[Math.floor(Math.random() * graph.nodes.length)];
+      u.route = graph.route({ x: car.x, y: car.y }, node);
+    }
+    const next = u.route[0];
+    if (!next) return void (car.ai = { gas: 0, steer: 0, drift: false });
+    if (Math.hypot(next.x - car.x, next.y - car.y) < 90) u.route.shift();
+    this.#drive(u, car, next.x, next.y, 0.55, dt);
+  }
+
+  /** Steer a car toward (tx, ty) at a share of full throttle; back out when stuck on something. */
+  #drive(u, car, tx, ty, throttle, dt) {
+    const diff = wrap(Math.atan2(ty - car.y, tx - car.x) - car.angle);
+    const forward = vehicleMotion(car).forward;
+    if (u.reverse > 0) {
+      u.reverse -= dt;
+      car.ai = { gas: -1, steer: -Math.sign(diff) || 1, drift: false };
+      return;
+    }
+    u.stuck = Math.abs(forward) < 20 ? u.stuck + dt : 0;
+    if (u.stuck > 1.2) {
+      u.stuck = 0;
+      u.reverse = 0.9;
+    }
+    let gas = throttle;
+    if (Math.abs(diff) > 1.2 && forward > 160) gas = -0.6; // brake into tight turns
+    car.ai = { gas, steer: Math.max(-1, Math.min(1, diff * 2.2)), drift: false };
+  }
+
+  #footChase(u, t, dt) {
+    const o = u.officer;
+    const d = Math.hypot(t.x - o.x, t.y - o.y);
+    o.angle = Math.atan2(t.y - o.y, t.x - o.x);
+    if (d > config.police.arrestRange * 0.7) this.#walk(o, t.x, t.y, dt);
+    const shoot = t.wanted >= config.police.shootFrom || t.shotPolice;
+    if (shoot && d < config.police.shootRange && o.fireCooldown <= 0 && this.#clearShot(o.x, o.y, t.x, t.y)) {
+      o.fireCooldown = config.police.fireEverySec;
+      const angle = o.angle + (Math.random() - 0.5) * config.police.aimSpread;
+      const b = new Bullet(this.world.nextEntityId++, o, o.x + Math.cos(angle) * 30, o.y + Math.sin(angle) * 30, angle, 'pistol');
+      this.world.bullets.set(b.id, b);
+    }
+    if (d < config.police.arrestRange + t.radius && (!t.vehicle || t.vehicle.speed < 40)) this.#arrestTick(u, t, dt);
+    else u.arrest = Math.max(0, u.arrest - dt);
+  }
+
+  // ---- searching ------------------------------------------------------------------------
+
+  /** Places to hide near where p was last seen: trees, dumpsters, cars and buildings (checked at a door). */
+  #spots(p) {
+    if (p.searchSpots) return p.searchSpots;
+    const w = this.world;
+    const lk = p.lastKnown;
+    const R = config.police.searchRadius;
+    const near = (x, y) => Math.hypot(x - lk.x, y - lk.y) < R;
+    const spots = [];
+    w.trees.forEach((t, i) => near(t.x, t.y) && spots.push({ key: `t${i}`, kind: 'tree', ref: t, x: t.x, y: t.y + t.canopy * 0.4 }));
+    w.dumpsters.forEach((d, i) => near(d.x + d.w / 2, d.y + d.h / 2) && spots.push({ key: `d${i}`, kind: 'dumpster', ref: d, x: d.x + d.w / 2, y: d.y + d.h + 22 }));
+    for (const v of w.vehicles.values()) if (!v.police && near(v.x, v.y)) spots.push({ key: `v${v.id}`, kind: 'car', ref: v, x: v.x, y: v.y + 50 });
+    for (const b of w.buildings) {
+      const d = b.doors.find((x) => x.exterior);
+      if (d && near(b.x + b.w / 2, b.y + b.h / 2)) spots.push({ key: `b${b.id}`, kind: 'building', ref: b, x: d.x + d.w / 2 + d.nx * 30, y: d.y + d.h / 2 + d.ny * 30 });
+    }
+    return (p.searchSpots = spots);
+  }
+
+  /** Is p hiding at this spot? */
+  #hidingAt(p, spot) {
+    if (spot.kind === 'dumpster') return p.hidden?.dumpster === spot.ref;
+    if (spot.kind === 'car') return p.vehicle === spot.ref;
+    if (spot.kind === 'tree') return !p.vehicle && Math.hypot(spot.ref.x - p.x, spot.ref.y - p.y) < spot.ref.canopy * 0.75;
+    const b = spot.ref;
+    return !p.vehicle && p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h;
+  }
+
+  /** On foot from the last known spot: check each hiding place nearby in turn, nearest first. */
+  #search(u, t, dt) {
+    const o = u.officer;
+    u.arrest = 0;
+    const taken = new Set(this.units.filter((x) => x !== u && x.target === t && x.spot).map((x) => x.spot.key));
+    if (!u.spot || t.searched.has(u.spot.key)) {
+      u.spot = this.#spots(t)
+        .filter((s) => !t.searched.has(s.key) && !taken.has(s.key))
+        .sort((a, b) => Math.hypot(a.x - o.x, a.y - o.y) - Math.hypot(b.x - o.x, b.y - o.y))[0] ?? null;
+      u.inspect = 0;
+    }
+    if (!u.spot) {
+      // Nothing left to check: wait round where they were last seen.
+      const lk = t.lastKnown;
+      o.angle += dt * 0.8; // looking around
+      if (Math.hypot(lk.x - o.x, lk.y - o.y) > 60) this.#walk(o, lk.x, lk.y, dt);
+      return;
+    }
+    const s = u.spot;
+    if (Math.hypot(s.x - o.x, s.y - o.y) > 40) {
+      o.angle = Math.atan2(s.y - o.y, s.x - o.x);
+      this.#walk(o, s.x, s.y, dt);
+      return;
+    }
+    o.angle = Math.atan2((s.ref.y ?? s.y) - o.y, (s.ref.x ?? s.x) - o.x);
+    u.inspect = (u.inspect ?? 0) + dt;
+    if (u.inspect < config.police.inspectSec) return;
+    t.searched.add(s.key);
+    if (this.#hidingAt(t, s)) {
+      // Found! Out of the dumpster (or wherever) and the chase is on.
+      if (t.hidden) this.world.unhide(t);
+      this.#lastKnown(t);
+      this.events.push({ player: t, kind: 'found_you' });
+    }
+    u.spot = null;
+  }
+
+  #arrestTick(u, t, dt) {
+    u.arrest += dt;
+    t.arrest = Math.max(t.arrest ?? 0, u.arrest / config.police.arrestSec);
+    if (u.arrest >= config.police.arrestSec) {
+      u.arrest = 0;
+      this.#bust(t);
+      u.target = null;
+    }
+  }
+
+  #walkBack(u, car, dt) {
+    const o = u.officer;
+    if (!car) {
+      // No car to go back to: head back to the station and get a new one.
+      u.respawn += dt;
+      if (u.respawn > config.police.respawnSec / 2) {
+        this.units.splice(this.units.indexOf(u), 1);
+        this.#newUnit(u.station);
+      }
+      return;
+    }
+    u.arrest = 0;
+    if (Math.hypot(car.x - o.x, car.y - o.y) < 60) {
+      o.onFoot = false;
+      return;
+    }
+    o.angle = Math.atan2(car.y - o.y, car.x - o.x);
+    this.#walk(o, car.x, car.y, dt);
+  }
+
+  #walk(o, tx, ty, dt) {
+    const d = Math.hypot(tx - o.x, ty - o.y);
+    if (d < 1) return;
+    const step = Math.min(d, config.police.footSpeed * dt);
+    o.x += ((tx - o.x) / d) * step;
+    o.y += ((ty - o.y) / d) * step;
+    const r = 16;
+    for (const w of this.world.wallsNear(o.x, o.y, r)) {
+      // Slide along walls rather than through them.
+      const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
+      const cy = Math.min(Math.max(o.y, w.y), w.y + w.h);
+      const dx = o.x - cx;
+      const dy = o.y - cy;
+      const dd = Math.hypot(dx, dy);
+      if (dd > 0 && dd < r) {
+        o.x += (dx / dd) * (r - dd);
+        o.y += (dy / dd) * (r - dd);
+      }
+    }
+  }
+
+  #clearShot(ax, ay, bx, by) {
+    const len = Math.hypot(bx - ax, by - ay);
+    return !this.world.wallsNear((ax + bx) / 2, (ay + by) / 2, len / 2, true).some((w) => segmentRectHit(ax, ay, bx, by, w, 2) !== null);
+  }
+
+  /** On-foot officers within `range` of (x, y): [id, x, y, angle]. */
+  visible(x, y, range) {
+    const out = [];
+    for (const u of this.units) {
+      const o = u.officer;
+      if (!o.onFoot || o.health <= 0 || Math.abs(o.x - x) > range || Math.abs(o.y - y) > range) continue;
+      out.push([o.id, Math.round(o.x), Math.round(o.y), Math.round(o.angle * 100) / 100]);
+    }
+    return out;
+  }
+}

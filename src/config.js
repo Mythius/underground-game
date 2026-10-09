@@ -28,10 +28,12 @@ export const config = Object.freeze({
   host: env.HOST || '0.0.0.0',
   logLevel: env.LOG_LEVEL || 'info',
   allowedOrigins: list('ALLOWED_ORIGINS'),
+  // Needed to save maps from the editor. Unset = saving is disabled.
+  adminPassword: env.ADMIN_PASSWORD || null,
 
   // Simulation runs at tickRate; state is sent to clients at snapshotRate.
   tickRate: int('TICK_RATE', 30),
-  snapshotRate: int('SNAPSHOT_RATE', 15),
+  snapshotRate: int('SNAPSHOT_RATE', 30),
   leaderboardIntervalMs: 1000,
   maxPlayersPerRoom: int('MAX_PLAYERS_PER_ROOM', 50),
 
@@ -40,38 +42,398 @@ export const config = Object.freeze({
     maxMessagesPerSecond: 60,
     messageBurst: 120,
     heartbeatIntervalMs: 10_000,
+    chatMaxLength: 120,
+    chatPerSecond: 1, // sustained rate; chatBurst allows short flurries
+    chatBurst: 4,
     // Snapshots are skipped for a client whose socket buffer is above this.
     maxBufferedBytes: 256 * 1024,
   },
 
   world: {
-    width: 4000,
-    height: 4000,
+    width: 27000, // a big country: the town in the middle, kolkhozes, forests, the mine, a railway across
+    height: 27000,
     gridCellSize: 250,
-    foodCount: 600,
+    foodCount: 0, // no free food on the ground; buy it from shopkeepers
     foodMass: 1,
+    foodHeal: 4, // health restored per food dot
     viewDistance: 1400,
+    buildingCount: 320, // cycles through every building type (work sites are placed separately)
+    parkingLots: 30, // extra lots along the country roads (businesses get their own parking too)
+    citySize: 8000, // the town in the middle: asphalt streets and sidewalks; gravel roads outside
+    terrain: true, // roads, dirt paths, trees and water
+    forests: 260,
+    scatteredTrees: 1400,
+    rivers: 4,
+    lakes: 18,
+    // Guns no longer appear on the ground (buy them at gun stores); these stay for testing/old maps.
+    pickupStart: 0,
+    pickupIntervalSec: 1.5,
+    pickupMax: 0,
+    pickupRadius: 22,
+    doorReach: 45, // how far past your edge you can reach a door with E
   },
 
   player: {
     nameMaxLength: 16,
     startMass: 25,
-    baseSpeed: 260, // units/sec at start mass
-    boostMultiplier: 1.7,
-    boostDrainPerSec: 0.04, // fraction of mass lost per second while boosting
-    minBoostMass: 30,
-    massDecayPerSec: 0.002, // passive shrink for large players
-    decayThreshold: 200,
-    eatRatio: 1.15, // must be this much larger (by radius) to eat another player
+    baseSpeed: 220, // units/sec at start mass
+    swimSpeed: 0.5, // multiplier in water (and no sprinting)
+    iceGrip: 1.2, // on a frozen lake you only slowly speed up, turn or stop (higher = less slippery)
+    // Size trade-off: speed × (startMass / mass)^speedExponent, max health × (mass / startMass)^healthExponent.
+    // e.g. at 4× start mass: 0.57× speed and 2× health.
+    speedExponent: 0.4,
+    healthExponent: 0.5,
+    // Sprinting (the `boost` input) spends stamina.
+    sprintMultiplier: 1.6,
+    staminaMax: 100,
+    staminaDrainPerSec: 35,
+    staminaRegenPerSec: 22,
+    staminaRegenDelaySec: 0.8, // pause after sprinting before stamina refills
+    staminaMinToSprint: 25, // after running dry, wait until this much is back
+    massShrinkPerSec: 0.01, // extra size from overeating fades by this fraction per second
     spawnSafeDistance: 400,
-    maxHealth: 100,
+    maxHealth: 100, // at start mass; grows with size
+    inventorySize: 5,
   },
 
-  gun: {
-    cooldownSec: 0.2, // time between shots
-    bulletSpeed: 900, // units/sec
-    bulletLifetimeSec: 1.2,
-    bulletRadius: 4,
-    damage: 20,
+  bulletRadius: 4,
+
+  // Every player starts with a pistol; the rest are found on the ground.
+  // barrel: where bullets leave the gun, in player radii from the centre (matches the drawing).
+  weapons: {
+    pistol: { name: 'Pistol', damage: 20, cooldownSec: 0.2, magazineSize: 5, reloadSec: 1.5, bulletSpeed: 900, bulletLifetimeSec: 1.2, pellets: 1, spread: 0, barrel: 1.6, spawnWeight: 0 },
+    smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
+    shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
+    rifle: { name: 'Rifle', damage: 16, cooldownSec: 0.14, magazineSize: 15, reloadSec: 2, bulletSpeed: 1150, bulletLifetimeSec: 1.2, pellets: 1, spread: 0.03, barrel: 2.2, spawnWeight: 30 },
+    sniper: { name: 'Sniper', damage: 75, cooldownSec: 1.1, magazineSize: 3, reloadSec: 2.5, bulletSpeed: 1900, bulletLifetimeSec: 1.3, pellets: 1, spread: 0, barrel: 2.6, spawnWeight: 15 },
+  },
+
+  // Drivable cars and trucks, parked on the roads. E to get in/out, W/S gas/brake, A/D steer, Space to drift.
+  vehicles: {
+    count: 260,
+    gravelGrip: 0.8, // grip outside the city (gravel roads, grass, snow) compared with city asphalt
+    respawnSec: 20, // after one is destroyed
+    reach: 40, // how far past your edge you can get in
+    crushMinSpeed: 120, // slower than this, cars just push people
+    exitDamage: 35, // to the driver when their vehicle is destroyed
+    types: {
+      // grip: how fast sideways sliding dies away (higher = stickier). driftGrip applies while holding Space.
+      sedan: { name: 'Lada 2107', length: 90, width: 46, maxSpeed: 420, accel: 360, brake: 800, turnRate: 2.6, grip: 7, driftGrip: 0.9, health: 180, crush: 60, spawnWeight: 40 },
+      sports: { name: 'Mercedes 600', length: 88, width: 42, maxSpeed: 540, accel: 460, brake: 900, turnRate: 3.0, grip: 8, driftGrip: 0.8, health: 140, crush: 55, spawnWeight: 15 },
+      pickup: { name: 'UAZ-469', length: 106, width: 50, maxSpeed: 360, accel: 290, brake: 700, turnRate: 2.2, grip: 6, driftGrip: 1.0, health: 260, crush: 75, spawnWeight: 25 },
+      // Militsiya cars: driven by police AI only (never parked at random or sold).
+      police: { name: 'Militsiya Lada', length: 92, width: 46, maxSpeed: 470, accel: 420, brake: 900, turnRate: 2.8, grip: 8, driftGrip: 1, health: 320, crush: 50, spawnWeight: 0 },
+      truck: { name: 'KAMAZ', length: 150, width: 58, maxSpeed: 290, accel: 190, brake: 550, turnRate: 1.6, grip: 5, driftGrip: 1.2, health: 400, crush: 100, spawnWeight: 20 },
+    },
+  },
+
+  // Each browser gets an account automatically; it keeps only a bank balance.
+  // Carried cash is dropped when you die or leave.
+  accounts: {
+    startingBank: 20000, // generous while testing
+    topUpTo: 20000, // one-time top-up for browsers that already had an account (see AccountStore)
+    sessionDays: 30, // sessions from future login methods (e.g. Google)
+    deviceDays: 3650, // a browser keeps its account this long
+  },
+
+  // Dollars: carried cash buys food; deposit at banks and ATMs to keep it.
+  economy: {
+    streetIncome: 1, // $ added to carried cash every streetIncomeSec while alive (until jobs exist)
+    streetIncomeSec: 3,
+    shopReach: 120, // from the shopkeeper's centre to your edge
+    bankReach: 120, // from a bank teller's centre to your edge
+    atmReach: 60, // from an ATM's centre to your edge
+    // Meals use `bread` from the shop's stock (supplied by bakeries); prices rise as the stock runs low.
+    menu: {
+      apple: { name: 'Apple', icon: '🍎', price: 10, heal: 15, mass: 2, bread: 1 },
+      burger: { name: 'Burger', icon: '🍔', price: 25, heal: 40, mass: 6, bread: 2 },
+      drink: { name: 'Energy drink', icon: '🥤', price: 15, heal: 10, mass: 0, stamina: true, bread: 0 },
+      feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, mass: 15, bread: 4 },
+    },
+  },
+
+  // Day/night and weather. A week is 7 day/night cycles (~2.9 hours).
+  environment: {
+    daySec: 20 * 60,
+    nightSec: 5 * 60,
+    startSec: 90, // rooms open in the early morning, just after dawn
+    maxPerWeek: 2, // rain and fog each happen 0..maxPerWeek times a week
+    weatherFadeSec: 60,
+    weather: {
+      rain: { minSec: 6 * 60, maxSec: 15 * 60 },
+      fog: { minSec: 5 * 60, maxSec: 12 * 60 },
+    },
+    // Seasons follow each other every 40 minutes, blending over the last few minutes of each.
+    // Rain falls as snow in winter.
+    seasons: ['winter', 'spring', 'summer', 'autumn'],
+    seasonSec: 40 * 60,
+    seasonBlendSec: 3 * 60,
+    rainGrip: 0.6, // car grip multiplier at full rain (or snow)
+    broadcastEverySec: 2,
+  },
+
+  // Character customisation offered on the start menu. Players send an index into each list.
+  looks: {
+    skins: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#5c3a1e'],
+    shirts: ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#ffffff', '#222222'],
+    pants: ['#34495e', '#2c3e50', '#5d4037', '#1b5e20', '#6d6d6d', '#111111', '#1e88e5', '#b0855b'],
+    hats: ['none', 'miner', 'cowboy', 'tophat', 'cap', 'beanie', 'crown', 'helmet', 'party', 'ushanka', 'furazhka'],
+  },
+
+  // ---- goods, factories and markets (stage 2) ---------------------------------
+  // Prices are "fair" base prices; markets move them with their stock. weight = cargo space per unit.
+  goods: {
+    logs: { name: 'Logs', icon: '🪵', base: 8, weight: 1, tier: 'raw' },
+    wheat: { name: 'Wheat', icon: '🌾', base: 6, weight: 1, tier: 'raw' },
+    ore: { name: 'Iron ore', icon: '⛏️', base: 12, weight: 1, tier: 'raw' },
+    crude: { name: 'Crude oil', icon: '🛢️', base: 10, weight: 1, tier: 'raw' },
+    scrap: { name: 'Scrap metal', icon: '🔩', base: 7, weight: 1, tier: 'raw' },
+    sand: { name: 'Sand', icon: '🏖️', base: 4, weight: 1, tier: 'raw' },
+    planks: { name: 'Planks', icon: '🪚', base: 20, weight: 1, tier: 'processed' },
+    flour: { name: 'Flour', icon: '🥡', base: 15, weight: 1, tier: 'processed' },
+    steel: { name: 'Steel', icon: '🔗', base: 40, weight: 1, tier: 'processed' },
+    fuel: { name: 'Fuel', icon: '⛽', base: 25, weight: 1, tier: 'processed' },
+    plastic: { name: 'Plastic', icon: '🧴', base: 22, weight: 1, tier: 'processed' },
+    glass: { name: 'Glass', icon: '🪟', base: 18, weight: 1, tier: 'processed' },
+    parts: { name: 'Parts', icon: '⚙️', base: 130, weight: 1, tier: 'processed' },
+    furniture: { name: 'Furniture', icon: '🛋️', base: 140, weight: 3, tier: 'finished' },
+    bread: { name: 'Bread', icon: '🍞', base: 30, weight: 1, tier: 'finished' },
+    car: { name: 'New car', icon: '🚗', base: 2500, weight: 10, tier: 'finished', vehicles: ['pickup', 'truck'] }, // only fits a pickup or truck
+    guns: { name: 'Licensed guns', icon: '🔫', base: 600, weight: 2, tier: 'finished' },
+    // Contraband: seized if the Militsiya search you, sold under the table (shops, kiosks) or to the
+    // black-market buyer behind the freight station. Never bought or sold by markets.
+    vodka: { name: 'Vodka', icon: '🍾', base: 60, weight: 1, tier: 'illegal', illegal: true },
+    counterfeit: { name: 'Counterfeit rubles', icon: '💸', base: 280, weight: 1, tier: 'illegal', illegal: true },
+    hotparts: { name: 'Stolen car parts', icon: '🧰', base: 220, weight: 2, tier: 'illegal', illegal: true },
+    blackguns: { name: 'Unregistered guns', icon: '🔫', base: 1400, weight: 2, tier: 'illegal', illegal: true },
+  },
+  // Recipes only illegal machines run (keys 'illegal:<name>').
+  illegalRecipes: {
+    vodka: { in: { wheat: 2 }, out: { vodka: 1 }, sec: 10 },
+    counterfeit: { in: { plastic: 2 }, out: { counterfeit: 1 }, sec: 20 },
+    blackguns: { in: { steel: 3, parts: 1 }, out: { blackguns: 1 }, sec: 30 },
+  },
+
+  // A factory turns inputs into outputs every `sec` seconds while it has the inputs and room for the outputs.
+  // `recipes` are tried in order (the foundry takes ore or scrap). Warehouse machines run these recipes too.
+  factories: {
+    sawmill: { name: 'Sawmill', recipes: [{ in: { logs: 1 }, out: { planks: 1 } }], sec: 8 },
+    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }], sec: 20 },
+    flourmill: { name: 'Flour mill', recipes: [{ in: { wheat: 2 }, out: { flour: 1 } }], sec: 8 },
+    bakery: { name: 'Bakery', recipes: [{ in: { flour: 1 }, out: { bread: 1 } }], sec: 6 },
+    foundry: { name: 'Foundry', recipes: [{ in: { ore: 1 }, out: { steel: 1 } }, { in: { scrap: 2 }, out: { steel: 1 } }], sec: 12 },
+    machineshop: { name: 'Machine shop', recipes: [{ in: { steel: 2 }, out: { parts: 1 } }], sec: 15 },
+    refinery: { name: 'Refinery', recipes: [{ in: { crude: 2 }, out: { fuel: 1, plastic: 1 } }], sec: 12 },
+    glassworks: { name: 'Glassworks', recipes: [{ in: { sand: 3 }, out: { glass: 1 } }], sec: 10 },
+    carfactory: { name: 'Car factory', recipes: [{ in: { parts: 6, glass: 4, plastic: 6 }, out: { car: 1 } }], sec: 90 },
+    gunfactory: { name: 'Gun factory', recipes: [{ in: { steel: 3, parts: 2 }, out: { guns: 1 } }], sec: 40 },
+  },
+  factory: {
+    reach: 130, // from the office clerk to your edge
+    // City factories (one of each) process anyone's inputs on the spot for a fee per batch:
+    // this share of the value the recipe adds (outputs − inputs, at base prices).
+    tollShare: 0.5,
+  },
+
+  // Player factories: buy an empty warehouse, then place machines and belts on its floor grid.
+  // Goods come in at the IN dock (unload your cargo there) and finished goods collect at the OUT dock.
+  warehouses: {
+    // Floor grids (tiles of 40 units) are in buildings.js: small 6×6, medium 10×8, large 14×10.
+    sizes: {
+      small: { name: 'Small warehouse', price: 3000, taxPerHour: 60, count: 8 },
+      medium: { name: 'Warehouse', price: 8000, taxPerHour: 150, count: 8 },
+      large: { name: 'Large warehouse', price: 20000, taxPerHour: 360, count: 4 },
+      // Shacks in the woods: cheap, small, illegal machines only, and far less likely to be raided.
+      shack: { name: 'Shack', price: 2000, taxPerHour: 20, count: 10, illegalOnly: true },
+    },
+    dockCapacity: 200, // units each dock bin holds (all goods together)
+    dockReach: 150, // from a dock's edge
+    beltSpeed: 2, // tiles per second
+    machineBuffer: 3, // belts fill a machine's input slot up to this many batches
+    machineSlot: 20, // its input slot holds this many of each input by hand, and its output slot this many in all
+    emitEverySec: 0.5, // docks and machines put an item out this often
+    sellBack: 0.5, // selling returns this share of what you paid (warehouse + everything placed)
+    lockpickSec: 6, // holding F at a locked warehouse door
+    // Chop shop: drive a car that isn't yours into your warehouse or shack and strip it for parts.
+    chopParts: { sedan: 6, sports: 10, pickup: 8, truck: 12, police: 8 },
+    // Heat from illegal production: each batch adds its value / heatPerValue (shacks: × shackHeat).
+    // Heat fades by heatDecayPerMin; at 100 the Militsiya raid it and seize all contraband inside.
+    heatPerValue: 300,
+    shackHeat: 0.25,
+    heatDecayPerMin: 4,
+    unlockedSec: 90, // a picked lock stays open this long
+    saveEverySec: 20,
+  },
+  // Configurable machines (2×2 tiles). Each runs one recipe at a time, taken from the city factories.
+  machines: {
+    saw: { name: 'Saw', icon: '🪚', price: 800, recipes: ['sawmill:0'] },
+    mill: { name: 'Mill', icon: '🌾', price: 700, recipes: ['flourmill:0'] },
+    furnace: { name: 'Furnace', icon: '🔥', price: 3000, recipes: ['foundry:0', 'foundry:1', 'glassworks:0', 'bakery:0'] },
+    press: { name: 'Press', icon: '🛢️', price: 4000, recipes: ['refinery:0', 'machineshop:0'] },
+    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'gunfactory:0', 'carfactory:0'] },
+    // Illegal: their output is contraband, and running them draws the Militsiya (see `heat`).
+    still: { name: 'Still', icon: '🍾', price: 1500, recipes: ['illegal:vodka'], illegal: true },
+    printer: { name: 'Printing press', icon: '💸', price: 5000, recipes: ['illegal:counterfeit'], illegal: true },
+    gunsmith: { name: 'Gunsmith bench', icon: '🔫', price: 6000, recipes: ['illegal:blackguns'], illegal: true },
+  },
+  // Belt pieces (1 tile). Belts only take items from behind; turns from one side; mergers from behind and both sides.
+  belts: {
+    belt: { name: 'Belt', price: 20 },
+    turnL: { name: 'Turn left', price: 20 },
+    turnR: { name: 'Turn right', price: 20 },
+    merger: { name: 'Merger', price: 60 },
+    splitter: { name: 'Splitter', price: 80 },
+    filter: { name: 'Filter', price: 120 },
+  },
+
+  // Raw sites sell one raw good and slowly produce more; trade depots buy and sell everything.
+  markets: {
+    rawProducePerSec: 0.5, // units of its raw good a raw site makes per second (until full)
+    rawTarget: 150, // a raw site's "normal" stock
+    depotTarget: 40, // a depot's normal stock of each good
+    driftPerSec: 1 / 1200, // background NPC trade nudges stock back toward 60% of normal (townsfolk do the rest)
+    trendEverySec: 60, // markets compare today's prices with this long ago to show ↑ / ↓
+    spread: 0.08, // buy at price × (1 + spread), sell at price × (1 − spread)
+    reach: 130,
+  },
+
+  // Goods sit in slots, one kind per slot: your hotbar's free slots on foot, and each vehicle's trunk.
+  cargo: {
+    slotWeight: 5, // a hotbar slot holds this much (by weight) of one good: 5 logs, or 1 furniture
+    vehicleSlotWeight: 10, // a trunk slot holds twice that
+    vehicles: { sedan: 2, sports: 1, pickup: 4, truck: 12 }, // trunk slots per vehicle
+    nearbyVehicle: 300, // the vehicle you last drove (or opened) counts as your cargo within this range
+    bayReach: 150, // …or anywhere in (or this close to) a building whose delivery bay it's parked in
+    trunkReach: 70, // how close to a vehicle's back you need to be to open its trunk
+    dropPickupDelaySec: 2, // you can't instantly pick up what you just dropped
+  },
+
+  fuel: {
+    perUnit: 100 / 120000, // a full tank lasts about 120,000 units of driving
+    pumpReach: 220, // a car this close to a gas station's clerk can be refilled
+  },
+
+  // Gun stores sell guns for cash; each sale uses `uses` of their 'guns' stock (restocked by gun factories).
+  gunstore: {
+    guns: {
+      smg: { price: 550, uses: 1 },
+      shotgun: { price: 450, uses: 1 },
+      rifle: { price: 350, uses: 1 },
+      sniper: { price: 900, uses: 2 },
+    },
+  },
+
+  // Car dealerships sell new vehicles (paid from the bank); each uses one 'car' from their stock.
+  dealership: {
+    vehicles: { sedan: 1800, sports: 4500, pickup: 2800, truck: 6500 },
+  },
+
+  // Delivery jobs: haul goods (provided free) from one market to another for pay into your bank.
+  jobs: {
+    max: 14, // open offers at once
+    everySec: 15, // a new offer appears this often (while below max)
+    timeLimitSec: 600, // to finish once accepted
+    offerLifeSec: 300, // an offer nobody takes disappears after this
+    minQty: 10,
+    maxQty: 40,
+    valueShare: 0.12, // pay = goods value × this…
+    perDistance: 0.07, // …plus this per unit of distance
+  },
+
+  // NPC townsfolk walking between buildings and spending money: the town's demand.
+  townsfolk: {
+    perBuilding: 1.1, // how many live in town, per building
+    walkSpeed: 80,
+    minStaySec: 8, // time spent inside each place they visit
+    maxStaySec: 45,
+    wagePerVisit: 20, // $ they earn per stop (it's what they spend)
+    marketBasket: ['bread', 'furniture', 'fuel', 'glass', 'plastic', 'planks', 'parts'], // what they buy at markets
+    health: 40, // they can be shot (a crime); cars just shove them aside
+    bodyRadius: 16, // for being pushed out of the way of cars
+    replaceSec: 60, // someone new moves to town this long after a townsperson dies
+  },
+
+  // ---- crime and police (stage 4) -------------------------------------------------
+  // Each crime sets your wanted level to at least its stars — if the police see it, or a townsperson
+  // nearby calls it in. Alarms (robberies) always report.
+  crime: {
+    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, break_in: 1, carry_body: 2, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
+    policeSees: 1100, // police notice crimes this close
+    witnessSees: 450, // townsfolk out walking notice (and phone it in) this close
+    // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
+    // from where you were last seen; they give up this long (by stars) after last seeing you.
+    searchSec: [0, 30, 50, 75, 110, 150],
+  },
+  robbery: {
+    atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false },
+    shop: { sec: 4, min: 200, max: 600, cooldownSec: 300, needsGun: true },
+    bank: { sec: 10, min: 1500, max: 4000, cooldownSec: 600, needsGun: true },
+  },
+  // Selling contraband over the counter at shops and kiosks: they pay the base price, but every sale
+  // adds heat (value / heatPerValue); at 100 the place is raided and shut for raidClosedSec.
+  underTable: { heatPerValue: 250, heatDecayPerMin: 6, raidClosedSec: 300 },
+  // The black-market buyer behind the freight station: always buys contraband, for this share of base.
+  blackMarket: { share: 0.7 },
+  // Militsiya checkpoints on the roads. Stop in one and they search you; a bribe (cash) waves you through.
+  roadblocks: { count: 10, searchSec: 1.5, slowSpeed: 90, range: 500, checkWithinSec: 10, bribe: 500, bribeSec: 120, againSec: 45 },
+  // The freight train: every `everySec` it stops at the station for `dockSec` with export contracts.
+  railway: {
+    everySec: 8 * 60,
+    dockSec: 3 * 60,
+    speed: 650, // cruising (units/s)
+    wagons: 8,
+    contracts: [3, 5], // how many per train
+    premium: 1.5, // contract price = base × premium
+    contractValue: [2000, 9000], // each contract is worth about this much in total (at most ~a truckload)
+    jobShare: 0.7, // share of new delivery jobs that haul contract goods to the station
+    reach: 160,
+  },
+  // Working the land (the early-game living): borrow the site's tool from the foreman, hit the
+  // rocks / trees / wheat, sell the haul back to the foreman. Work sites fill whole country blocks.
+  work: {
+    sites: { mine: 1, logging: 3, farm: 4, oilwell: 3 }, // the oil fields pump on their own
+    tools: { mine: 'pickaxe', logging: 'axe', farm: 'scythe' },
+    takes: { mine: ['ore', 'sand', 'scrap'], logging: ['logs'], farm: ['wheat'] }, // what each foreman buys
+    prices: { mine: 40000, logging: 15000, farm: 12000 }, // to buy the whole site (bank)
+    sellBack: 0.5,
+    wageShare: 0.6, // the foreman pays this share of the base price per unit
+    npcProducePerSec: 0.1, // a work site's own output without players (raw sites otherwise make rawProducePerSec)
+    reach: 55, // from your edge to a rock / tree / wheat patch
+    swingSec: 0.5,
+    leaveRange: 400, // walk this far off the site and the tool goes back to the foreman
+    veinChance: 0.22, // share of the mine's rocks that are rich ore veins
+    extraSand: 0.25, extraScrap: 0.12, // a worked-out rock sometimes gives sand or scrap too
+    hp: { rock: 3, vein: 4, tree: 4, wheat: 1 }, // hits to work one out
+    yield: { vein: { ore: 2 }, tree: { logs: 3 }, wheat: { wheat: 2 } }, // (a rock: 1 ore)
+    regrowSec: { rock: 150, vein: 200, tree: 180, wheat: 90 },
+    nodes: {
+      mine: { gap: 100, density: 0.85, r: 26, kind: 'rock' },
+      logging: { gap: 120, density: 0.9, r: 30, kind: 'tree' },
+      farm: { gapX: 70, gapY: 54, density: 1, r: 26, kind: 'wheat', rows: true }, // straight rows, end to end, close together
+    },
+  },
+  // Bodies: loot them (E), carry them (slowly, no shooting), and hide them before someone finds them.
+  bodies: { reach: 55, waterReach: 40, lifeSec: 600, max: 60, carrySpeed: 0.65 },
+  pickpocket: { reach: 45, npcMin: 10, npcMax: 60, playerShare: 0.15, cooldownSec: 3 },
+  police: {
+    carsPerBuildings: 1 / 18, // patrol cars on duty, per building
+    footSpeed: 230,
+    responseSec: 8, // a reported crime takes this long before cars are sent
+    chaseThrottle: 0.85, // how hard they drive after you
+    searchRadius: 550, // hiding spots (trees, dumpsters, cars, buildings) they check round your last known spot
+    inspectSec: 1.5, // looking into each one
+    hideSeenRange: 140, // under a tree or in a parked car you're only noticed this close
+    exitRange: 260, // officers get out of the car this close to a suspect on foot…
+    stuckExitRange: 700, // …or this close if the car is stuck on something
+    arrestRange: 48,
+    arrestSec: 2.5, // standing next to an officer this long gets you arrested
+    shootFrom: 3, // officers shoot at suspects with this many stars or more
+    shootRange: 520,
+    fireEverySec: 0.8,
+    aimSpread: 0.18,
+    officerHealth: 100,
+    respawnSec: 60, // a downed officer is replaced at the station after this
+    bailPerStar: 250, // paid from cash, then the bank
+    jailSecPerStar: 30, // if you can't make bail
   },
 });

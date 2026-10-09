@@ -15,7 +15,10 @@ export class Client {
     this.room = null;
     this.player = null;
     this.rateLimiter = new RateLimiter(config.net.maxMessagesPerSecond, config.net.messageBurst);
+    this.chatLimiter = new RateLimiter(config.net.chatPerSecond, config.net.chatBurst);
+    this.name = null; // set on first join, kept for chat after death
     this.violations = 0;
+    this.account = null; // { id, name, bank, guest } once they first join
   }
 
   get isOpen() {

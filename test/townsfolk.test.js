@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { config } from '../src/config.js';
+import { World } from '../src/game/World.js';
+import { RoadGraph } from '../src/game/townsfolk.js';
+import { validateMap } from '../src/game/mapFile.js';
+import { hotbarOf } from '../src/game/cargo.js';
+
+test('road routes follow the roads through junctions', () => {
+  // An L of roads: a horizontal one at y≈500 from x 0–3000, a vertical one at x≈2500 from y 0–3000.
+  const graph = new RoadGraph([{ x: 0, y: 450, w: 3000, h: 100 }, { x: 2450, y: 0, w: 100, h: 3000 }]);
+  const route = graph.route({ x: 200, y: 500 }, { x: 2500, y: 2800 });
+  assert.deepEqual(route[0], { x: 200, y: 500 });
+  assert.ok(route.some((p) => p.x === 2500 && p.y === 500), 'turns at the junction');
+  assert.deepEqual(route.at(-1), { x: 2500, y: 2800 });
+});
+
+function town() {
+  const { map } = validateMap({
+    width: 5000,
+    height: 3000,
+    roads: [{ x: 0, y: 1400, w: 5000, h: 200 }],
+    buildings: [
+      { type: 'house', x: 500, y: 900, rot: 0 },
+      { type: 'shop', x: 2000, y: 900, rot: 0 },
+      { type: 'market', x: 3500, y: 800, rot: 0 },
+    ],
+  });
+  return new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
+}
+
+test('townsfolk go out walking, and buy where they arrive, draining stock', () => {
+  const world = town();
+  const folk = world.townsfolk;
+  assert.ok(folk.people.length > 0);
+  for (let i = 0; i < 30 * 60; i++) world.step(1 / 30); // a minute: everyone has left their first stop
+  assert.ok(folk.people.some((p) => p.inside <= 0 || p.at !== p.dest), 'people have been out and about');
+
+  const shopSpot = folk.spots.find((s) => s.kind === 'shop');
+  const shop = world.economy.markets.get(shopSpot.building);
+  const before = shop.goods.bread.stock;
+  for (const person of folk.people) folk.visit(person, shopSpot);
+  assert.ok(shop.goods.bread.stock < before, `bread ${before} → ${shop.goods.bread.stock}`);
+});
+
+test('walking or driving into townsfolk does nothing to them and is no crime', () => {
+  const world = town();
+  const person = world.townsfolk.people[0];
+  person.inside = 0;
+  const p = world.spawnPlayer('bumper');
+  p.x = person.x;
+  p.y = person.y;
+  for (let i = 0; i < 30; i++) world.step(1 / 30);
+  assert.equal(person.health, config.townsfolk.health);
+  assert.equal(p.wanted, 0);
+});
+
+test('meals use a shop\'s bread and cost more when bread is scarce; anyone can restock it', () => {
+  const world = town();
+  const eco = world.economy;
+  const shopB = world.buildings.find((b) => b.type === 'shop');
+  const shop = eco.markets.get(shopB.id);
+  const p = world.spawnPlayer('hungry');
+  p.x = shopB.npc.x;
+  p.y = shopB.npc.y + 40;
+  p.cash = 500;
+  const normal = eco.foodPrice(shop, 'burger');
+  shop.goods.bread.stock = 1;
+  assert.ok(eco.foodPrice(shop, 'burger') > normal, 'scarce bread, dearer burgers');
+  assert.equal(world.buy(p, 'burger'), 'sold_out', 'a burger needs 2 bread');
+  assert.equal(world.buy(p, 'apple'), null);
+  assert.equal(shop.goods.bread.stock, 0);
+  hotbarOf(p).add('bread', 5);
+  assert.equal(eco.trade(p, shopB.id, 'bread', 5, 'sell'), null);
+  assert.equal(shop.goods.bread.stock, 5);
+});

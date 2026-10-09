@@ -1,0 +1,295 @@
+import { config } from '../config.js';
+import { bezierPoint } from './terrain.js';
+import { WAREHOUSE_SIZES } from './buildings.js';
+import { SIDEWALK, inBox } from './placement.js';
+
+// NPC townsfolk: they walk out of a building, along its dirt path to the road, along the roads to
+// another building's path, and go in for a while. Where they go, they spend: food at shops (bread),
+// fuel at gas stations, goods at markets. That spending is the town's demand.
+//
+// Walking happens on a small graph of the road centre-lines (junctions and ends are nodes), each
+// townsperson keeping to one side of the road: on the sidewalk in town, the verge in the country.
+
+/** Centre-line of a road: { horizontal, at (the fixed coordinate), from, to }. */
+function centreLine(r) {
+  const horizontal = r.w > r.h;
+  return horizontal ? { horizontal, at: r.y + r.h / 2, from: r.x, to: r.x + r.w, half: r.h / 2 } : { horizontal, at: r.x + r.w / 2, from: r.y, to: r.y + r.h, half: r.w / 2 };
+}
+
+const pointOn = (line, s) => (line.horizontal ? { x: s, y: line.at } : { x: line.at, y: s });
+
+export class RoadGraph {
+  constructor(roads) {
+    this.lines = roads.map(centreLine);
+    this.nodes = []; // { x, y, links: [{ to, cost }] }
+    // Each road's stops: its two ends plus every crossing with a perpendicular road.
+    const stops = this.lines.map((line) => [line.from, line.to]);
+    this.lines.forEach((a, i) =>
+      this.lines.forEach((b, j) => {
+        if (a.horizontal === b.horizontal) return;
+        // b crosses a at b.at along a, if each lies within the other's span.
+        if (b.at > a.from && b.at < a.to && a.at > b.from && a.at < b.to) {
+          stops[i].push(b.at);
+          stops[j].push(a.at);
+        }
+      }),
+    );
+    const key = new Map(); // "x,y" -> node index, so crossings are shared by both roads
+    const nodeAt = (p) => {
+      const k = `${Math.round(p.x)},${Math.round(p.y)}`;
+      if (!key.has(k)) {
+        key.set(k, this.nodes.length);
+        this.nodes.push({ x: p.x, y: p.y, links: [] });
+      }
+      return key.get(k);
+    };
+    this.lineNodes = stops.map((list, i) => {
+      const sorted = [...new Set(list.map(Math.round))].sort((a, b) => a - b);
+      const ids = sorted.map((s) => nodeAt(pointOn(this.lines[i], s)));
+      for (let k = 1; k < ids.length; k++) this.#link(ids[k - 1], ids[k]);
+      return sorted.map((s, k) => ({ s, id: ids[k] }));
+    });
+  }
+
+  #link(a, b) {
+    const cost = Math.hypot(this.nodes[a].x - this.nodes[b].x, this.nodes[a].y - this.nodes[b].y);
+    this.nodes[a].links.push({ to: b, cost });
+    this.nodes[b].links.push({ to: a, cost });
+  }
+
+  /** The road whose area p is in (or nearest to), and where along its centre-line p projects. */
+  locate(p) {
+    let best = null;
+    this.lines.forEach((line, i) => {
+      const s = Math.min(Math.max(line.horizontal ? p.x : p.y, line.from), line.to);
+      const q = pointOn(line, s);
+      const d = Math.hypot(q.x - p.x, q.y - p.y);
+      if (!best || d < best.d) best = { line: i, s, d };
+    });
+    return best;
+  }
+
+  /** Points along the roads from a to b (both near roads), shortest way round. */
+  route(a, b) {
+    if (!this.lines.length) return [b];
+    const from = this.locate(a);
+    const to = this.locate(b);
+    const lineA = this.lines[from.line];
+    if (from.line === to.line) return [pointOn(lineA, from.s), pointOn(lineA, to.s)];
+    // Dijkstra from a's two neighbouring stops to b's two neighbouring stops.
+    const around = (loc) => {
+      const stops = this.lineNodes[loc.line];
+      const after = stops.findIndex((x) => x.s >= loc.s);
+      const near = after === -1 ? [stops.at(-1)] : after === 0 ? [stops[0]] : [stops[after - 1], stops[after]];
+      return near.map((x) => ({ id: x.id, cost: Math.abs(x.s - loc.s) }));
+    };
+    const dist = new Map();
+    const prev = new Map();
+    const open = around(from);
+    for (const o of open) dist.set(o.id, o.cost);
+    const goals = new Map(around(to).map((x) => [x.id, x.cost]));
+    const done = new Set();
+    let best = null;
+    while (open.length) {
+      open.sort((x, y) => dist.get(x.id) - dist.get(y.id));
+      const { id } = open.shift();
+      if (done.has(id)) continue;
+      done.add(id);
+      if (goals.has(id)) {
+        const total = dist.get(id) + goals.get(id);
+        if (!best || total < best.total) best = { id, total };
+      }
+      for (const { to: next, cost } of this.nodes[id].links) {
+        const d = dist.get(id) + cost;
+        if (d < (dist.get(next) ?? Infinity)) {
+          dist.set(next, d);
+          prev.set(next, id);
+          open.push({ id: next });
+        }
+      }
+    }
+    if (!best) return [pointOn(lineA, from.s), b]; // disconnected roads: just head there
+    const ids = [];
+    for (let id = best.id; id !== undefined; id = prev.get(id)) ids.unshift(id);
+    return [pointOn(lineA, from.s), ...ids.map((id) => ({ x: this.nodes[id].x, y: this.nodes[id].y })), pointOn(this.lines[to.line], to.s)];
+  }
+}
+
+// Where townsfolk like to go, and how often (weights).
+const VISITS = { home: 40, shop: 18, gas: 8, market: 12, work: 22 };
+const HOMES = new Set(['house', 'cabin', 'mansion', 'barn', 'panelka']);
+
+export class Townsfolk {
+  constructor(world) {
+    this.world = world;
+    this.graph = new RoadGraph(world.roads);
+    this.people = [];
+    this.arrivals = []; // seconds until a replacement for each townsperson who died
+    // Places to visit: buildings with a dirt path that reaches a road. The path (door → road) is the
+    // last stretch of every trip there.
+    this.spots = [];
+    for (const path of world.paths) {
+      const b = world.buildings.find((x) => path.from[0] >= x.x && path.from[0] <= x.x + x.w && path.from[1] >= x.y && path.from[1] <= x.y + x.h);
+      if (!b || WAREHOUSE_SIZES[b.type] || !world.roads.some((r) => this.#onRoad(r, path.to))) continue; // warehouses are locked
+      const kind = b.type === 'shop' || b.type === 'kiosk' ? 'shop' : b.type === 'gas' ? 'gas' : b.type === 'market' ? 'market' : HOMES.has(b.type) ? 'home' : 'work';
+      const walk = Array.from({ length: 9 }, (_, i) => bezierPoint(path, i / 8)).map(([x, y]) => ({ x, y })); // door → road
+      this.spots.push({ building: b.id, kind, walk });
+    }
+    this.nextId = 1;
+    const count = this.spots.length ? Math.round(config.townsfolk.perBuilding * world.buildings.length) : 0;
+    for (let i = 0; i < count; i++) this.#spawn();
+  }
+
+  #onRoad(r, [x, y]) {
+    return x >= r.x - 15 && x <= r.x + r.w + 15 && y >= r.y - 15 && y <= r.y + r.h + 15;
+  }
+
+  #pick() {
+    const total = Object.values(VISITS).reduce((a, b) => a + b, 0);
+    for (let tries = 0; tries < 10; tries++) {
+      let roll = Math.random() * total;
+      const kind = Object.keys(VISITS).find((k) => (roll -= VISITS[k]) < 0);
+      const options = this.spots.filter((s) => s.kind === kind);
+      if (options.length) return options[Math.floor(Math.random() * options.length)];
+    }
+    return this.spots[Math.floor(Math.random() * this.spots.length)];
+  }
+
+  #spawn() {
+    const at = this.#pick();
+    this.people.push({
+      id: this.nextId++,
+      at, // where they are (inside) or last were
+      x: at.walk[0].x,
+      y: at.walk[0].y,
+      angle: 0,
+      inside: Math.random() * config.townsfolk.maxStaySec, // seconds left indoors
+      route: [],
+      side: Math.random() < 0.5 ? -1 : 1, // which pavement they keep to
+      speed: config.townsfolk.walkSpeed * (0.8 + Math.random() * 0.4),
+      wallet: 200 + Math.random() * 400,
+      mood: 0.7, // 0 (angry) – 1 (happy), nudged by what things cost
+      health: config.townsfolk.health,
+    });
+  }
+
+  /** Door → own path → roads → their path → door. */
+  #plan(person, dest) {
+    const out = person.at.walk; // door → road
+    const back = [...dest.walk].reverse(); // road → door
+    const roads = this.graph.route(out.at(-1), back[0]).map((p, i, list) => this.#pavement(p, list[i - 1] ?? p, list[i + 1] ?? p, person.side));
+    person.route = [...out, ...roads, ...back];
+    person.dest = dest;
+  }
+
+  /** Shift a road point sideways onto the pavement on this person's side. */
+  #pavement(p, before, after, side) {
+    const dx = after.x - before.x;
+    const dy = after.y - before.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) return p;
+    const loc = this.graph.locate(p);
+    const half = this.graph.lines[loc.line]?.half ?? 60;
+    const off = inBox(this.world.city, p.x, p.y) ? half + SIDEWALK / 2 : half - 18; // the sidewalk in town, the verge outside
+    return { x: p.x - (dy / len) * off * side, y: p.y + (dx / len) * off * side };
+  }
+
+  /** The townsperson out walking whom bullet path a→b (radius r) hits, or null. */
+  hitBy(ax, ay, bx, by, r, segmentDistSq) {
+    for (const person of this.people) {
+      if (person.inside > 0) continue;
+      if (segmentDistSq(ax, ay, bx, by, person.x, person.y) < (17 + r) ** 2) return person;
+    }
+    return null;
+  }
+
+  /** Returns true if it killed them. They're replaced by a newcomer a while later. */
+  damage(person, amount) {
+    person.health -= amount;
+    if (person.health > 0) return false;
+    this.people.splice(this.people.indexOf(person), 1);
+    this.arrivals.push(config.townsfolk.replaceSec);
+    return true;
+  }
+
+  step(dt) {
+    for (let i = this.arrivals.length - 1; i >= 0; i--) {
+      this.arrivals[i] -= dt;
+      if (this.arrivals[i] <= 0) {
+        this.arrivals.splice(i, 1);
+        if (this.spots.length) this.#spawn();
+      }
+    }
+    for (const person of this.people) {
+      if (person.inside > 0) {
+        person.inside -= dt;
+        if (person.inside <= 0) this.#plan(person, this.#pick());
+        continue;
+      }
+      let move = person.speed * dt;
+      while (move > 0 && person.route.length) {
+        const next = person.route[0];
+        const d = Math.hypot(next.x - person.x, next.y - person.y);
+        if (d <= move) {
+          person.x = next.x;
+          person.y = next.y;
+          person.route.shift();
+          move -= d;
+        } else {
+          person.angle = Math.atan2(next.y - person.y, next.x - person.x);
+          person.x += Math.cos(person.angle) * move;
+          person.y += Math.sin(person.angle) * move;
+          move = 0;
+        }
+      }
+      if (!person.route.length && person.dest) {
+        person.at = person.dest;
+        person.dest = null;
+        this.visit(person, person.at);
+        person.inside = config.townsfolk.minStaySec + Math.random() * (config.townsfolk.maxStaySec - config.townsfolk.minStaySec);
+      }
+    }
+  }
+
+  /** What they buy where they've arrived. Paying over the odds sours their mood, bargains lift it. */
+  visit(person, spot) {
+    const eco = this.world.economy;
+    const market = eco.markets.get(spot.building);
+    person.wallet += config.townsfolk.wagePerVisit; // townsfolk earn as they go about their day
+    if (!market) return;
+    const buy = (good, qty) => {
+      const entry = market.goods[good];
+      if (!entry || entry.stock < qty) {
+        person.mood = Math.max(0, person.mood - 0.05); // couldn't get it
+        return;
+      }
+      const ratio = eco.scarcity(market, good);
+      const cost = config.goods[good].base * ratio * qty;
+      if (cost > person.wallet) return;
+      person.wallet -= cost;
+      entry.stock -= qty;
+      person.mood = Math.min(1, Math.max(0, person.mood + (1 - ratio) * 0.1));
+    };
+    if (spot.kind === 'shop') buy('bread', 1 + Math.floor(Math.random() * 2));
+    if (spot.kind === 'gas') buy(Math.random() < 0.7 ? 'fuel' : 'bread', 1);
+    if (spot.kind === 'market') {
+      const basket = config.townsfolk.marketBasket;
+      buy(basket[Math.floor(Math.random() * basket.length)], 1);
+    }
+  }
+
+  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle]. */
+  visible(x, y, range) {
+    const out = [];
+    for (const p of this.people) {
+      if (p.inside > 0 || Math.abs(p.x - x) > range || Math.abs(p.y - y) > range) continue;
+      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100]);
+    }
+    return out;
+  }
+
+  /** Average mood, 0–1 (for elections later). */
+  mood() {
+    return this.people.length ? this.people.reduce((sum, p) => sum + p.mood, 0) / this.people.length : 0.7;
+  }
+}
