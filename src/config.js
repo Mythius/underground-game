@@ -139,8 +139,8 @@ export const config = Object.freeze({
   // Each browser gets an account automatically; it keeps only a bank balance.
   // Carried cash is dropped when you die or leave.
   accounts: {
-    startingBank: 20000, // generous while testing
-    topUpTo: 20000, // one-time top-up for browsers that already had an account (see AccountStore)
+    startingBank: 500, // what a new account (or a guest) starts with in the bank
+    topUpTo: 20000, // a one-time top-up that already ran (keyed by this amount: changing it would run it again)
     sessionDays: 365, // Google sign-ins (through CAS) stay signed in this long
     deviceDays: 3650, // a browser keeps its account this long
   },
