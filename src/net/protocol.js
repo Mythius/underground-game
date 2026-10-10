@@ -14,7 +14,7 @@ export const ClientMsg = Object.freeze({
   TRADE: 'trade', // { t, id, good, qty, side: 'buy' | 'sell' | 'under' (contraband over a shop counter) } at a market
   FACTORY: 'factory', // { t, id, action: 'process' } toll processing at a city factory
   WAREHOUSE: 'wh', // { t, id, action: 'buy' | 'sell' | 'place' | 'remove' | 'rotate' | 'configure' | 'load' | 'take' | 'mload' (hotbar slot -> machine at x,y) | 'mtake' (machine's 'in'/'out' slot -> cargo, via dock) | 'ptake' / 'pput' (qty of good off / onto the pallet or container at x,y, by hand), kind?, x?, y?, dir?, value?, slot?, dock?, good?, qty? }
-  REFUEL: 'refuel', // { t } fill your car at a gas station
+  REFUEL: 'refuel', // { t, can? } fill your car at a gas station, or (can) pour the fuel in your hand into the car beside you
   DROP: 'drop', // { t, slot? } Q (the selected hotbar slot) or dragging a slot out of the hotbar; { t, cash } X: drop cash on the ground
   TEAM: 'team', // { t, action: 'invite' (id = player id) | 'accept' | 'decline' (id = inviter's client id) | 'leave', id? }
   BUY_GUN: 'buygun', // { t, id, type } at a gun store (cash)
@@ -25,6 +25,7 @@ export const ClientMsg = Object.freeze({
   BRIBE: 'bribe', // { t } pay off the Militsiya at a roadblock
   LIGHTS: 'lights', // { t } C: toggle your car's headlights
   WORK: 'work', // { t, id, action: 'tool' | 'haul' | 'buy' | 'sell' } at a work site's foreman
+  GARAGE: 'garage', // { t, action: 'list' | 'take', id? } your saved cars, at the spot inside your home
   BODY: 'body', // { t, action: 'open' | 'loot' | 'carry' | 'drop', id?, slot? } (drop: the body you carry — into a dumpster, water, under a tree, or down)
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
 });
@@ -34,7 +35,7 @@ export const ServerMsg = Object.freeze({
   SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}] }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color, look }
   PLAYER_LEFT: 'player_left', // { t, id }
-  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
+  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
   DIED: 'died', // { t, killedBy, score }
   LEADERBOARD: 'leaderboard', // { t, entries: [{name, score}] }
   PONG: 'pong', // { t, ts, serverTime }
@@ -52,6 +53,7 @@ export const ServerMsg = Object.freeze({
   DONE: 'done', // { t, what, ... } a trade, factory action or refuel went through (process: batches, fee)
   TRAIN: 'train', // { t, x, speed, state, nextIn } the freight train (a few times a second)
   NODES: 'nodes', // { t, list: [[id, hp]] } rocks / trees / wheat worked or grown back
+  GARAGE: 'garage', // { t, cars: [[id, type, color, fuel, out (1: somewhere on the map)]] }
   BODY: 'body', // { t, id, kind, name, cash, items } what's on a body you're looking at
   NEWS: 'news', // { t, kind: 'raid', building } something everyone hears about
   SOUNDS_CHANGED: 'sounds_changed', // { t } the sound editor changed a sound; fetch GET /sounds again
@@ -130,7 +132,7 @@ const validators = {
     return { t: m.t, id: m.id, action: m.action, kind: m.kind, x: m.x, y: m.y, dir: m.dir, value: m.value, slot: m.slot, dock: m.dock === 'in' ? 'in' : 'out', good: m.good, qty: m.qty };
   },
 
-  [ClientMsg.REFUEL]: (m) => ({ t: m.t }),
+  [ClientMsg.REFUEL]: (m) => ({ t: m.t, can: m.can === true }),
 
   [ClientMsg.EAT]: (m) => ({ t: m.t }),
 
@@ -168,6 +170,8 @@ const validators = {
   [ClientMsg.LIGHTS]: (m) => ({ t: m.t }),
 
   [ClientMsg.WORK]: (m) => (Number.isInteger(m.id) && ['tool', 'haul', 'buy', 'sell'].includes(m.action) ? { t: m.t, id: m.id, action: m.action } : null),
+
+  [ClientMsg.GARAGE]: (m) => (m.action === 'list' ? { t: m.t, action: 'list' } : m.action === 'take' && Number.isInteger(m.id) ? { t: m.t, action: 'take', id: m.id } : null),
 
   [ClientMsg.BODY]: (m) =>
     ['open', 'loot', 'carry', 'drop'].includes(m.action) && (m.action === 'drop' || Number.isInteger(m.id)) && (m.action !== 'loot' || (Number.isInteger(m.slot) && m.slot >= -1 && m.slot < 64))

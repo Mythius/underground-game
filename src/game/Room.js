@@ -16,13 +16,15 @@ export class Room {
     this.store = store;
     this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
+    this.teams = new Teams();
+    this.#wireWorld();
+    this.carSaveTimer = 0;
     this.env = new Environment();
     this.lastOwners = '';
     this.sentLayouts = new Map(); // warehouse id -> layout version last broadcast
     this.saveTimer = 0;
     this.lastEnvBroadcast = 0;
     this.clients = new Set();
-    this.teams = new Teams();
     this.timer = null;
     this.stepMs = 1000 / config.tickRate;
     // Snapshots go out every N simulation ticks so they're evenly spaced for client interpolation.
@@ -53,6 +55,7 @@ export class Room {
 
   stop() {
     this.#saveWarehouses();
+    this.#saveCars();
     clearInterval(this.timer);
     this.timer = null;
     logger.info('room stopped', { room: this.id });
@@ -153,6 +156,8 @@ export class Room {
         if (list.length) c.send({ t: ServerMsg.WH_LIVE, list });
       }
     }
+    this.carSaveTimer += dt;
+    if (this.carSaveTimer >= config.homes.saveCarsEverySec) this.#saveCars();
     this.saveTimer += dt;
     if (this.saveTimer >= config.warehouses.saveEverySec || (warehouses.changed && this.saveTimer >= 2)) this.#saveWarehouses();
     for (const d of doorChanges) this.broadcast({ t: ServerMsg.DOOR, id: d.id, open: d.open });
@@ -167,6 +172,57 @@ export class Room {
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: victim.id });
     }
     if (this.teams.changed.size) this.#sendTeams();
+  }
+
+  /** Hooks from the world to this room: teams, and saving homes and bought cars. */
+  #wireWorld() {
+    const w = this.world;
+    w.areTeammates = (a, b) => {
+      const ca = this.#clientForPlayer(a);
+      const team = ca && this.teams.teamOf(ca);
+      return Boolean(team && [...team].some((c) => c.player === b));
+    };
+    w.homes.onAssign = (account, slot) => this.store?.setHomeSlot(account.id, slot);
+    w.onCarBought = (v) => {
+      if (!this.store || !v.owner?.id || v.owner.guest) return;
+      v.carId = this.store.addCar(v.owner.id, { type: v.type, color: v.color, fuel: v.fuel, cargo: v.cargo });
+    };
+    w.onCarLost = (v) => this.#saveCar(v);
+  }
+
+  #saveCar(v) {
+    try {
+      this.store?.saveCar(v.carId, { fuel: Math.round(v.fuel * 10) / 10, cargo: v.cargo });
+    } catch (err) {
+      logger.error('saving a car failed', { err: err.message });
+    }
+  }
+
+  /** Fuel and trunks of saved cars out on the road. */
+  #saveCars() {
+    this.carSaveTimer = 0;
+    if (!this.store) return;
+    for (const v of this.world.vehicles.values()) if (v.carId) this.#saveCar(v);
+  }
+
+  /** Garage (E at the spot inside your home): 'list' your saved cars, or 'take' one out. */
+  garage(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const saved = this.store && client.account?.id && !client.account.guest ? this.store.cars(client.account.id) : [];
+    if (msg.action === 'take') {
+      const car = saved.find((c) => c.id === msg.id);
+      if (car) this.#saveCars(); // (so a car that's out comes back with what's in it now)
+      const fresh = car && this.store.cars(client.account.id).find((c) => c.id === msg.id);
+      const error = fresh ? this.world.bringCar(p, fresh) : 'unknown';
+      if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+      client.send({ t: ServerMsg.DONE, what: 'garage_take', type: fresh.type });
+    }
+    const out = new Map([...this.world.vehicles.values()].filter((v) => v.carId).map((v) => [v.carId, v]));
+    client.send({
+      t: ServerMsg.GARAGE,
+      cars: saved.map((c) => [c.id, c.type, c.color, Math.round(out.get(c.id)?.fuel ?? c.fuel), out.has(c.id) ? 1 : 0]),
+    });
   }
 
   /** Owned warehouses back from the database, each into a warehouse of the same size. */
@@ -211,6 +267,7 @@ export class Room {
       buildings: this.world.buildings,
       doorReach: config.world.doorReach,
       vehicles: { reach: config.vehicles.reach, types: config.vehicles.types },
+      homes: { lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach },
       env: this.env.state(),
       rainGrip: config.environment.rainGrip,
       gravelGrip: config.vehicles.gravelGrip,
@@ -279,8 +336,10 @@ export class Room {
   loadMap(map) {
     for (const c of this.clients) c.player = null;
     this.#saveWarehouses();
+    this.#saveCars();
     this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
+    this.#wireWorld();
     this.lastOwners = '';
     this.sentLayouts.clear();
     for (const c of [...this.clients]) {
@@ -306,7 +365,9 @@ export class Room {
   /** client.account is set before this (the browser's account, or a guest one whose money isn't saved). */
   spawn(client, name, look) {
     if (client.player?.alive) return;
-    const player = this.world.spawnPlayer(name, look);
+    const account = client.account;
+    if (account?.id && !account.guest) this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
+    const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
     client.player = player;
     client.name = player.name;
@@ -389,9 +450,9 @@ export class Room {
       if (typeof result === 'string') error = result;
       else extra = result;
     } else if (msg.t === 'factory') error = eco.factoryAction(p, msg.id, msg.action);
-    else error = eco.refuel(p);
+    else error = msg.can ? this.world.pourFuel(p) : eco.refuel(p);
     if (error) return client.send({ t: ServerMsg.ERROR, code: error });
-    const what = msg.t === 'factory' ? msg.action : msg.t === 'trade' ? msg.side : msg.t === 'refuel' ? 'refuel' : msg.t;
+    const what = msg.t === 'factory' ? msg.action : msg.t === 'trade' ? msg.side : msg.t === 'refuel' ? (msg.can ? 'pour' : 'refuel') : msg.t;
     client.send({ t: ServerMsg.DONE, what, good: msg.good, qty: msg.qty, type: msg.type, ...extra });
     if (msg.id !== undefined) this.inspect(client, msg.id);
   }
@@ -523,6 +584,12 @@ export class Room {
         return v ? [v.id, v.type, v.cargo.map((s) => (s ? [s.good, s.qty] : null))] : null;
       })(),
       slot: me.selected,
+      home: (() => { // my home: [building id, garage spot x, y]
+        const b = this.world.homes.homeOf(me.account);
+        if (!b) return null;
+        const at = this.world.homes.spawnPoint(b);
+        return [b.id, Math.round(at.x), Math.round(at.y)];
+      })(),
       // While driving: the car's exact state, so the client can predict it.
       ride: me.vehicle && me.vehicle.driver !== me ? me.vehicle.id : 0, // a passenger: the car you're riding in
       car: me.vehicle?.driver === me ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10] : null,
@@ -557,7 +624,7 @@ export class Room {
       const vehicles = [];
       for (const e of this.world.queryView(cx, cy)) {
         if (e.kind === 'vehicle') {
-          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0]);
+          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0, me && this.world.carLockedFor(e, me) ? 1 : 0]);
         } else if (e.kind === 'player') {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them

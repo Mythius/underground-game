@@ -117,6 +117,7 @@ export const config = Object.freeze({
     reach: 40, // how far past your edge you can get in
     crushMinSpeed: 120, // slower than this, cars just push people
     exitDamage: 35, // to the driver when their vehicle is destroyed
+    lockpickSec: 5, // holding F at someone else's car to pick its lock (it stays open until they're back in it)
     types: {
       // grip: how fast sideways sliding dies away (higher = stickier). driftGrip applies while holding Space.
       sedan: { name: 'Lada 2107', length: 90, width: 46, maxSpeed: 420, accel: 360, brake: 800, turnRate: 2.6, grip: 7, driftGrip: 0.9, health: 180, crush: 60, spawnWeight: 40 },
@@ -230,7 +231,9 @@ export const config = Object.freeze({
     refinery: { name: 'Refinery', recipes: [{ in: { crude: 2 }, out: { fuel: 1, plastic: 1 } }], sec: 12 },
     glassworks: { name: 'Glassworks', recipes: [{ in: { sand: 3 }, out: { glass: 1 } }], sec: 10 },
     carfactory: { name: 'Car factory', recipes: [{ in: { parts: 6, glass: 4, plastic: 6 }, out: { car: 1 } }], sec: 90 },
-    gunfactory: { name: 'Gun factory', recipes: [{ in: { steel: 3, parts: 2 }, out: { guns: 1 } }], sec: 40 },
+    // Licensed guns are made for the gun stores only: nobody can have them made here or in a warehouse
+    // (players make unregistered ones, on a gunsmith bench).
+    gunfactory: { name: 'Gun factory', recipes: [{ in: { steel: 3, parts: 2 }, out: { guns: 1 } }], sec: 40, noToll: true },
   },
   factory: {
     reach: 130, // from the office clerk to your edge
@@ -275,7 +278,7 @@ export const config = Object.freeze({
     mill: { name: 'Mill', icon: '🌾', price: 700, recipes: ['flourmill:0'] },
     furnace: { name: 'Furnace', icon: '🔥', price: 3000, recipes: ['foundry:0', 'foundry:1', 'glassworks:0', 'bakery:0'] },
     press: { name: 'Press', icon: '🛢️', price: 4000, recipes: ['refinery:0', 'machineshop:0'] },
-    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'gunfactory:0', 'carfactory:0'] },
+    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'carfactory:0'] },
     // Illegal: their output is contraband, and running them draws the Militsiya (see `heat`).
     still: { name: 'Still', icon: '🍾', price: 1500, recipes: ['illegal:vodka'], illegal: true },
     printer: { name: 'Printing press', icon: '💸', price: 5000, recipes: ['illegal:counterfeit'], illegal: true },
@@ -326,8 +329,10 @@ export const config = Object.freeze({
     pumpReach: 220, // a car this close to a gas station's clerk can be refilled
   },
 
-  // Gun stores sell guns for cash; each sale uses `uses` of their 'guns' stock (restocked by gun factories).
+  // Gun stores sell (licensed) guns for cash; each sale uses `uses` of their 'guns' stock (restocked by
+  // gun factories). On top of the price you pay the gun licence tax, a share of it.
   gunstore: {
+    taxRate: 0.3,
     guns: {
       smg: { price: 550, uses: 1 },
       shotgun: { price: 450, uses: 1 },
@@ -374,6 +379,18 @@ export const config = Object.freeze({
     purseShare: 0.15, // of your max health per hit
     purseHits: 2, // hits before they run for it
     fleeSec: 5, // running away this long, then (if still alive) they call the cops
+  },
+
+  // Every account gets a small starter house: you (re)spawn there, and E inside opens your garage of
+  // bought cars. Homes (houses, cabins, mansions, apartment blocks) are locked to everyone but their
+  // owner; hold F at a door to pick it (a break-in).
+  homes: {
+    starterTypes: ['house', 'cabin'], // what can be handed out as a starter house
+    lockedTypes: ['house', 'cabin', 'mansion', 'panelka'], // whose outside doors are locked
+    lockpickSec: 5,
+    unlockedSec: 90, // a picked lock stays open this long
+    garageReach: 140, // from the spot inside where you spawn
+    saveCarsEverySec: 20, // fuel and trunk of saved cars out on the road
   },
 
   // ---- crime and police (stage 4) -------------------------------------------------

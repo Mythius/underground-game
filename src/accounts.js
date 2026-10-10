@@ -42,6 +42,19 @@ export class AccountStore {
         data TEXT NOT NULL,              -- JSON: machines, belts, dock stock (Warehouse.save())
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS homes (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+        slot TEXT NOT NULL               -- which starter house ("house-3"); another free one is used if it's gone or taken
+      );
+      CREATE TABLE IF NOT EXISTS cars (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        type TEXT NOT NULL,
+        color TEXT NOT NULL,
+        fuel REAL NOT NULL,
+        cargo TEXT NOT NULL,             -- JSON: trunk slots ({ good, qty } | null)
+        created_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS sessions (
         token TEXT PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -158,6 +171,36 @@ export class AccountStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /** The starter house slot an account had, or null. */
+  homeSlot(accountId) {
+    return this.db.prepare('SELECT slot FROM homes WHERE account_id = ?').get(accountId)?.slot ?? null;
+  }
+
+  setHomeSlot(accountId, slot) {
+    this.db.prepare('INSERT INTO homes (account_id, slot) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET slot = excluded.slot').run(accountId, slot);
+  }
+
+  /** An account's bought cars: [{ id, type, color, fuel, cargo }]. */
+  cars(accountId) {
+    return this.db
+      .prepare('SELECT id, type, color, fuel, cargo FROM cars WHERE account_id = ? ORDER BY id')
+      .all(accountId)
+      .map((r) => ({ id: r.id, type: r.type, color: r.color, fuel: r.fuel, cargo: JSON.parse(r.cargo) }));
+  }
+
+  /** Saves a newly bought car; returns its id. */
+  addCar(accountId, { type, color, fuel, cargo }) {
+    const { lastInsertRowid } = this.db
+      .prepare('INSERT INTO cars (account_id, type, color, fuel, cargo, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(accountId, type, color, fuel, JSON.stringify(cargo), Date.now());
+    return Number(lastInsertRowid);
+  }
+
+  /** A car's fuel and trunk, as they are now. */
+  saveCar(id, { fuel, cargo }) {
+    this.db.prepare('UPDATE cars SET fuel = ?, cargo = ? WHERE id = ?').run(fuel, JSON.stringify(cargo), id);
   }
 
   setBank(id, amount) {

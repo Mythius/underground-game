@@ -101,37 +101,50 @@ test('machines only take their inputs, from behind; removing refunds; rotate and
   assert.equal(act({ action: 'place', kind: 'belt', x: 5, y: 5, dir: E }), 'go_inside');
 });
 
-test('splitters alternate, filters sort, mergers join', () => {
+test('splitters deal left, forward and right in turn, filters sort, mergers join', () => {
   const { wh, act } = town();
   act({ action: 'buy' });
   wh.owner.bank = 1e6;
-  // Splitter at (4,2) facing east: items go north (4,1) and south (4,3) in turn.
+  // Splitter at (4,2) facing east: items go north (4,1), east (5,2) and south (4,3) in turn.
   act({ action: 'place', kind: 'splitter', x: 4, y: 2, dir: E });
   act({ action: 'place', kind: 'belt', x: 4, y: 1, dir: N });
+  act({ action: 'place', kind: 'belt', x: 5, y: 2, dir: E });
   act({ action: 'place', kind: 'belt', x: 4, y: 3, dir: S });
   const split = wh.at(4, 2);
-  const seen = [];
-  for (let i = 0; i < 2; i++) {
-    split.item = { good: 'logs', p: 1 };
-    wh.at(4, 1).item = null;
-    wh.at(4, 3).item = null;
-    wh.step(0.01);
-    seen.push(wh.at(4, 1).item ? 'north' : wh.at(4, 3).item ? 'south' : 'stuck');
-  }
-  assert.deepEqual(seen.sort(), ['north', 'south']);
+  const outs = { north: wh.at(4, 1), east: wh.at(5, 2), south: wh.at(4, 3) };
+  const deal = (n) => {
+    const seen = [];
+    for (let i = 0; i < n; i++) {
+      split.item = { good: 'logs', p: 1 };
+      for (const o of Object.values(outs)) o.item = null;
+      wh.step(0.01);
+      seen.push(Object.keys(outs).find((k) => outs[k].item) ?? 'stuck');
+    }
+    return seen;
+  };
+  assert.deepEqual(deal(3).sort(), ['east', 'north', 'south'], 'one each way');
+  // A way that's blocked is skipped: the others take turns.
+  act({ action: 'remove', x: 5, y: 2 });
+  delete outs.east;
+  assert.deepEqual(deal(4).sort(), ['north', 'north', 'south', 'south']);
 
-  // Filter at (7,2) facing east, set to plastic: plastic goes east, everything else south (its right).
+  // Filter at (7,2) facing east, set to plastic: everything else goes straight on (east), plastic
+  // north and south (its left and right) in turn.
   act({ action: 'place', kind: 'filter', x: 7, y: 2, dir: E });
   act({ action: 'configure', x: 7, y: 2, value: 'plastic' });
   act({ action: 'place', kind: 'belt', x: 8, y: 2, dir: E });
+  act({ action: 'place', kind: 'belt', x: 7, y: 1, dir: N });
   act({ action: 'place', kind: 'belt', x: 7, y: 3, dir: S });
   const filter = wh.at(7, 2);
-  filter.item = { good: 'fuel', p: 1 };
-  wh.step(0.01);
-  assert.equal(wh.at(7, 3).item?.good, 'fuel');
-  filter.item = { good: 'plastic', p: 1 };
-  wh.step(0.01);
-  assert.equal(wh.at(8, 2).item?.good, 'plastic');
+  const sort = (good) => {
+    for (const [x, y] of [[8, 2], [7, 1], [7, 3]]) wh.at(x, y).item = null;
+    filter.item = { good, p: 1 };
+    wh.step(0.01);
+    return wh.at(8, 2).item ? 'east' : wh.at(7, 1).item ? 'north' : wh.at(7, 3).item ? 'south' : 'stuck';
+  };
+  assert.equal(sort('fuel'), 'east', 'not the chosen good: straight on');
+  assert.deepEqual([sort('plastic'), sort('plastic')].sort(), ['north', 'south'], 'the chosen good: left and right in turn');
+  assert.equal(sort('fuel'), 'east');
 
   // A plain belt refuses items from the side; a merger takes them.
   act({ action: 'place', kind: 'belt', x: 1, y: 1, dir: E });

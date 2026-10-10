@@ -14,6 +14,7 @@ import { Townsfolk } from './townsfolk.js';
 import { Police } from './police.js';
 import { hotbarOf, trunkOf } from './cargo.js';
 import { Warehouses } from './warehouse.js';
+import { Homes } from './homes.js';
 import { generateBays, generateLots, makeLot } from './parking.js';
 import { Railway, planRailway, railCorridor } from './railway.js';
 import { Roadblocks } from './roadblocks.js';
@@ -156,6 +157,10 @@ export class World {
     this.vehicleSpots = [...this.vehicles.values()].map((v) => ({ type: v.type, x: Math.round(v.x), y: Math.round(v.y), angle: v.angle }));
     this.police = new Police(this); // after vehicle ids start, so cruisers get their own
     this.warehouses = new Warehouses(this);
+    this.homes = new Homes(this);
+    this.areTeammates = () => false; // (a, b) players on the same team (the room knows; set there)
+    this.onCarBought = null; // (vehicle) a car bought at a dealership: save it to the owner's garage
+    this.onCarLost = null; // (vehicle) a saved car blown up: what was in its trunk is gone
     this.roadblocks = new Roadblocks(this, railStrip); // after vehicle ids start: their Militsiya cars are vehicles
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
@@ -401,6 +406,26 @@ export class World {
     return null;
   }
 
+  /** E with fuel in hand beside a car: pour it in. One fuel fills 10% of a tank, as at the pumps. */
+  pourFuel(p) {
+    const slot = p.inventory[p.selected];
+    if (slot?.good !== 'fuel') return 'no_fuel';
+    if (p.vehicle || p.jailed || p.hidden) return 'busy';
+    let car = null;
+    let best = config.vehicles.reach;
+    for (const v of this.vehicles.values()) {
+      const d = this.#vehicleDistance(v, p.x, p.y) - p.radius;
+      if (d < best) [car, best] = [v, d];
+    }
+    if (!car) return 'no_car_near';
+    const units = Math.min(Math.ceil((100 - car.fuel) / 10), slot.qty);
+    if (car.fuel >= 99 || units <= 0) return 'tank_full';
+    slot.qty -= units;
+    if (slot.qty <= 0) p.inventory[p.selected] = null;
+    car.fuel = Math.min(100, car.fuel + units * 10);
+    return null;
+  }
+
   /** Food eaten heals a little every tick until it's done. */
   #digest(dt) {
     for (const p of this.players.values()) {
@@ -480,6 +505,32 @@ export class World {
         return v;
       }
     }
+    return null;
+  }
+
+  /**
+   * Out of the garage: one of p's saved cars (`saved`: { id, type, color, fuel, cargo }) parked
+   * outside their home. If it's already out somewhere with nobody in it, it's brought back here.
+   */
+  bringCar(p, saved) {
+    const home = this.homes.homeOf(p.account);
+    if (!home) return 'no_home';
+    if (!this.homes.atGarage(p)) return 'too_far';
+    if (!config.vehicles.types[saved.type]) return 'unknown';
+    const out = [...this.vehicles.values()].find((v) => v.carId === saved.id);
+    if (out?.driver || out?.passenger) return 'car_in_use';
+    if (out) {
+      Object.assign(saved, { fuel: out.fuel, cargo: out.cargo.map((s) => s && { ...s }) });
+      this.vehicles.delete(out.id);
+    }
+    const v = this.parkNewVehicle(saved.type, home.id, p.account);
+    if (!v) {
+      if (out) this.vehicles.set(out.id, out); // nowhere to put it: leave it where it was
+      return 'no_parking';
+    }
+    Object.assign(v, { carId: saved.id, color: saved.color, fuel: saved.fuel });
+    saved.cargo.forEach((s, i) => { if (i < v.cargo.length) v.cargo[i] = s && { good: s.good, qty: s.qty }; });
+    p.lastVehicle = v;
     return null;
   }
 
@@ -589,8 +640,10 @@ export class World {
     return f;
   }
 
-  spawnPlayer(name, look = null) {
-    const { x, y } = this.#findSpawnPoint();
+  /** A new player: at home if `account` has one (see Homes), otherwise somewhere open. */
+  spawnPlayer(name, look = null, account = null) {
+    const home = this.homes.homeOf(account);
+    const { x, y } = home ? this.homes.spawnPoint(home) : this.#findSpawnPoint();
     const p = new Player(this.nextEntityId++, name, x, y, look);
     this.players.set(p.id, p);
     return p;
@@ -685,6 +738,7 @@ export class World {
 
     this.economy.step(dt);
     this.warehouses.step(dt);
+    this.homes.step(dt);
     this.roadblocks.step(dt);
     if (this.railway) {
       const { killed, wrecked } = this.railway.step(dt);
@@ -729,6 +783,39 @@ export class World {
       if (this.pickups.size < this.opts.pickupMax) this.grid.insert(this.spawnPickup());
     }
     return { deaths, doorChanges, explosions };
+  }
+
+  /** Is `door` locked to p: someone else's warehouse or a home that isn't theirs (lock not picked)? */
+  lockedFor(door, p) {
+    return this.warehouses.lockedFor(door, p) || this.homes.lockedFor(door, p);
+  }
+
+  /** A door locked to p within reach, for lock picking. */
+  lockedDoorNear(p, reach = 90) {
+    for (const d of this.doors) {
+      if (d.open || !this.lockedFor(d, p)) continue;
+      if (Math.hypot(d.x + d.w / 2 - p.x, d.y + d.h / 2 - p.y) < reach + p.radius) return d;
+    }
+    return null;
+  }
+
+  /** Someone else's car is locked to you (not their teammates) until its lock is picked. */
+  carLockedFor(v, p) {
+    if (!v.owner || v.owner === p.account || v.picked) return false;
+    const owner = [...this.players.values()].find((o) => o.account === v.owner);
+    return !(owner && this.areTeammates(owner, p));
+  }
+
+  /** A car locked to p within reach (and nobody in it), for lock picking. */
+  lockedCarNear(p) {
+    let best = null;
+    let bestDist = config.vehicles.reach;
+    for (const v of this.vehicles.values()) {
+      if (v.driver || v.passenger || !this.carLockedFor(v, p)) continue;
+      const d = this.#vehicleDistance(v, p.x, p.y) - p.radius;
+      if (d < bestDist) [best, bestDist] = [v, d];
+    }
+    return best;
   }
 
   /** Distance from a point to the edge of a vehicle's body (negative = inside). */
@@ -807,6 +894,10 @@ export class World {
         this.hideIn(p, best.dumpster);
         continue;
       }
+      if (best.kind === 'vehicle' && this.carLockedFor(best, p)) {
+        this.police.events.push({ player: p, kind: 'error', code: 'car_locked' });
+        continue;
+      }
       if (best.kind === 'vehicle' && best.driver) { // someone's driving: hop in beside them
         best.passenger = p;
         p.vehicle = best;
@@ -817,6 +908,7 @@ export class World {
       if (best.kind === 'vehicle') {
         if (best.police) this.police.crime(p, 'steal_police_car');
         else if (best.owner && best.owner !== p.account) this.police.crime(p, 'steal_car');
+        if (best.owner && best.owner === p.account) best.picked = false; // back in your own car: locked again
         best.driver = p;
         best.lights = true; // headlights on as you set off (C toggles them)
         p.vehicle = best;
@@ -825,7 +917,7 @@ export class World {
         p.y = best.y;
         continue;
       }
-      if (this.warehouses.lockedFor(best, p)) {
+      if (this.lockedFor(best, p)) {
         this.police.events.push({ player: p, kind: 'error', code: 'locked' });
         continue;
       }
@@ -1001,7 +1093,10 @@ export class World {
   /** A vehicle at 0 health blows up: whoever is in it is thrown out and hurt, and a new one turns up later. */
   #destroyVehicle(v, attacker, deaths, explosions) {
     this.vehicles.delete(v.id);
-    this.vehicleRespawns.push(config.vehicles.respawnSec);
+    if (v.carId) { // a saved car: it's back in the owner's garage (insured), but not what was in the trunk
+      v.cargo.fill(null);
+      this.onCarLost?.(v);
+    } else this.vehicleRespawns.push(config.vehicles.respawnSec);
     explosions.push({ x: Math.round(v.x), y: Math.round(v.y) });
     for (const p of [v.driver, v.passenger]) {
       if (!p) continue;

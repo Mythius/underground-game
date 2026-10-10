@@ -253,3 +253,18 @@ test('dragging: drop any hotbar slot', () => {
   assert.equal(player.inventory[slot], null);
   assert.equal(world.drop(player, 0), 'cant_drop_starter');
 });
+
+test('fuel in hand pours into the car beside you, 10% of a tank each', () => {
+  const { world, player } = town();
+  Object.assign(player, { x: 2000, y: 2000 });
+  carry(player, { fuel: 3 });
+  player.selected = player.inventory.findIndex((s) => s?.good === 'fuel');
+  assert.equal(world.pourFuel(player), 'no_car_near');
+  const car = new Vehicle(9002, 'sedan', 2000, 2070, 0);
+  car.fuel = 85; // needs two
+  world.vehicles.set(car.id, car);
+  assert.equal(world.pourFuel(player), null);
+  assert.equal(car.fuel, 100);
+  assert.equal(carried(player).fuel, 1, 'only what the tank needed');
+  assert.equal(world.pourFuel(player), 'tank_full');
+});

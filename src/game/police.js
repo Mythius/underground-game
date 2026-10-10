@@ -121,11 +121,18 @@ export class Police {
     const keeper = near(w.shopkeepers.filter((k) => k.building), config.economy.shopReach);
     const [kind, target] = atm ? ['atm', atm] : teller ? ['bank', teller] : keeper ? ['shop', keeper] : [null, null];
     if (!kind) {
-      // Someone's locked warehouse: pick the lock. Only a crime if somebody sees it.
-      const door = w.warehouses.lockedDoorNear(p);
-      if (!door) return 'nothing_to_rob';
-      p.robbing = { kind: 'lockpick', door, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec: config.warehouses.lockpickSec };
-      this.crime(p, 'break_in');
+      // Someone's locked warehouse or home, or their car: pick the lock. Only a crime if somebody sees it.
+      const door = w.lockedDoorNear(p);
+      if (door) {
+        const sec = w.warehouses.all.has(door.building) ? config.warehouses.lockpickSec : config.homes.lockpickSec;
+        p.robbing = { kind: 'lockpick', door, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec };
+        this.crime(p, 'break_in');
+        return null;
+      }
+      const car = w.lockedCarNear(p);
+      if (!car) return 'nothing_to_rob';
+      p.robbing = { kind: 'carpick', car, x: car.x, y: car.y, elapsed: 0, sec: config.vehicles.lockpickSec };
+      this.crime(p, 'steal_car');
       return null;
     }
     const rule = config.robbery[kind];
@@ -156,8 +163,15 @@ export class Police {
       }
       r.elapsed += dt;
       if (r.elapsed < r.sec) continue;
+      if (r.kind === 'carpick') {
+        if (this.world.vehicles.has(r.car.id)) r.car.picked = true; // open to anyone until the owner's back in it
+        this.events.push({ player: p, kind: 'picked_car' });
+        p.robbing = null;
+        continue;
+      }
       if (r.kind === 'lockpick') {
-        this.world.warehouses.unlock(r.door);
+        if (this.world.warehouses.all.has(r.door.building)) this.world.warehouses.unlock(r.door);
+        else this.world.homes.unlock(r.door);
         r.door.open = true;
         this.world.pendingDoors.push(r.door);
         this.events.push({ player: p, kind: 'picked' });

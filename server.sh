@@ -1,3 +1,3 @@
 cd /home/matthias/Github/underground-game
-# --watch restarts the server whenever a file in src/ or public/ changes
-exec /home/matthias/.nvm/versions/node/v25.7.0/bin/node --watch-path=src --watch-path=public src/index.js
+# No --watch: the server only restarts when you restart the service (sudo systemctl restart underground)
+exec /home/matthias/.nvm/versions/node/v25.7.0/bin/node src/index.js

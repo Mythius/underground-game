@@ -282,6 +282,9 @@ function handleMessage(client, msg) {
     case ClientMsg.TRAIN:
       client.room?.trainAction(client, msg);
       break;
+    case ClientMsg.GARAGE:
+      client.room?.garage(client, msg);
+      break;
     case ClientMsg.BODY:
       client.room?.bodyAction(client, msg);
       break;

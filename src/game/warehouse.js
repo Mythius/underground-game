@@ -13,8 +13,8 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 //   belt     takes items moving its way;           passes them forward
 //   turnL/R  takes items arriving from its left/right side (they turn left/right) and passes them forward
 //   merger   takes from behind and both sides;     passes forward
-//   splitter takes from behind;                    alternates left / right
-//   filter   takes from behind;                    its chosen good goes forward, everything else right
+//   splitter takes from behind;                    deals items out left, forward and right in turn (skipping a blocked way)
+//   filter   takes from behind;                    everything else goes forward, its chosen good left and right in turn
 //   machine  takes recipe inputs moving its way (into its back half); puts outputs out of its front
 //   IN dock  puts the goods unloaded into it out onto any belt leading away from it
 //   OUT dock takes anything, from any side
@@ -218,13 +218,21 @@ export class Warehouse {
   #forward(piece) {
     const good = piece.item.good;
     let exits;
-    if (piece.kind === 'splitter') exits = piece.alt ? [turn(piece.dir, 1), turn(piece.dir, -1)] : [turn(piece.dir, -1), turn(piece.dir, 1)];
-    else if (piece.kind === 'filter') exits = [good === piece.filter ? piece.dir : turn(piece.dir, 1)];
+    if (piece.kind === 'splitter') {
+      const ways = [turn(piece.dir, -1), piece.dir, turn(piece.dir, 1)]; // left, forward, right
+      const next = (piece.alt ?? 0) % 3;
+      exits = [...ways.slice(next), ...ways.slice(0, next)];
+    }
+    else if (piece.kind === 'filter') {
+      const sides = piece.alt ? [turn(piece.dir, 1), turn(piece.dir, -1)] : [turn(piece.dir, -1), turn(piece.dir, 1)];
+      exits = good === piece.filter ? sides : [piece.dir];
+    }
     else exits = [piece.dir];
     for (const m of exits) {
       if (this.#handTo(piece.x + DIRS[m][0], piece.y + DIRS[m][1], m, good)) {
         piece.item = null;
-        if (piece.kind === 'splitter') piece.alt ^= 1;
+        if (piece.kind === 'splitter') piece.alt = ([turn(piece.dir, -1), piece.dir, turn(piece.dir, 1)].indexOf(m) + 1) % 3; // the next way along
+        if (piece.kind === 'filter' && m !== piece.dir) piece.alt = m === turn(piece.dir, -1) ? 1 : 0; // the other side next
         return;
       }
     }
@@ -422,7 +430,7 @@ export class Warehouse {
       const piece = this.at(p.x, p.y);
       if (p.recipe && config.machines[p.kind]?.recipes.includes(p.recipe)) piece.recipe = p.recipe;
       if (p.filter && config.goods[p.filter]) piece.filter = p.filter;
-      if (piece.in && p.in) piece.in = { ...p.in };
+      if (piece.in && p.in && piece.recipe === p.recipe) piece.in = { ...p.in }; // (a recipe no longer allowed resets, inputs and all)
       if (piece.out && p.out) piece.out = { ...p.out };
       if (piece.w === 1 && p.item && config.goods[p.item.good]) piece.item = { good: p.item.good, p: p.item.p };
       if (piece.kind === 'container' && p.stock) piece.stock = { ...p.stock };
@@ -468,15 +476,6 @@ export class Warehouses {
     const w = this.all.get(door.building);
     // Anyone inside can always get out.
     return Boolean(w?.owner && w.owner !== p.account && w.unlockedUntil < this.time && !w.contains(p.x, p.y));
-  }
-
-  /** A locked (to p) warehouse door within reach, for lock picking. */
-  lockedDoorNear(p, reach = 90) {
-    for (const d of this.world.doors) {
-      if (d.open || !this.lockedFor(d, p)) continue;
-      if (Math.hypot(d.x + d.w / 2 - p.x, d.y + d.h / 2 - p.y) < reach + p.radius) return d;
-    }
-    return null;
   }
 
   /** A picked lock: anyone can open the doors for a while. */

@@ -96,6 +96,8 @@
       top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 4;
       width: min(86vmin, 900px); height: min(86vmin, 900px);
     }
+    #maptip { position: fixed; z-index: 6; pointer-events: none; padding: .2rem .45rem; border-radius: .35rem; background: rgba(15, 15, 15, .92);
+      border: 1px solid rgba(255, 255, 255, .25); color: #eee; font-size: .78rem; font-weight: 600; white-space: nowrap; transform: translate(12px, 10px); }
     #minimap-label {
       position: fixed; top: calc(1rem + 196px); left: 1rem; z-index: 2; width: 194px; text-align: center;
       font-size: .7rem; color: #ddd; text-shadow: 0 1px 2px #000; pointer-events: none;
@@ -161,6 +163,15 @@
     #bodypanel .cell .qty { position: absolute; right: .2rem; bottom: .05rem; font-size: .7rem; font-weight: 800; text-shadow: 0 1px 2px #000; }
     #bodypanel button.act { font: inherit; font-size: .8rem; padding: .3rem .6rem; border-radius: .35rem; border: 1px solid #555; background: #262626; color: #eee; cursor: pointer; margin-right: .3rem; }
     #bodypanel .note { color: #888; font-size: .7rem; margin-top: .35rem; }
+    #garagepanel { position: fixed; left: 50%; bottom: 6.5rem; transform: translateX(-50%); z-index: 4; padding: .6rem .7rem; border-radius: .7rem;
+      background: rgba(22, 22, 22, .94); border: 2px solid #c9a46a; font-size: .8rem; color: #ddd; text-align: left; min-width: 280px; }
+    #garagepanel h3 { margin: 0 0 .45rem; font-size: .95rem; }
+    #garagepanel .car { display: flex; align-items: center; gap: .5rem; padding: .3rem 0; border-top: 1px solid #333; }
+    #garagepanel .swatch { width: 1rem; height: 1rem; border-radius: .2rem; border: 1px solid #000; }
+    #garagepanel .name { flex: 1; }
+    #garagepanel .fuel { color: #999; font-size: .72rem; }
+    #garagepanel button { font: inherit; font-size: .78rem; padding: .25rem .55rem; border-radius: .35rem; border: 1px solid #555; background: #262626; color: #eee; cursor: pointer; }
+    #garagepanel .note { color: #888; font-size: .7rem; margin-top: .4rem; }
     /* The car's trunk, beside the hotbar while you're driving. */
     #trunk { position: fixed; bottom: 1rem; left: 0; z-index: 2; padding: .35rem .4rem .4rem; border-radius: .6rem; background: rgba(0, 0, 0, .5);
       border: 1px solid rgba(201, 164, 106, .5); text-align: left; font-size: .7rem; color: #c9a46a; }
@@ -417,6 +428,7 @@
   <div id="wh" hidden role="dialog" aria-label="Warehouse"></div>
   <div id="trunk" hidden role="dialog" aria-label="Vehicle trunk"></div>
   <div id="bodypanel" hidden role="dialog" aria-label="Body"></div>
+  <div id="garagepanel" hidden role="dialog" aria-label="Garage"></div>
   <div id="jobs" hidden role="dialog" aria-label="Job board"></div>
   <div id="jobhud" hidden></div>
   <div id="wanted" hidden></div>
@@ -443,6 +455,7 @@
     <div class="note" id="bank-note">Cash you carry is dropped if you die. E or Esc to close.</div>
   </div>
   <canvas id="minimap" title="Map (M)"></canvas>
+  <div id="maptip" hidden></div>
   <div id="minimap-label">M — full map</div>
   <div id="clock"></div>
   <div id="shop" hidden role="dialog" aria-label="Shop">
@@ -537,6 +550,8 @@
     let bankBalance = 0;
     let bankData = { atms: [], tellers: [], atmReach: 60, tellerReach: 120 };
     let vehicleReach = 40;
+    let homesCfg = { lockedTypes: [], garageReach: 140 };
+    let myHome = null; // [building id, garage x, y]
     const explosions = []; // { x, y, start }
     let doorReach = 45;
     let useRequested = false;
@@ -564,6 +579,7 @@
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
       doorReach = msg.doorReach ?? doorReach;
       if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach } = msg.vehicles);
+      if (msg.homes) homesCfg = msg.homes;
       if (msg.shop) shop = msg.shop;
       if (msg.bank) bankData = msg.bank;
       if (msg.goods) econ.goods = msg.goods;
@@ -701,6 +717,7 @@
             toast(`🚨 The Militsiya raided your ${wh.cfg.sizes[wh.layouts.get(msg.building)?.size]?.name ?? 'warehouse'}${what ? ` and seized ${what}` : ''}`);
           }
           if (msg.kind === 'picked') toast('🔓 Lock picked — the doors stay unlocked for a minute and a half');
+          if (msg.kind === 'picked_car') toast('🔓 Car unlocked — E to get in');
           if (msg.kind === 'rob_stopped') toast('Robbery abandoned — you have to keep holding F');
           if (msg.kind === 'robbed') { sfx('coin'); toast(`💰 Got away with ${money(msg.amount)}`); }
           if (msg.kind === 'stole') { sfx('coin'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty') + (msg.unnoticed ? ' — they never noticed' : '')); }
@@ -716,6 +733,9 @@
           break;
         case 'body':
           if (bodyOpen && bodyOpen.id === msg.id) { bodyOpen.data = msg; renderBody(); }
+          break;
+        case 'garage':
+          if (garageCars !== null) { garageCars = msg.cars; renderGarage(); }
           break;
         case 'nodes':
           for (const [id, hp] of msg.list) {
@@ -753,6 +773,8 @@
         case 'done':
           sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
+          if (msg.what === 'pour') toast('⛽ Fuel poured into the tank');
+          if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
           if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
           if (msg.what === 'team_invite') toast('👥 Invite sent');
           if (msg.what === 'wh_buy') toast('🏬 The warehouse is yours — walk in and start building');
@@ -1268,6 +1290,12 @@
       nobody_to_rob: 'Nobody close enough to pickpocket',
       too_soon: 'Wait a moment before trying again',
       tank_full: 'Your tank is already full',
+      no_fuel: 'Hold some fuel first',
+      no_car_near: 'Walk up to a car first',
+      car_locked: "🔒 It's locked — hold F to pick the lock",
+      licensed_only: 'Licensed guns are made for the gun stores only',
+      car_in_use: 'Someone is in that car right now',
+      no_home: "You don't have a home",
       no_train: 'The train is not in yet — wait for it',
       not_wanted: "They don't want that",
       contract_full: 'That contract is already filled',
@@ -1500,6 +1528,10 @@
       note.style.cssText = 'color:#aaa;font-size:.8rem;margin:.2rem 0 .4rem';
       note.textContent = `Bring your own inputs and they're processed right away into your cargo. Fee: ${feeText}.`;
       box.append(title, note);
+      if (plan.error === 'licensed_only') {
+        note.textContent = 'Licensed guns are made here for the gun stores only. Unregistered guns can be made on a gunsmith bench in a warehouse or shack.';
+        return box;
+      }
       if (plan.error === 'nothing_to_process') box.append('Nothing in your cargo this factory can use.');
       else if (plan.error === 'no_room') box.append('No room in your cargo for what it would make — free a slot or bring a vehicle.');
       else {
@@ -1524,7 +1556,9 @@
           const info = tr.insertCell(); info.className = 'num'; info.textContent = `${w?.magazineSize ?? '?'} rounds`;
           const buy = tr.insertCell(); buy.className = 'num';
           const have = inv.some((x) => x?.[0] === item.type);
-          buy.append(`${money(item.price)} cash `, button(have ? 'Owned' : 'Buy', () => send({ t: 'buygun', id: d.id, type: item.type }), { disabled: have || coins < item.price, cls: have ? '' : 'go' }));
+          const total = item.price + (item.tax ?? 0);
+          buy.title = `${money(item.price)} + ${money(item.tax ?? 0)} gun licence tax`;
+          buy.append(`${money(item.price)} + ${money(item.tax ?? 0)} tax `, button(have ? 'Owned' : `Buy ${money(total)}`, () => send({ t: 'buygun', id: d.id, type: item.type }), { disabled: have || coins < total, cls: have ? '' : 'go' }));
         } else {
           const v = vehicleTypes[item.type];
           tr.insertCell().textContent = `🚗 ${v?.name ?? item.type}`;
@@ -1649,7 +1683,7 @@
     // Militsiya: grey-blue uniform; a fur ushanka in winter, the peaked furazhka the rest of the year.
     const POLICE_LOOK = { skin: '#e0ac69', shirt: '#4f5d6e', pants: '#2e3744', hat: 'furazhka' };
     const CRIME_NAMES = { fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
-    const ROB_NAMES = { atm: 'Breaking into the ATM…', shop: 'Emptying the till…', bank: 'Robbing the bank…', lockpick: 'Picking the lock…' };
+    const ROB_NAMES = { atm: 'Breaking into the ATM…', shop: 'Emptying the till…', bank: 'Robbing the bank…', lockpick: 'Picking the lock…', carpick: 'Picking the car lock…' };
     let crimeState = { wanted: 0, jail: 0, rob: null, arrest: 0 };
     const wantedEl = document.getElementById('wanted');
     const crimeBar = document.getElementById('crimebar');
@@ -1763,6 +1797,25 @@
         for (const d of whBuilding(l)?.doors ?? []) {
           const x = d.x + d.w / 2, y = d.y + d.h / 2;
           if (!d.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
+        }
+      }
+      // Homes that aren't mine: their outside doors are locked (from outside).
+      for (const b of buildings) {
+        if (!homesCfg.lockedTypes.includes(b.type) || b.id === myHome?.[0]) continue;
+        if (me.x > b.x && me.x < b.x + b.w && me.y > b.y && me.y < b.y + b.h) continue;
+        for (const d of b.doors) {
+          const door = doorById.get(d.id) ?? d;
+          const x = d.x + d.w / 2, y = d.y + d.h / 2;
+          if (d.exterior && !door.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
+        }
+      }
+      // Someone else's car, nobody in it.
+      if (!me.car && !riding) {
+        for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
+          const stats = vehicleTypes[v.type];
+          if (!v.locked || v.driver || !stats) continue;
+          const dist = Math.min(...vehicleCircles(v, stats).map((c) => Math.hypot(c.x - me.x, c.y - me.y) - c.r)) - r;
+          if (dist < vehicleReach) return { x: v.x, y: v.y, kind: 'lockpick' };
         }
       }
       return null;
@@ -1919,7 +1972,7 @@
             const select = document.createElement('select');
             for (const [g, def] of Object.entries(econ.goods)) select.add(new Option(def.name, g, false, g === sel.filter)); // (options can't hold pictures)
             select.onchange = () => whSend('configure', { x: sel.x, y: sel.y, value: select.value });
-            s.append('Lets through: ', select, ' — everything else goes right', document.createElement('br'));
+            s.append('Sorts out: ', select, ' — sent left and right in turn; everything else goes straight on', document.createElement('br'));
           }
           if (!sel.kind.startsWith('dock')) s.append(sel.kind === 'container' ? '' : button('↻ Rotate', () => whSend('rotate', { x: sel.x, y: sel.y })), button('🗑 Remove', () => whSend('remove', { x: sel.x, y: sel.y })));
         }
@@ -1988,9 +2041,15 @@
           ctx.beginPath(); ctx.moveTo(-5, -5); ctx.lineTo(-5, 5); ctx.moveTo(-10, 0); ctx.lineTo(0, 0); ctx.stroke(); // +
         } else if (p.kind === 'splitter') {
           ctx.fillStyle = '#4a6a7a';
-          ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(H, -6); ctx.lineTo(H, 6); ctx.fill(); // the divider
           ctx.fillRect(-H, -BELT_HALF - 5, 10, 2 * BELT_HALF + 10); // the housing over the back
           ctx.fillStyle = 'rgba(255, 255, 255, .25)'; ctx.fillRect(-H, -BELT_HALF - 5, 10, 2);
+          // Three painted arrows from the middle: it deals items left, forward and right in turn.
+          ctx.fillStyle = 'rgba(244, 196, 48, .7)';
+          for (const a of [-Math.PI / 2, 0, Math.PI / 2]) {
+            ctx.save(); ctx.rotate(a);
+            ctx.beginPath(); ctx.moveTo(H - 3, 0); ctx.lineTo(H - 10, -5); ctx.lineTo(H - 10, 5); ctx.fill();
+            ctx.restore();
+          }
         } else if (p.kind === 'filter') {
           ctx.fillStyle = '#5b4a7a'; // a gate across the belt with the filtered good on its sign
           ctx.fillRect(-4, -BELT_HALF - 6, 8, 2 * BELT_HALF + 12);
@@ -2303,6 +2362,41 @@
     }
     function closeBody() { bodyOpen = null; bodyEl.hidden = true; }
 
+    // ---- home garage: the cars you've bought, kept between visits -------------------
+
+    const garageEl = document.getElementById('garagepanel');
+    let garageCars = null; // null: closed; otherwise [[id, type, color, fuel, out]] from the server
+
+    function openGarage() {
+      garageCars = [];
+      send({ t: 'garage', action: 'list' });
+      renderGarage();
+    }
+    function closeGarage() { garageCars = null; garageEl.hidden = true; }
+
+    function renderGarage() {
+      if (garageCars === null) return closeGarage();
+      garageEl.hidden = false;
+      garageEl.replaceChildren();
+      const h = document.createElement('h3');
+      h.textContent = '🏠 Your garage';
+      garageEl.append(h);
+      if (!garageCars.length) garageEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'No cars yet. Cars you buy at a dealership are kept here.' }));
+      for (const [id, type, color, fuel, out] of garageCars) {
+        const row = document.createElement('div');
+        row.className = 'car';
+        const swatch = Object.assign(document.createElement('span'), { className: 'swatch' });
+        swatch.style.background = color;
+        const name = Object.assign(document.createElement('span'), { className: 'name', textContent: vehicleTypes[type]?.name ?? type });
+        const info = Object.assign(document.createElement('span'), { className: 'fuel', textContent: `⛽ ${fuel}%${out ? ' · out on the road' : ''}` });
+        const take = Object.assign(document.createElement('button'), { type: 'button', textContent: out ? 'Bring it here' : 'Take it out' });
+        take.onclick = () => send({ t: 'garage', action: 'take', id });
+        row.append(swatch, name, info, take);
+        garageEl.append(row);
+      }
+      garageEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'It gets parked outside your door. E or Esc to close.' }));
+    }
+
     function renderBody() {
       if (!bodyOpen) return closeBody();
       bodyEl.hidden = false;
@@ -2596,6 +2690,24 @@
     const mapImage = document.createElement('canvas'); // the static map, drawn once per room
     const MAP_PX = 1000;
     minimap.onclick = () => minimap.classList.toggle('expanded');
+    // Hovering an icon names it.
+    const mapTip = document.getElementById('maptip');
+    minimap.addEventListener('mousemove', (e) => {
+      const r = minimap.getBoundingClientRect();
+      const mx = (e.clientX - r.left) * (minimap.width / r.width), my = (e.clientY - r.top) * (minimap.height / r.height);
+      let best = null, bestDist = 11 * devicePixelRatio;
+      for (const [x, y, b] of mapIconsDrawn) {
+        const d = Math.hypot(x - mx, y - my);
+        if (d < bestDist) [best, bestDist] = [b, d];
+      }
+      mapTip.hidden = !best;
+      if (!best) return;
+      mapTip.textContent = mapIconName(best);
+      mapTip.style.left = `${e.clientX}px`;
+      mapTip.style.top = `${e.clientY}px`;
+      minimap.title = ''; // (not the browser's own tooltip on top)
+    });
+    minimap.addEventListener('mouseleave', () => { mapTip.hidden = true; minimap.title = 'Map (M)'; });
 
     let mapSeason = null;
     function buildMinimap() {
@@ -2664,35 +2776,33 @@
         g.textBaseline = 'middle';
         g.fillText('W', b.x + b.w / 2, b.y + b.h / 2 + 6);
       }
-      for (const p of econ.places) {
-        g.fillStyle = p.role === 'factory' ? '#bdc3c7' : p.role === 'gunshop' ? '#c0392b' : p.role === 'dealer' ? '#2e86de' : p.type === 'market' ? '#e67e22' : '#a0703c';
-        g.beginPath(); g.arc(p.x, p.y, 60, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#111';
-        g.font = '700 90px system-ui, sans-serif';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText(p.role === 'factory' ? 'F' : p.role === 'gunshop' ? 'G' : p.role === 'dealer' ? 'C' : p.type === 'market' ? 'M' : 'R', p.x, p.y + 6);
-      }
-      // Banks: green with a B.
-      for (const t of bankData.tellers) {
-        g.fillStyle = '#3cb44b';
-        g.beginPath(); g.arc(t.x, t.y, 70, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#062b10';
-        g.font = '700 100px system-ui, sans-serif';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText('B', t.x, t.y + 6);
-      }
-      // Shops stand out: gold with a $.
-      for (const k of shop.shopkeepers) {
-        g.fillStyle = '#f4c430';
-        g.beginPath(); g.arc(k.x, k.y, 70, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#3a2a00';
-        g.font = '700 110px system-ui, sans-serif';
-        g.textAlign = 'center';
-        g.textBaseline = 'middle';
-        g.fillText('₽', k.x, k.y + 6);
-      }
+    }
+
+    // Minimap icons by building type. Factories (any type in econ.factories) get 🏭.
+    const MAP_ICONS = {
+      police: '🚓', bank: '🏦', shop: '🛒', kiosk: '🛒', gas: '⛽', market: '🏪', gunstore: '🔫', dealership: '🚗',
+      farm: '🌾', logging: '🪵', mine: '⛏️', oilwell: '🛢️', quarry: '🏖️', scrapyard: '🔩', station: '🚂', church: '⛪', powerplant: '⚡',
+    };
+    const MAP_NAMES = {
+      police: 'Militsiya station', bank: 'Bank', shop: 'Shop', kiosk: 'Kiosk', church: 'Church', powerplant: 'Power plant',
+    };
+    /** What a minimap icon is, for the hover label. */
+    function mapIconName(b) {
+      if (b.id === myHome?.[0]) return '🏠 Your home — garage inside';
+      const icon = mapIcon(b);
+      if (icon === '📦') return '📦 Your warehouse';
+      const name = MAP_NAMES[b.type] ?? RAW_NAMES[b.type]?.replace(/^\S+\s/, '') ?? econ.factories[b.type]?.name ?? b.type;
+      return `${icon} ${name}`;
+    }
+    let mapIconsDrawn = []; // [x, y (canvas px), building] for this frame, for hovering
+
+    function mapIcon(b) {
+      if (b.id === myHome?.[0]) return null; // drawn bigger, last
+      if (MAP_ICONS[b.type]) return MAP_ICONS[b.type];
+      if (econ.factories[b.type]) return '🏭';
+      const l = wh.layouts.get(b.id); // my warehouses
+      const owner = l && (econ.owners.get(l.id) ?? l.owner);
+      return owner && wh.account && owner === wh.account ? '📦' : null;
     }
 
     function drawMinimap() {
@@ -2712,6 +2822,7 @@
       mctx.fillRect(0, 0, px, px);
       mctx.drawImage(mapImage, sx * k, sy * k, span * k, span * k, 0, 0, px, px);
 
+      mapIconsDrawn = [];
       if (!me || !playing) return;
       const toMap = px / span;
       // When you're wanted, police cars you can see show up as flashing dots.
@@ -2729,6 +2840,26 @@
         mctx.lineWidth = 3 * devicePixelRatio;
         mctx.beginPath(); mctx.arc(Math.min(Math.max(tx, 6), px - 6), Math.min(Math.max(ty, 6), px - 6), (7 + 3 * Math.sin(performance.now() / 200)) * devicePixelRatio, 0, Math.PI * 2); mctx.stroke();
       }
+      // Places: an icon per kind of building (see mapIcon), my warehouses, and my home (pinned to the edge when off the small map).
+      mctx.textAlign = 'center';
+      mctx.textBaseline = 'middle';
+      mctx.font = `${(expanded ? 11 : 13) * devicePixelRatio}px system-ui, sans-serif`;
+      for (const b of buildings) {
+        const icon = mapIcon(b);
+        if (!icon) continue;
+        const ix = (b.x + b.w / 2 - sx) * toMap, iy = (b.y + b.h / 2 - sy) * toMap;
+        if (ix < -10 || iy < -10 || ix > px + 10 || iy > px + 10) continue;
+        mctx.fillText(icon, ix, iy);
+        mapIconsDrawn.push([ix, iy, b]);
+      }
+      if (myHome) {
+        const hx = Math.min(Math.max((myHome[1] - sx) * toMap, 10), px - 10), hy = Math.min(Math.max((myHome[2] - sy) * toMap, 10), px - 10);
+        mctx.font = `${(expanded ? 15 : 17) * devicePixelRatio}px system-ui, sans-serif`;
+        mctx.fillText('🏠', hx, hy);
+        const home = buildings[myHome[0] - 1];
+        if (home) mapIconsDrawn.push([hx, hy, home]);
+      }
+      mctx.textBaseline = 'alphabetic';
       // Teammates: green dots (pinned to the edge when off the small map), named on the full map.
       for (const [id, t] of teamPos) {
         const tx = (t.x - sx) * toMap, ty = (t.y - sy) * toMap;
@@ -4434,18 +4565,21 @@
         return;
       }
       if (playing && e.code === 'KeyE' && bodyOpen) { closeBody(); return; }
+      if (playing && e.code === 'KeyE' && garageCars !== null) { closeGarage(); return; }
       if (playing && e.code === 'KeyE') {
         if (!jobsEl.hidden) closeJobs();
         else if (!shopEl.hidden) closeShop();
         else if (!bankEl.hidden) closeBank();
         else if (econ.open) closePlace();
         else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding) send({ t: 'eat' }); // food in hand (on foot): E eats it
+        else if (fuelCar()) send({ t: 'refuel', can: true }); // fuel in hand beside a car: E pours it in
         else {
           const t = eTarget(); // only the closest thing, the one with the prompt
           if (t?.kind === 'shop') openShop();
           else if (t?.kind === 'bank') openBank(t.target);
           else if (t?.kind === 'place') openPlace(t.target);
           else if (t?.kind === 'body') openBody(t.target);
+          else if (t?.kind === 'garage') openGarage();
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
         return;
@@ -4455,6 +4589,7 @@
       if (e.code === 'Escape' && econ.open) return closePlace();
       if (e.code === 'Escape' && wh.open) return closeWarehouse();
       if (e.code === 'Escape' && bodyOpen) return closeBody();
+      if (e.code === 'Escape' && garageCars !== null) return closeGarage();
       if (e.code === 'Escape' && !jobsEl.hidden) return closeJobs();
       if (!shopEl.hidden && /^Digit[1-4]$/.test(e.code)) return buy(Object.keys(shop.menu)[Number(e.code.slice(5)) - 1]);
       if (e.code === 'KeyM' && document.activeElement !== chatInput) { minimap.classList.toggle('expanded'); return; }
@@ -4751,7 +4886,7 @@
       const bullets = new Map();
       for (const [id, x, y] of msg.bullets ?? []) bullets.set(id, { x, y });
       const vehicles = new Map();
-      for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights });
+      for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked });
       soundsFromSnapshot(players, msg.bullets ?? []);
       const npcs = new Map();
       for (const [id, x, y, angle, armed] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed });
@@ -4811,6 +4946,7 @@
       me.exhausted = target.exhausted;
       setInventory(you.inv, now);
       econ.trunk = you.trunk ?? null;
+      myHome = you.home ?? null;
       myJob = you.job ?? null;
       carrying = you.carry ?? 0;
       hiddenSelf = Boolean(you.hidden);
@@ -5993,7 +6129,7 @@
       }
       for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
         const stats = vehicleTypes[v.type];
-        if (v.driver || !stats) continue;
+        if (v.driver || v.locked || !stats) continue; // locked: F picks it instead
         const dist = Math.min(...vehicleCircles(v, stats).map((c) => Math.hypot(c.x - me.x, c.y - me.y) - c.r)) - radiusOf(me.mass);
         if (dist < vehicleReach && dist < bestDist) [best, bestDist] = [{ x: v.x, y: v.y }, dist];
       }
@@ -6004,12 +6140,27 @@
       return best && { ...best, dist: bestDist };
     }
 
+    /** With fuel in hand on foot, the car close enough to pour it into (or null). */
+    function fuelCar() {
+      const w = inv[selectedSlot];
+      if (!me || me.car || riding || hiddenSelf || !isGoods(w) || w[1] !== 'fuel') return null;
+      let best = null;
+      let bestDist = vehicleReach;
+      for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
+        const stats = vehicleTypes[v.type];
+        if (!stats) continue;
+        const dist = Math.min(...vehicleCircles(v, stats).map((c) => Math.hypot(c.x - me.x, c.y - me.y) - c.r)) - radiusOf(me.mass);
+        if (dist < bestDist) [best, bestDist] = [v, dist];
+      }
+      return best;
+    }
+
     /**
      * The one thing E acts on right now: whichever is closest of shopkeeper, ATM/teller,
      * place, body, or door/vehicle/dumpster. Only this one gets an E prompt.
      */
     function eTarget() {
-      if (!me || me.car || riding || hiddenSelf || edible(inv[selectedSlot])) return null; // (with food in hand, E eats)
+      if (!me || me.car || riding || hiddenSelf || edible(inv[selectedSlot]) || fuelCar()) return null; // (with food in hand, E eats; fuel beside a car, E pours)
       const options = [];
       const d = (o) => Math.hypot(o.x - me.x, o.y - me.y);
       const keeper = nearestShopkeeper();
@@ -6020,6 +6171,10 @@
       if (place) options.push({ kind: 'place', target: place, dist: d(place), x: place.x, y: place.y - 66 });
       const body = nearestBody();
       if (body) options.push({ kind: 'body', target: body, dist: d(body), x: body.x - 16, y: body.y - 40 });
+      if (myHome) {
+        const g = { x: myHome[1], y: myHome[2] };
+        if (d(g) < homesCfg.garageReach + radiusOf(me.mass)) options.push({ kind: 'garage', dist: d(g), x: g.x, y: g.y - 46 });
+      }
       const usable = nearestUsable();
       if (usable) options.push({ kind: 'use', dist: usable.dist, x: usable.x, y: usable.y });
       let best = null;
@@ -6544,6 +6699,13 @@
         ctx.fillStyle = '#f4c430';
         ctx.fillText('🛒 Food', k.x, k.y - 34);
       }
+      if (myHome && playing) { // my home: a label over the garage spot
+        ctx.font = '700 13px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#c9a46a';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        ctx.strokeText('🏠 Home · 🚗 Garage', myHome[1], myHome[2] - 70); ctx.fillText('🏠 Home · 🚗 Garage', myHome[1], myHome[2] - 70);
+      }
       const keeper = me && playing && !me.car ? nearestShopkeeper() : null; // for closing panels I walk away from
       const banker = me && playing && !me.car ? nearestBanker() : null;
       const place = me && playing && !me.car ? nearestPlace() : null;
@@ -6554,6 +6716,11 @@
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
         ctx.strokeText('eat', me.x - 4, me.y - 57); ctx.fillText('eat', me.x - 4, me.y - 57);
+      } else if (me && playing && fuelCar()) { // fuel in hand beside a car: E pours it in
+        drawKeyPrompt(me.x - 22, me.y - 58);
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        ctx.strokeText('fill tank', me.x - 4, me.y - 57); ctx.fillText('fill tank', me.x - 4, me.y - 57);
       }
       if (me && playing && healLeft > 0) { // still healing from food
         ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#5ad15a';
@@ -6578,6 +6745,7 @@
         ctx.strokeText('🗑 Hiding in the dumpster — E to climb out', me.x, me.y - 40);
         ctx.fillText('🗑 Hiding in the dumpster — E to climb out', me.x, me.y - 40);
       }
+      if (garageCars !== null && (!me || me.car || !myHome || Math.hypot(myHome[1] - me.x, myHome[2] - me.y) > homesCfg.garageReach + 80)) closeGarage();
       if (bodyOpen && !latestBodies().has(bodyOpen.id)) closeBody(); // gone (taken, carried off)
       else if (bodyOpen && me) { const b = latestBodies().get(bodyOpen.id); if (b && Math.hypot(b.x - me.x, b.y - me.y) > 120) closeBody(); }
       if (me && playing && checkDueUntil > performance.now()) { // the countdown to stop at the checkpoint

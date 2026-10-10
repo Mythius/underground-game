@@ -30,7 +30,8 @@ test('gun stores sell guns for cash, one of each, using their stock', () => {
   standAt(store);
   const market = eco.markets.get(store.id);
   const before = market.goods.guns.stock;
-  const price = eco.gunPrice(market, 'rifle');
+  const price = eco.gunPrice(market, 'rifle') + eco.gunTax(market, 'rifle'); // plus the licence tax
+  assert.equal(eco.gunTax(market, 'rifle'), Math.round(eco.gunPrice(market, 'rifle') * config.gunstore.taxRate));
   p.cash = price - 1;
   assert.equal(eco.buyGun(p, store.id, 'rifle'), 'not_enough_cash');
   p.cash = 5000;
@@ -112,4 +113,19 @@ test('no guns lie around on a fresh map any more', () => {
   for (let i = 0; i < 30; i++) world.step(1);
   assert.equal([...world.pickups.values()].filter((g) => g.weapon).length, 0);
   assert.ok(world.buildings.some((b) => b.type === 'gunstore') && world.buildings.some((b) => b.type === 'dealership'));
+});
+
+test('nobody can have licensed guns made: not at the gun factory, not on a warehouse machine', () => {
+  const { map } = validateMap({ width: 4000, height: 3000, buildings: [{ type: 'gunfactory', x: 500, y: 500, rot: 0 }] });
+  const world = new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
+  const factory = world.buildings.find((b) => b.type === 'gunfactory');
+  const p = world.spawnPlayer('maker');
+  const f = world.economy.factories.get(factory.id);
+  Object.assign(p, { x: f.x, y: f.y + 40, cash: 10000 });
+  hotbarOf(p).add('steel', 3);
+  hotbarOf(p).add('parts', 2);
+  assert.equal(world.economy.process(p, factory.id), 'licensed_only');
+  assert.equal(hotbarOf(p).count('steel'), 3, 'nothing used');
+  assert.ok(!Object.values(config.machines).some((m) => m.recipes.includes('gunfactory:0')), 'no machine makes them');
+  assert.ok(config.machines.gunsmith.recipes.includes('illegal:blackguns'), 'unregistered ones still can be');
 });

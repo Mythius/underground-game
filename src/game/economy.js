@@ -215,6 +215,7 @@ export class Economy {
    * as many batches as their inputs, cargo space and cash allow. { recipe, batches, wanted, fee } or an error code.
    */
   #processPlan(p, f) {
+    if (config.factories[f.type].noToll) return { error: 'licensed_only' };
     const holder = this.cargoOf(p);
     for (const recipe of config.factories[f.type].recipes) {
       const wanted = Math.min(...Object.entries(recipe.in).map(([g, q]) => Math.floor(holder.count(g) / q)));
@@ -372,6 +373,10 @@ export class Economy {
   gunPrice(market, type) {
     return Math.round(config.gunstore.guns[type].price * this.scarcity(market, 'guns'));
   }
+  /** The licence tax on a gun, paid on top of its price. */
+  gunTax(market, type) {
+    return Math.round(this.gunPrice(market, type) * config.gunstore.taxRate);
+  }
   vehiclePrice(market, type) {
     return Math.round(config.dealership.vehicles[type] * this.scarcity(market, 'car'));
   }
@@ -385,7 +390,7 @@ export class Economy {
     if (store.goods.guns.stock < item.uses) return 'sold_out';
     if (p.hasWeapon(type)) return 'already_have';
     if (!p.inventory.includes(null)) return 'no_room';
-    const price = this.gunPrice(store, type);
+    const price = this.gunPrice(store, type) + this.gunTax(store, type);
     if (p.cash < price) return 'not_enough_cash';
     p.cash -= price;
     store.goods.guns.stock -= item.uses;
@@ -407,6 +412,7 @@ export class Economy {
     dealer.goods.car.stock -= 1;
     p.lastVehicle = v;
     this.world.onBankChange?.(p.account);
+    this.world.onCarBought?.(v);
     return null;
   }
 
@@ -560,7 +566,7 @@ export class Economy {
           : null,
         catalog:
           market.kind === 'gunstore'
-            ? Object.entries(config.gunstore.guns).map(([type, g]) => ({ type, price: this.gunPrice(market, type), uses: g.uses }))
+            ? Object.entries(config.gunstore.guns).map(([type, g]) => ({ type, price: this.gunPrice(market, type), tax: this.gunTax(market, type), uses: g.uses }))
             : market.kind === 'dealership'
               ? Object.keys(config.dealership.vehicles).map((type) => ({ type, price: this.vehiclePrice(market, type) }))
               : market.goods.bread && (market.kind === 'shop' || market.kind === 'gas')
