@@ -421,11 +421,13 @@ export class Warehouse {
     this.spent = data.spent ?? 0;
     this.taxOwed = data.taxOwed ?? 0;
     this.heat = data.heat ?? 0;
-    for (const p of data.pieces ?? []) {
-      if (p.kind === 'dockIn' || p.kind === 'dockOut') {
-        Object.assign(p.kind === 'dockIn' ? this.dockIn : this.dockOut, { stock: { ...p.stock } });
+    const fit = this.#turnToFit(data.pieces ?? []);
+    for (const saved of data.pieces ?? []) {
+      if (saved.kind === 'dockIn' || saved.kind === 'dockOut') {
+        Object.assign(saved.kind === 'dockIn' ? this.dockIn : this.dockOut, { stock: { ...saved.stock } });
         continue;
       }
+      const p = fit(saved);
       if (this.place(p.kind, p.x, p.y, p.dir) !== null) continue;
       const piece = this.at(p.x, p.y);
       if (p.recipe && config.machines[p.kind]?.recipes.includes(p.recipe)) piece.recipe = p.recipe;
@@ -436,6 +438,31 @@ export class Warehouse {
       if (piece.kind === 'container' && p.stock) piece.stock = { ...p.stock };
     }
     this.version++;
+  }
+
+  /**
+   * A saved layout may come from a warehouse of this size facing another way (a different map, or a
+   * different building after a reset). Finds the quarter turns that put its IN and OUT pallets on
+   * this one's, and returns a function turning each saved piece (place and facing) to match.
+   */
+  #turnToFit(pieces) {
+    const savedIn = pieces.find((p) => p.kind === 'dockIn'), savedOut = pieces.find((p) => p.kind === 'dockOut');
+    const turned = (p, k) => {
+      const size = config.machines[p.kind] || p.kind.startsWith('dock') ? 2 : 1;
+      let { x, y } = p;
+      let rows = k % 2 ? this.cols : this.rows; // the saved floor's height (sizes swap each turn)
+      for (let i = 0; i < k; i++) {
+        [x, y] = [rows - y - size, x]; // 90° clockwise, as buildings turn
+        rows = rows === this.rows ? this.cols : this.rows;
+      }
+      return { ...p, x, y, dir: turn(p.dir ?? 0, k) };
+    };
+    let k = 0;
+    if (savedIn && savedOut) {
+      const same = (a, b) => a.x === b.x && a.y === b.y;
+      k = [0, 1, 2, 3].find((n) => same(turned(savedIn, n), this.dockIn) && same(turned(savedOut, n), this.dockOut)) ?? 0;
+    }
+    return (p) => turned(p, k);
   }
 }
 

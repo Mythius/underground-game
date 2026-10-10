@@ -356,3 +356,22 @@ test('containers store what belts bring and feed belts leading away; pallets and
   assert.deepEqual(out.stock, { flour: 2 });
   assert.equal(act({ action: 'ptake', x: out.x, y: out.y, good: 'planks', qty: 1 }), 'nothing_to_take');
 });
+
+test('a saved factory loaded into a warehouse facing another way is turned to match its IN and OUT pallets', () => {
+  const first = town();
+  first.act({ action: 'buy' });
+  sawLine(first.act);
+  const saved = first.wh.save();
+  for (const rot of [1, 2, 3]) {
+    const { map } = validateMap({ width: 4000, height: 4000, buildings: [{ type: 'warehouse', x: 400, y: 400, rot }] });
+    const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, config.player, config.weapons, map);
+    const wh = [...world.warehouses.all.values()][0];
+    wh.load(saved);
+    Object.assign(wh, { owner: { id: 1, bank: 1e6 }, ownerId: 1 });
+    const kinds = [...wh.pieces.values()].map((p) => p.kind).sort();
+    assert.deepEqual(kinds, ['belt', 'belt', 'belt', 'belt', 'dockIn', 'dockOut', 'saw'], `rot ${rot}: everything placed`);
+    wh.dockIn.stock = { logs: 3 };
+    for (let i = 0; i < 60 * 10; i++) world.step(0.1);
+    assert.equal(wh.dockOut.stock.planks, 3, `rot ${rot}: the line still runs from the IN pallet to the OUT pallet`);
+  }
+});

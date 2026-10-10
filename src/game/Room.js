@@ -649,7 +649,7 @@ export class Room {
       jail: me.jailed ? Math.max(0, Math.ceil(me.jailed.until - this.world.economy.time)) : 0,
       carry: me.carrying?.id ?? 0, // the body you're carrying
       hidden: me.hidden ? 1 : 0, // in a dumpster
-      rob: me.robbing ? [me.robbing.kind, Math.round((me.robbing.elapsed / me.robbing.sec) * 100) / 100] : null,
+      rob: me.robbing ? [me.robbing.kind, Math.round((me.robbing.elapsed / me.robbing.sec) * 1000) / 1000, me.robbing.sec] : null, // [kind, progress, seconds]
       arrest: Math.round(me.arrest * 100) / 100,
       // The vehicle whose trunk counts as yours: [id, type, slots as [good, qty] | null].
       trunk: (() => {
@@ -670,6 +670,7 @@ export class Room {
       // [type, ammo, reload seconds left] per slot; reload rounds up so it never shows 0 while still reloading.
       // Guns: [type, ammo, reload seconds left]; goods: ['goods', good, qty].
       heal: Math.round((me.digesting ?? []).reduce((sum, d) => sum + d.perSec * d.left, 0)), // still to come from food
+      buzz: Math.ceil(me.buzz ?? 0), // seconds of vodka buzz left (less damage taken)
       inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10] : null)),
     };
   }

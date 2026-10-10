@@ -572,8 +572,9 @@ export class Hires {
   }
 
   /**
-   * The nearest thing to shoot at, within `range`: whoever's fighting h (or h's boss), townsfolk
-   * swinging at them, officers shooting at them, other people's hires coming for them, and (for a
+   * The nearest thing to shoot at, within `range`: anyone (player, townsperson, officer or hire) who
+   * has hurt h or h's boss lately, townsfolk swinging at them, officers shooting at them, other
+   * people's hires coming for them, and (for a
    * guard, `post`) any outsider who's got inside.
    */
   #threat(h, boss, range, post = null) {
@@ -597,13 +598,14 @@ export class Hires {
       consider(o, intruder || this.#isFoe(h, o) || (owner && this.#isFoe(owner, o)) || (o.role === 'hitman' && o.target === owner));
     }
     if (h.role === 'hitman') return best; // (the target is handled by the hunt)
-    for (const t of w.townsfolk.people) consider(t, t.inside <= 0 && t.fight && (t.fight.target === owner || t.fight.target === h));
+    const hurtUs = (x) => this.#isFoe(h, x) || this.#isFoe(owner, x);
+    for (const t of w.townsfolk.people) consider(t, t.inside <= 0 && ((t.fight && (t.fight.target === owner || t.fight.target === h)) || hurtUs(t)));
     for (const u of w.police.units) {
       const o = u.officer;
-      if (!o.onFoot || o.health <= 0 || !u.target) continue;
+      if (!o.onFoot || o.health <= 0) continue;
       const tgt = u.target;
-      const shooting = tgt.wanted >= config.police.shootFrom || tgt.shotPolice;
-      consider(o, shooting && (tgt === owner || tgt === h || (tgt.kind === 'hire' && tgt.employer === h.employer)));
+      const shooting = tgt && (tgt.wanted >= config.police.shootFrom || tgt.shotPolice);
+      consider(o, hurtUs(o) || (shooting && (tgt === owner || tgt === h || (tgt.kind === 'hire' && tgt.employer === h.employer))));
     }
     return best;
   }

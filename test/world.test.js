@@ -4,6 +4,7 @@ import { config } from '../src/config.js';
 import { SpatialGrid } from '../src/game/SpatialGrid.js';
 import { World, createWorld, missingSites } from '../src/game/World.js';
 import { makeWeapon } from '../src/game/entities.js';
+import { validateMap } from '../src/game/mapFile.js';
 
 const smallWorld = () =>
   new World({ ...config.world, width: 1000, height: 1000, foodCount: 0, pickupStart: 0, pickupIntervalSec: Infinity, buildingCount: 0, terrain: false });
@@ -422,6 +423,9 @@ test('a door will not close on a player standing in it, and is out of reach from
 
 import { Vehicle } from '../src/game/vehicles.js';
 
+const naturalHealing = config.player.healthRegenPerSec;
+config.player.healthRegenPerSec = 0; // these tests count exact damage and healing
+
 function carWorld() {
   const world = smallWorld();
   const car = new Vehicle(9000, 'sedan', 300, 500, 0);
@@ -773,4 +777,48 @@ test('a second player hops in as the passenger: only the driver steers, both rid
   assert.equal(rider.vehicle, null);
   assert.equal(car.passenger, null);
   assert.equal(car.driver, driver, 'the driver stays put');
+});
+
+test("the freight station's delivery bay is round the front, not on the tracks", () => {
+  for (let i = 0; i < 3; i++) {
+    const world = new World();
+    const station = world.buildings.find((b) => b.type === 'station');
+    if (!station) continue;
+    const bays = world.bays.filter((b) => b.building === station.id);
+    assert.ok(bays.length > 0, 'the station has a bay');
+    for (const b of bays) assert.ok(b.y + b.h < world.railwayY - 40, `bay ${JSON.stringify(b)} clear of the track at y=${world.railwayY}`);
+  }
+});
+
+test('vodka drinks: middling healing, and you take less damage while the buzz lasts', () => {
+  const world = shopWorld();
+  const p = world.spawnPlayer('a');
+  const { heal, healSec, buzzSec, damageTaken } = config.economy.vodka;
+  p.inventory[1] = { good: 'vodka', qty: 2 };
+  p.selected = 1;
+  p.health = 40;
+  assert.equal(world.eat(p), null);
+  assert.equal(p.inventory[1].qty, 1);
+  for (let i = 0; i < 30 * (healSec + 1); i++) world.step(1 / 30);
+  assert.ok(Math.abs(p.health - (40 + heal)) < 1, `healed ${heal} (${p.health})`);
+  const before = p.health;
+  p.hurt(20);
+  assert.ok(Math.abs(p.health - (before - 20 * damageTaken)) < 1e-9, 'buzzed: less damage');
+  for (let i = 0; i < 30 * buzzSec; i++) world.step(1 / 30);
+  assert.equal(p.buzz, 0, 'it wears off');
+  const sober = p.health;
+  p.hurt(20);
+  assert.equal(p.health, sober - 20);
+});
+
+test('players heal slowly on their own', () => {
+  const { map } = validateMap({ width: 3000, height: 3000, buildings: [] }); // nothing about to hurt them
+  const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, { ...config.player, healthRegenPerSec: naturalHealing }, config.weapons, map);
+  const p = world.spawnPlayer('a');
+  p.health = 50;
+  for (let i = 0; i < 30 * 10; i++) world.step(1 / 30);
+  assert.ok(Math.abs(p.health - (50 + 10 * naturalHealing)) < 0.5, `+${naturalHealing}/s (${p.health})`);
+  assert.equal(naturalHealing, 1);
+  for (let i = 0; i < 30 * 120; i++) world.step(1 / 30);
+  assert.equal(p.health, p.maxHealth, 'never past full');
 });

@@ -5,6 +5,8 @@ import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { makeWeapon } from '../src/game/entities.js';
 
+config.player.healthRegenPerSec = 0; // these tests count exact damage and healing
+
 // A small town with a police station, a shop, a bank and a road.
 function town({ townsfolk = true } = {}) {
   const { map } = validateMap({
@@ -454,4 +456,29 @@ test('lost in a car chase, cruisers drive round looking instead of searching on 
   assert.equal(unit.officer.onFoot, false, 'still driving');
   assert.ok(unit.cruiseFor, 'cruising round');
   assert.ok(Math.hypot(unit.car.x - 1000, unit.car.y - 1935) > 200, 'on the move');
+});
+
+test('officers wear body armour; a fallen one is replaced at the station and the old cruiser towed', () => {
+  const { world, police } = town({ townsfolk: false });
+  const count = police.units.length;
+  const u = police.units[0];
+  const oldCar = u.car;
+  police.damageOfficer(u.officer, 40, null);
+  assert.equal(u.officer.health, config.police.officerHealth - 40 * (1 - config.police.officerArmor));
+  police.damageOfficer(u.officer, 1000, null);
+  assert.ok(u.officer.health <= 0);
+  for (let i = 0; i < 30 * (config.police.respawnSec + 1); i++) world.step(1 / 30);
+  assert.equal(police.units.length, count, 'the force stays the same size');
+  assert.ok(!police.units.includes(u), 'a new officer');
+  assert.ok(!world.vehicles.has(oldCar.id), 'the old cruiser is gone');
+  // No space at the station right now: the replacement still comes, a bit later.
+  const v = police.units[0];
+  police.damageOfficer(v.officer, 1000, null);
+  const park = world.parkNewVehicle;
+  world.parkNewVehicle = () => null;
+  for (let i = 0; i < 30 * (config.police.respawnSec + 1); i++) world.step(1 / 30);
+  assert.equal(police.units.length, count - 1);
+  world.parkNewVehicle = park;
+  for (let i = 0; i < 30 * 11; i++) world.step(1 / 30);
+  assert.equal(police.units.length, count, 'back to full strength');
 });

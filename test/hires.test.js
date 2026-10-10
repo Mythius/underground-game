@@ -16,10 +16,10 @@ const MAP = {
   ],
 };
 
-function town() {
+function town({ keepPeople = 0 } = {}) {
   const { map } = validateMap(MAP);
   const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, config.player, config.weapons, map);
-  world.townsfolk.people.length = 0;
+  world.townsfolk.people.length = keepPeople;
   world.police.witnessed = () => false;
   world.police.policeSee = () => false;
   return world;
@@ -177,4 +177,54 @@ test("a goon's crime is theirs; the police can chase hires", () => {
   }
   assert.equal(goon.wanted, config.crime.stars.murder);
   assert.equal(p.wanted, 0, 'not traced');
+});
+
+test('goons shoot whoever hurts the boss: a townsperson who swung at you, a player who shot you', () => {
+  const world = town({ keepPeople: 1 });
+  const p = atBar(world, account(1));
+  assert.equal(world.hires.hire(p, 'goon'), null);
+  Object.assign(p, { x: 1200, y: 1500 });
+  const goon = world.hires.list[0];
+  Object.assign(goon, { x: 1150, y: 1500 });
+  // A townsperson lands a hit, then runs off: still fair game.
+  const person = world.townsfolk.people[0];
+  Object.assign(person, { x: 1300, y: 1500, inside: 0, fight: null });
+  world.hires.noteAttack(person, p);
+  let fired = false;
+  for (let i = 0; i < 60 && !fired; i++) {
+    world.step(1 / 30);
+    fired = [...world.bullets.values()].some((b) => b.owner === goon);
+  }
+  assert.ok(fired, 'the goon opened fire on the townsperson');
+  world.townsfolk.people.length = 0;
+  world.bullets.clear();
+  // Another player shoots the boss.
+  const shooter = atBar(world, account(2));
+  Object.assign(shooter, { x: 1350, y: 1500 });
+  world.hires.noteAttack(shooter, p);
+  fired = false;
+  for (let i = 0; i < 60 && !fired; i++) {
+    world.step(1 / 30);
+    fired = [...world.bullets.values()].some((b) => b.owner === goon && Math.abs(Math.atan2(shooter.y - goon.y, shooter.x - goon.x) - goon.angle) < 0.3);
+  }
+  assert.ok(fired, 'the goon opened fire on the player');
+});
+
+test('goons go for whoever you attack or rob', () => {
+  const world = town({ keepPeople: 1 });
+  const p = atBar(world, account(1));
+  assert.equal(world.hires.hire(p, 'goon'), null);
+  Object.assign(p, { x: 1200, y: 1500 });
+  const goon = world.hires.list[0];
+  Object.assign(goon, { x: 1100, y: 1500 });
+  const person = world.townsfolk.people[0];
+  Object.assign(person, { x: 1240, y: 1500, angle: 0, inside: 0, fight: null, wallet: 100 });
+  const res = world.police.pickpocket(p);
+  assert.ok(res.unnoticed, `picked a pocket unnoticed (${JSON.stringify(res)})`);
+  let fired = false;
+  for (let i = 0; i < 60 && !fired; i++) {
+    world.step(1 / 30);
+    fired = [...world.bullets.values()].some((b) => b.owner === goon);
+  }
+  assert.ok(fired, 'the goon opened fire on the person you robbed');
 });

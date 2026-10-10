@@ -51,6 +51,7 @@ export function createWorld(opts = config.world, playerOpts = config.player, wea
 }
 
 export class World {
+  #near = new Set(); // (scratch set for car-grid lookups; never used by two loops at once)
   constructor(opts = config.world, playerOpts = config.player, weapons = config.weapons, map = null) {
     this.opts = map ? { ...opts, width: map.width, height: map.height } : opts;
     opts = this.opts;
@@ -68,6 +69,7 @@ export class World {
     this.gripScale = 1; // set by the room from the weather
     this.frozen = false; // lakes freeze in winter (set by the room from the season)
     this.grid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
+    this.carGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize); // just the cars, re-filed each tick after they move
 
     if (map) this.#sceneryFromMap(map);
     else this.#generateScenery();
@@ -85,8 +87,9 @@ export class World {
       return { x: r.x - m, y: r.y - m, w: r.w + m * 2, h: r.h + m * 2 };
     });
     const ownLots = map?.lots ? map.lots.map((l) => ({ ...makeLot(l), building: l.building })) : this.businessLots;
-    this.bays = generateBays(this.buildings, this.width, this.height, Object.keys(config.factories), wetRect, [...fixtures, ...ownLots, ...roadZones], ownLots);
     const railStrip = this.railwayY !== null ? [railCorridor(this.width, this.railwayY)] : [];
+    // (Off the tracks too: the station's bay goes round the front, by the street door.)
+    this.bays = generateBays(this.buildings, this.width, this.height, Object.keys(config.factories), wetRect, [...fixtures, ...ownLots, ...roadZones, ...railStrip], ownLots);
     // A few more lots out along the country roads (town businesses have their own).
     this.lots = map?.lots
       ? ownLots
@@ -394,14 +397,15 @@ export class World {
   /** E with food selected: eat one. It heals over the next few seconds (see #digest). */
   eat(p) {
     const slot = p.inventory[p.selected];
-    // Shop food, or a stack of bread from the bakery (it eats like a shop loaf).
-    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : null;
+    // Shop food, a stack of bread from the bakery (it eats like a shop loaf), or a bottle of vodka.
+    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : slot?.good === 'vodka' ? config.economy.vodka : null;
     if (!food) return 'nothing_to_eat';
     if (p.jailed || p.hidden) return 'busy';
     slot.qty -= 1;
     if (slot.qty <= 0) p.inventory[p.selected] = null;
     p.mass += food.mass;
     (p.digesting ??= []).push({ perSec: food.heal / food.healSec, left: food.healSec });
+    if (food.buzzSec) p.buzz = food.buzzSec;
     if (food.stamina) {
       p.stamina = this.playerOpts.staminaMax;
       p.exhausted = false;
@@ -430,9 +434,11 @@ export class World {
     return null;
   }
 
-  /** Food eaten heals a little every tick until it's done. */
+  /** Everyone heals slowly on their own; food eaten heals a little more every tick until it's done. */
   #digest(dt) {
     for (const p of this.players.values()) {
+      if (p.alive && p.health > 0) p.heal((this.playerOpts.healthRegenPerSec ?? 0) * dt);
+      if (p.buzz > 0) p.buzz = Math.max(0, p.buzz - dt);
       if (!p.digesting?.length) continue;
       for (const d of p.digesting) {
         const t = Math.min(dt, d.left);
@@ -856,7 +862,7 @@ export class World {
     const r = config.townsfolk.bodyRadius + 4;
     const fx = Math.cos(angle), fy = Math.sin(angle);
     let worst = null;
-    for (const v of this.vehicles.values()) {
+    for (const v of this.carGrid.query(x, y, r, this.#near.clear() ?? this.#near)) {
       if (v === except || Math.abs(v.x - x) > v.radius + r || Math.abs(v.y - y) > v.radius + r) continue;
       for (const c of vehicleCircles(v, v.stats)) {
         const dx = c.x - x, dy = c.y - y;
@@ -1077,15 +1083,14 @@ export class World {
       v.passenger.y = v.y;
     }
 
+    this.carGrid.clear();
+    for (const v of this.vehicles.values()) this.carGrid.insert(v);
     this.#shovePedestrians();
 
     // Vehicles shove each other apart and lose speed when they collide (two parked cars never do).
-    const list = [...this.vehicles.values()];
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i];
-        const b = list[j];
-        if (a.idle && b.idle) continue;
+    for (const a of this.vehicles.values()) {
+      for (const b of this.carGrid.query(a.x, a.y, a.radius, this.#near.clear() ?? this.#near)) {
+        if (b.id <= a.id || (a.idle && b.idle)) continue; // (each pair once)
         const reach = a.radius + b.radius;
         if (Math.abs(a.x - b.x) > reach || Math.abs(a.y - b.y) > reach || Math.hypot(a.x - b.x, a.y - b.y) > reach) continue;
         for (const ca of vehicleCircles(a, a.stats)) {
@@ -1139,8 +1144,8 @@ export class World {
       ...this.hires.list.filter((h) => !h.vehicle),
     ];
     const r = config.townsfolk.bodyRadius;
-    for (const v of this.vehicles.values()) {
-      for (const w of walkers) {
+    for (const w of walkers) {
+      for (const v of this.carGrid.query(w.x, w.y, r, this.#near.clear() ?? this.#near)) {
         if (Math.abs(w.x - v.x) > v.radius + r || Math.abs(w.y - v.y) > v.radius + r) continue;
         for (const c of vehicleCircles(v, v.stats)) {
           const dx = w.x - c.x;
@@ -1168,7 +1173,7 @@ export class World {
     for (const p of [v.driver, v.passenger]) {
       if (!p) continue;
       if (!this.#exitVehicle(p)) this.leaveSeat(p);
-      p.health -= config.vehicles.exitDamage;
+      p.hurt(config.vehicles.exitDamage);
       if (p.health <= 0) {
         this.removePlayer(p.id);
         deaths.push({ victim: p, killer: attacker });
@@ -1224,6 +1229,7 @@ export class World {
   /** A townsperson hurt by player `attacker`: a crime, a body if they die, a fight if they don't. */
   #hurtTownsperson(person, damage, attacker) {
     const died = this.townsfolk.damage(person, damage);
+    this.hires.noteAttack(attacker, person); // your goons join in
     this.police.crime(attacker, died ? 'murder' : 'assault');
     if (died) {
       this.bodies.add({ x: person.x, y: person.y, angle: person.angle ?? 0, kind: 'npc', look: [person.id * 7, person.id * 3, person.id * 5, person.id * 11], cash: person.wallet ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
@@ -1258,7 +1264,7 @@ export class World {
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
-    t.health -= t.maxHealth * stats.share + 0.01; // (+ a hair, so three stabs always do it)
+    t.hurt(t.maxHealth * stats.share + 0.01); // (+ a hair, so three stabs always do it)
     const killed = t.health <= 0;
     this.police.crime(p, killed ? 'murder' : 'assault');
     if (killed) {
@@ -1340,7 +1346,7 @@ export class World {
         const reach = p.radius + b.radius;
         if (segmentDistSq(px, py, b.x, b.y, p.x, p.y) >= reach * reach) continue;
         this.bullets.delete(b.id);
-        p.health -= b.damage;
+        p.hurt(b.damage);
         const killed = p.health <= 0;
         if (shooter.kind === 'player' || shooter.kind === 'hire') this.police.crime(shooter, killed ? 'murder' : 'assault');
         this.hires.noteAttack(shooter, p);
@@ -1431,7 +1437,8 @@ export class World {
       const { crush, maxSpeed } = v.stats;
       if (v.speed < config.vehicles.crushMinSpeed || p.hitCooldown > 0) continue;
       p.hitCooldown = 0.6;
-      p.health -= crush * Math.min(1, v.speed / maxSpeed);
+      p.hurt(crush * Math.min(1, v.speed / maxSpeed));
+      if (v.driver) this.hires.noteAttack(v.driver, p);
       // Knocked away from the car.
       p.x += (dx / dist) * 30;
       p.y += (dy / dist) * 30;

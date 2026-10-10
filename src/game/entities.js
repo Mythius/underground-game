@@ -74,6 +74,11 @@ export class Player {
     this.health = Math.min(this.maxHealth, this.health + amount);
   }
 
+  /** Take damage: less of it with a vodka buzz on. */
+  hurt(amount) {
+    this.health -= this.buzz > 0 ? amount * config.economy.vodka.damageTaken : amount;
+  }
+
   /** The gun in the selected slot, or null (empty hand, or a stack of goods). */
   get weapon() {
     const slot = this.inventory[this.selected];

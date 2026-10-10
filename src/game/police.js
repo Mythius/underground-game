@@ -20,12 +20,23 @@ export class Police {
     this.world = world;
     this.stations = world.buildings.filter((b) => b.type === 'police');
     this.units = [];
+    this.waiting = []; // { station, in }: replacements still waiting for a parking space at the station
     this.events = []; // { player, kind: 'busted' | 'released' | 'crime', … } for the room to tell players
     this.robCooldown = new Map(); // target key -> economy time it can be robbed again
     this.nextOfficerId = 1;
     if (!this.stations.length) return;
     const cars = Math.max(1, Math.round(world.buildings.length * config.police.carsPerBuildings));
-    for (let i = 0; i < cars; i++) this.#newUnit(this.stations[i % this.stations.length]);
+    for (let i = 0; i < cars; i++) this.#replace(this.stations[i % this.stations.length]);
+  }
+
+  /** The old cruiser of a replaced unit goes back to the depot, unless someone's in it (stolen ones stay out there). */
+  #towAway(car) {
+    if (car && this.world.vehicles.has(car.id) && !car.driver && !car.passenger) this.world.vehicles.delete(car.id);
+  }
+
+  /** A new unit at `station`; with no space to park its car, it tries again a little later (the force never shrinks). */
+  #replace(station) {
+    if (!this.#newUnit(station)) this.waiting.push({ station, in: 10 });
   }
 
   get time() {
@@ -226,6 +237,7 @@ export class Police {
     const npc = this.world.townsfolk.people.find((t) => t.inside <= 0 && Math.hypot(t.x - p.x, t.y - p.y) < reach);
     let take = 0;
     let unnoticed = false;
+    let victim = null;
     if (npc) {
       take = Math.min(Math.floor(npc.wallet), Math.round(rule.npcMin + Math.random() * (rule.npcMax - rule.npcMin)));
       npc.wallet -= take;
@@ -236,12 +248,13 @@ export class Police {
         this.world.townsfolk.provoke(npc, p, 'pickpocket'); // they noticed — and they've got a purse
       }
     } else {
-      const victim = [...this.world.players.values()].find((o) => o !== p && o.alive && !o.vehicle && Math.hypot(o.x - p.x, o.y - p.y) < reach + o.radius);
+      victim = [...this.world.players.values()].find((o) => o !== p && o.alive && !o.vehicle && Math.hypot(o.x - p.x, o.y - p.y) < reach + o.radius);
       if (!victim) return 'nobody_to_rob';
       take = Math.floor(victim.cash * rule.playerShare);
       victim.cash -= take;
       this.events.push({ player: victim, kind: 'pickpocketed', amount: take });
     }
+    this.world.hires?.noteAttack(p, npc ?? victim); // your goons go for whoever you rob // your goons go for whoever you rob
     p.pickpocketReady = this.time + rule.cooldownSec;
     p.cash += take;
     this.crime(p, 'pickpocket', false, unnoticed ? npc : null); // (someone else may still see it)
@@ -262,7 +275,7 @@ export class Police {
 
   damageOfficer(officer, damage, attacker) {
     const alive = officer.health > 0;
-    officer.health -= damage;
+    officer.health -= damage * (1 - config.police.officerArmor); // body armour
     // A fallen officer leaves a body (with their service rifle on it).
     if (alive && officer.health <= 0) {
       this.world.bodies?.add({ x: officer.x, y: officer.y, angle: officer.angle ?? 0, kind: 'officer', look: [0, 0, 0, 0], items: [{ type: 'rifle', ammo: config.weapons.rifle.magazineSize, reloadTimer: 0 }], killer: attacker?.kind === 'player' ? attacker : null });
@@ -271,6 +284,7 @@ export class Police {
     const seenByVictim = officer.health > 0 && attacker && this.sees(officer.x, officer.y, officer.angle, attacker.x, attacker.y, config.crime.policeSees);
     if (attacker?.kind === 'player' || attacker?.kind === 'hire') this.crime(attacker, 'attack_police', seenByVictim);
     if (attacker) attacker.shotPolice = true;
+    this.world.hires?.noteAttack(attacker, officer); // (your goons join in)
   }
 
   // ---- arrests --------------------------------------------------------------------
@@ -345,6 +359,10 @@ export class Police {
   // ---- the police AI --------------------------------------------------------------------
 
   step(dt) {
+    for (const w of this.waiting.splice(0)) {
+      if ((w.in -= dt) > 0) this.waiting.push(w);
+      else this.#replace(w.station);
+    }
     this.#robberies(dt);
     this.#jail();
     // While they can see you they know where you are; out of sight long enough (longer for worse
@@ -393,7 +411,8 @@ export class Police {
       u.respawn += dt;
       if (u.respawn > config.police.respawnSec) {
         this.units.splice(this.units.indexOf(u), 1);
-        this.#newUnit(u.station);
+        this.#towAway(u.car);
+        this.#replace(u.station);
       }
       return;
     }
@@ -616,7 +635,8 @@ export class Police {
       u.respawn += dt;
       if (u.respawn > config.police.respawnSec / 2) {
         this.units.splice(this.units.indexOf(u), 1);
-        this.#newUnit(u.station);
+        this.#towAway(u.car);
+        this.#replace(u.station);
       }
       return;
     }

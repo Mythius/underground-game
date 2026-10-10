@@ -146,7 +146,7 @@ export class Railway {
     for (const p of w.players.values()) {
       if (!p.alive || p.vehicle || !inside(p.x, p.y, p.radius)) continue;
       shove(p, p.radius);
-      p.health -= Math.min(60, this.train.speed * 0.15);
+      p.hurt(Math.min(60, this.train.speed * 0.15));
       if (p.health <= 0) this.killed.push(p);
     }
     for (const v of w.vehicles.values()) {

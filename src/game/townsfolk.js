@@ -157,15 +157,17 @@ export class Townsfolk {
     return this.spots[Math.floor(Math.random() * this.spots.length)];
   }
 
-  #spawn() {
-    const at = this.#pick();
+  /** Someone new in town; a newcomer (replacing someone who died) moves into one of the houses and steps out from there. */
+  #spawn(newcomer = false) {
+    const homes = newcomer ? this.spots.filter((s) => s.kind === 'home') : [];
+    const at = homes.length ? homes[Math.floor(Math.random() * homes.length)] : this.#pick();
     this.people.push({
       id: this.nextId++,
       at, // where they are (inside) or last were
       x: at.walk[0].x,
       y: at.walk[0].y,
       angle: 0,
-      inside: Math.random() * config.townsfolk.maxStaySec, // seconds left indoors
+      inside: newcomer ? 2 + Math.random() * 10 : Math.random() * config.townsfolk.maxStaySec, // seconds left indoors
       route: [],
       side: Math.random() < 0.5 ? -1 : 1, // which pavement they keep to
       speed: config.townsfolk.walkSpeed * (0.8 + Math.random() * 0.4),
@@ -285,7 +287,8 @@ export class Townsfolk {
     f.cooldown -= dt;
     if (d <= reach && f.cooldown <= 0) {
       f.cooldown = rule.fightCooldownSec;
-      t.health -= t.maxHealth * rule.purseShare;
+      t.hurt(t.maxHealth * rule.purseShare);
+      this.world.hires?.noteAttack(person, t); // (your goons go for whoever hits you)
       if (t.health <= 0) {
         this.kills.push(t);
         person.fight = null;
@@ -299,7 +302,7 @@ export class Townsfolk {
       this.arrivals[i] -= dt;
       if (this.arrivals[i] <= 0) {
         this.arrivals.splice(i, 1);
-        if (this.spots.length) this.#spawn();
+        if (this.spots.length) this.#spawn(true);
       }
     }
     for (const person of this.people) {

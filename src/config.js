@@ -95,6 +95,7 @@ export const config = Object.freeze({
     staminaMax: 100,
     staminaDrainPerSec: 35,
     staminaRegenPerSec: 22,
+    healthRegenPerSec: 1, // everyone slowly heals on their own (food heals faster)
     staminaRegenDelaySec: 0.8, // pause after sprinting before stamina refills
     staminaMinToSprint: 25, // after running dry, wait until this much is back
     massShrinkPerSec: 0.01, // extra size from overeating fades by this fraction per second
@@ -162,6 +163,9 @@ export const config = Object.freeze({
       feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, healSec: 20, mass: 15, bread: 4 },
     },
     foodStack: 5,
+    // Vodka (the illegal good) drinks like food: middling healing, and while the buzz lasts you take
+    // only `damageTaken` of any damage.
+    vodka: { name: 'Vodka', icon: '🍾', heal: 25, healSec: 8, mass: 0, buzzSec: 60, damageTaken: 0.7 },
   },
 
   // Day/night and weather. A week is 7 day/night cycles (~2.9 hours).
@@ -375,7 +379,7 @@ export const config = Object.freeze({
     marketBasket: ['bread', 'furniture', 'fuel', 'glass', 'plastic', 'planks', 'parts'], // what they buy at markets
     health: 40, // they can be shot (a crime); cars just shove them aside
     bodyRadius: 16, // for being pushed out of the way of cars
-    replaceSec: 60, // someone new moves to town this long after a townsperson dies
+    replaceSec: 60, // someone new moves into one of the houses this long after a townsperson dies
     // Stab, shoot or pickpocket one and (if they're still standing) they come at you swinging a purse,
     // land a couple of hits, then run off and call the Militsiya once they're clear.
     fightSec: 20, // they give up after this long…
@@ -481,7 +485,8 @@ export const config = Object.freeze({
     fireEverySec: 0.8,
     aimSpread: 0.18,
     officerHealth: 100,
-    respawnSec: 60, // a downed officer is replaced at the station after this
+    officerArmor: 0.25, // body armour: officers take this much less damage
+    respawnSec: 60, // a downed officer is replaced at the station after this (a new car, when there's a space)
     bailPerStar: 250, // paid from cash, then the bank
     jailSecPerStar: 30, // if you can't make bail
   },

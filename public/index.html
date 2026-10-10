@@ -1843,18 +1843,31 @@
     const crimeBar = document.getElementById('crimebar');
     const jailScreen = document.getElementById('jailscreen');
 
+    let robShown = null; // { kind, progress }: the bar only ever moves forward during one robbery
+
+    /** Robbery progress for this frame: the server's figure run on to now, never going backwards. */
+    function robProgress(rob, at) {
+      const [kind, progress, sec] = rob;
+      const ahead = sec ? Math.min(0.25, (performance.now() - at) / 1000) / sec : 0; // (no further than a snapshot or so)
+      const p = Math.min(1, progress + ahead);
+      if (robShown?.kind !== kind || p < robShown.progress - 0.2) robShown = { kind, progress: p }; // a new robbery
+      else robShown.progress = Math.max(robShown.progress, p);
+      return robShown.progress;
+    }
+
     function updateCrimeHud() {
-      const { wanted, jail, rob, arrest } = playing ? crimeState : { wanted: 0, jail: 0, rob: null, arrest: 0 };
+      const { wanted, jail, rob, arrest, at } = playing ? crimeState : { wanted: 0, jail: 0, rob: null, arrest: 0 };
+      if (!rob) robShown = null;
       wantedEl.hidden = true; // no stars on screen: you only know from the sirens (the system still runs)
       if (wanted) wantedEl.innerHTML = `<span class="on">${'★'.repeat(wanted)}</span><span class="off">${'★'.repeat(5 - wanted)}</span>`;
       jailScreen.hidden = !jail;
       if (jail) document.getElementById('jail-time').textContent = `— ${jail}s`;
-      const [label, progress, arresting] = arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], rob[1], false] : [null, 0, false];
+      const [label, progress, arresting] = arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], robProgress(rob, at), false] : [null, 0, false];
       crimeBar.hidden = !label;
       if (label) {
         crimeBar.classList.toggle('arrest', arresting);
         crimeBar.querySelector('span').textContent = label;
-        crimeBar.querySelector('i').style.width = `${Math.round(progress * 100)}%`;
+        crimeBar.querySelector('i').style.width = `${(progress * 100).toFixed(1)}%`;
       }
     }
 
@@ -2489,6 +2502,7 @@
     let hiddenSelf = false; // in a dumpster
     let riding = 0; // the car I'm a passenger in (0: not)
     let healLeft = 0; // health still to come from food I've eaten
+    let buzzLeft = 0; // seconds of vodka buzz left (I take less damage)
     const bodyEl = document.getElementById('bodypanel');
     const BODY_REACH = 55;
     let bodyOpen = null; // { id, data }
@@ -4601,7 +4615,7 @@
     const slotKey = () => inv.map((w) => (!w ? '-' : w[0] === 'goods' ? `g:${w[1]}` : w[0])).join();
     const isGoods = (w) => w?.[0] === 'goods';
     const isFood = (w) => w?.[0] === 'food'; // ['food', item, qty] — bought at a shop, E eats one
-    const edible = (w) => isFood(w) || (isGoods(w) && w[1] === 'bread'); // (bakery bread eats too)
+    const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'vodka')); // (bakery bread eats too; vodka drinks)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
     const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧' }; // drawn icons (see ICON_DRAW)
     const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe' };
@@ -4739,8 +4753,8 @@
         else if (!shopEl.hidden) closeShop();
         else if (!bankEl.hidden) closeBank();
         else if (econ.open) closePlace();
-        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding) send({ t: 'eat' }); // food in hand (on foot): E eats it
         else if (fuelCar()) send({ t: 'refuel', can: true }); // fuel in hand beside a car: E pours it in
+        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding && !eTarget()) send({ t: 'eat' }); // food in hand (on foot): E eats it
         else {
           const t = eTarget(); // only the closest thing, the one with the prompt
           if (t?.kind === 'shop') openShop();
@@ -5128,7 +5142,8 @@
       hiddenSelf = Boolean(you.hidden);
       riding = ride;
       healLeft = you.heal ?? 0;
-      crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0 };
+      buzzLeft = you.buzz ?? 0;
+      crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0, at: performance.now() };
       const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null]);
       if (trunkKey !== lastTrunkKey) renderTrunk(); // only on change, or clicks get lost
       lastTrunkKey = trunkKey;
@@ -6331,7 +6346,7 @@
         const cx = Math.min(Math.max(me.x, d.x), d.x + d.w);
         const cy = Math.min(Math.max(me.y, d.y), d.y + d.h);
         const dist = Math.hypot(me.x - cx, me.y - cy);
-        if (dist < reach && dist < bestDist) [best, bestDist] = [{ x: d.x + d.w / 2, y: d.y + d.h / 2 }, dist];
+        if (dist < reach && dist < bestDist) [best, bestDist] = [{ x: d.x + d.w / 2, y: d.y + d.h / 2, gap: dist - radiusOf(me.mass) }, dist];
       }
       for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
         const stats = vehicleTypes[v.type];
@@ -6343,7 +6358,7 @@
         const dist = Math.hypot(Math.max(d.x - me.x, 0, me.x - (d.x + d.w)), Math.max(d.y - me.y, 0, me.y - (d.y + d.h))) - radiusOf(me.mass);
         if (dist < doorReach && dist < bestDist) [best, bestDist] = [{ x: d.x + d.w / 2, y: d.y + d.h / 2 }, dist];
       }
-      return best && { ...best, dist: bestDist };
+      return best && { ...best, dist: best.gap ?? bestDist };
     }
 
     /** With fuel in hand on foot, the car close enough to pour it into (or null). */
@@ -6365,10 +6380,14 @@
      * The one thing E acts on right now: whichever is closest of shopkeeper, ATM/teller,
      * place, body, or door/vehicle/dumpster. Only this one gets an E prompt.
      */
+    const PEOPLE_FIRST = 45; // px of head start shopkeepers, dealers and bodies get over doors and cars
     function eTarget() {
-      if (!me || me.car || riding || hiddenSelf || edible(inv[selectedSlot]) || fuelCar()) return null; // (with food in hand, E eats; fuel beside a car, E pours)
+      if (!me || me.car || riding || hiddenSelf || fuelCar()) return null; // (fuel beside a car: E pours)
+      const eating = edible(inv[selectedSlot]); // food or vodka in hand: E eats, unless you're at a counter
       const options = [];
-      const d = (o) => Math.hypot(o.x - me.x, o.y - me.y);
+      // Edge to edge (people are ~17 across), and people come first: a door or car beside the counter
+      // only takes the E when you're right up against it.
+      const d = (o) => Math.hypot(o.x - me.x, o.y - me.y) - radiusOf(me.mass) - 17 - PEOPLE_FIRST;
       const keeper = nearestShopkeeper();
       if (keeper) options.push({ kind: 'shop', target: keeper, dist: d(keeper), x: keeper.x, y: keeper.y - 66 });
       const banker = nearestBanker();
@@ -6379,12 +6398,12 @@
       if (body) options.push({ kind: 'body', target: body, dist: d(body), x: body.x - 16, y: body.y - 40 });
       if (myHome) {
         const g = { x: myHome[1], y: myHome[2] };
-        if (d(g) < homesCfg.garageReach + radiusOf(me.mass)) options.push({ kind: 'garage', dist: d(g), x: g.x, y: g.y - 46 });
+        if (Math.hypot(g.x - me.x, g.y - me.y) < homesCfg.garageReach + radiusOf(me.mass)) options.push({ kind: 'garage', dist: d(g), x: g.x, y: g.y - 46 });
       }
       const usable = nearestUsable();
       if (usable) options.push({ kind: 'use', dist: usable.dist, x: usable.x, y: usable.y });
       let best = null;
-      for (const o of options) if (!best || o.dist < best.dist) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place'].includes(o.kind))) best = o;
       return best;
     }
 
@@ -6648,6 +6667,14 @@
     const speech = new Map(); // speaker key -> { text, until, near } (near: you were close last frame)
     const pick = (list) => list[Math.floor(Math.random() * list.length)];
 
+    // Players under a solid roof are hidden, labels included.
+    // …and so are players under a tree canopy (unless it's the one I'm under).
+    function hiddenUnderRoof(x, y) {
+      const b = insideBuilding(x, y);
+      if (b) return b.pattern !== 'none' && roofAlpha.get(b.id) > 0.5;
+      return terrain.trees.some((t, i) => canopyAlpha[i] > 0.5 && Math.hypot(x - t.x, y - t.y) < t.canopy * 0.9);
+    }
+
     /** Update and draw everyone's lines. Each speaker says one thing at a time. */
     function drawSpeech(v, now) {
       const t = now / 1000;
@@ -6902,13 +6929,6 @@
         const a = roofAlpha.get(b.id) ?? 1;
         roofAlpha.set(b.id, a + (target - a) * (1 - Math.exp(-dt * 10)));
       }
-      // Players under a solid roof are hidden, labels included.
-      // …and so are players under a tree canopy (unless it's the one I'm under).
-      const hiddenUnderRoof = (x, y) => {
-        const b = insideBuilding(x, y);
-        if (b) return b.pattern !== 'none' && roofAlpha.get(b.id) > 0.5;
-        return terrain.trees.some((t, i) => canopyAlpha[i] > 0.5 && Math.hypot(x - t.x, y - t.y) < t.canopy * 0.9);
-      };
 
       // Guns on the ground: a pulsing glow in the gun's colour, the gun slowly turning, and its name.
       for (const [id, x, y, type, amount, extra] of snapshot?.pickups ?? []) {
@@ -7051,7 +7071,8 @@
         drawKeyPrompt(me.x - 22, me.y - 58);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        ctx.strokeText('eat', me.x - 4, me.y - 57); ctx.fillText('eat', me.x - 4, me.y - 57);
+        const verb = isGoods(inv[selectedSlot]) && inv[selectedSlot][1] === 'vodka' ? 'drink' : 'eat';
+        ctx.strokeText(verb, me.x - 4, me.y - 57); ctx.fillText(verb, me.x - 4, me.y - 57);
       } else if (me && playing && fuelCar()) { // fuel in hand beside a car: E pours it in
         drawKeyPrompt(me.x - 22, me.y - 58);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
@@ -7063,6 +7084,12 @@
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
         const t = `+${healLeft} ❤`;
         ctx.strokeText(t, me.x + 34, me.y + 30); ctx.fillText(t, me.x + 34, me.y + 30);
+      }
+      if (me && playing && buzzLeft > 0) { // vodka: tougher for a while
+        ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#9ad0ff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        const t = `🍾 ${buzzLeft}s`;
+        ctx.strokeText(t, me.x + 34, me.y + (healLeft > 0 ? 46 : 30)); ctx.fillText(t, me.x + 34, me.y + (healLeft > 0 ? 46 : 30));
       }
       const bodyNear = me && playing && !me.car && !carrying ? nearestBody() : null;
       const robbable = me && playing && !me.car && !riding && !bodyNear ? robTarget() : null; // F picks up a body before robbing
