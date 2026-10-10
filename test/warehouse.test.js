@@ -216,7 +216,7 @@ test('property tax comes out of the bank; if it cannot be paid everything stops'
   assert.equal(wh.unpaid, false);
 });
 
-test('owned warehouses are saved and come back after a restart, even onto a changed map', () => {
+test('owned warehouses are saved; after a restart you load yours into any free one of the same size instead of buying', () => {
   const store = new AccountStore(':memory:');
   const { account } = store.createDeviceAccount();
   const first = town();
@@ -228,20 +228,30 @@ test('owned warehouses are saved and come back after a restart, even onto a chan
   first.wh.dockIn.stock = { logs: 7 };
   store.saveWarehouses(first.world.warehouses.toSave());
 
-  // Same map: same warehouse.
-  const again = town();
-  const placed = again.world.warehouses.restore(store.loadWarehouses(), (id) => store.live(id));
-  assert.equal(placed.length, 1);
-  assert.equal(again.wh.owner, live);
-  assert.equal(again.wh.at(4, 6).kind, 'saw');
-  assert.equal(again.wh.dockIn.stock.logs, 7);
-
-  // A map whose first warehouse is now small: it goes into the other medium one.
-  const changed = town('smallwarehouse');
-  changed.world.warehouses.restore(store.loadWarehouses(), (id) => store.live(id));
-  assert.equal(changed.wh.owner, null);
-  assert.equal(changed.other.owner, live);
-  assert.equal(changed.other.at(4, 6).kind, 'saw');
+  // A new map (its first warehouse is small now): nothing is placed until you pick one.
+  const next = town('smallwarehouse');
+  next.world.warehouses.stored = store.loadWarehouses();
+  next.player.account = live;
+  assert.equal(next.other.owner, null);
+  assert.deepEqual(next.world.warehouses.storedFor(live), ['medium']);
+  // Wrong size: no.
+  assert.equal(next.act({ action: 'bring' }), 'nothing_stored');
+  // The free medium one: yours, layout, stock and all — and no charge.
+  next.inside(next.player, next.other);
+  const bank = live.bank;
+  assert.equal(next.world.warehouses.action(next.player, { id: next.other.id, action: 'bring' }), null);
+  assert.equal(next.other.owner, live);
+  assert.equal(next.other.at(4, 6).kind, 'saw');
+  assert.equal(next.other.dockIn.stock.logs, 7);
+  assert.equal(live.bank, bank);
+  assert.deepEqual(next.world.warehouses.storedFor(live), [], 'only once');
+  // Still saved (now where it is), and nobody else can load it.
+  assert.equal(next.world.warehouses.toSave().length, 1);
+  const stranger = next.world.spawnPlayer('x');
+  stranger.account = { id: 999, name: 'x', bank: 0, guest: false };
+  next.world.warehouses.stored = store.loadWarehouses();
+  next.inside(stranger);
+  assert.equal(next.act({ action: 'bring' }, stranger), 'nothing_stored');
 });
 
 test('a rotated warehouse has its grid turned too, and its docks still feed belts', () => {

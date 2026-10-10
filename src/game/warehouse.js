@@ -448,6 +448,9 @@ export class Warehouses {
     this.taxTimer = 0;
     this.changed = false; // something worth saving happened
     this.events = []; // raids, for the room to tell the owner about
+    // Factories saved before a restart (the map is new each time): [{ accountId, slot, data }]. Each
+    // waits here until its owner loads it into a free warehouse of the same size (see 'bring').
+    this.stored = [];
   }
 
   get time() {
@@ -512,6 +515,17 @@ export class Warehouses {
         w.reset();
         Object.assign(w, { owner: account, ownerId: account.id, spent: size.price, taxOwed: 0, unpaid: false });
         this.world.onBankChange?.(account);
+        return null;
+      }
+      if (msg.action === 'bring') {
+        // Your factory from before the restart, moved into this free warehouse of the same size (no charge).
+        if (w.owner) return 'already_owned';
+        if (!w.contains(p.x, p.y) && Math.hypot(w.building.x + w.building.w / 2 - p.x, w.building.y + w.building.h / 2 - p.y) > Math.max(w.building.w, w.building.h)) return 'too_far';
+        const row = account?.id ? this.stored.find((r) => r.accountId === account.id && r.data.size === w.size) : null;
+        if (!row) return 'nothing_stored';
+        this.stored.splice(this.stored.indexOf(row), 1);
+        w.load(row.data);
+        Object.assign(w, { owner: account, ownerId: account.id, unpaid: false });
         return null;
       }
       if (msg.action === 'load' || msg.action === 'take') {
@@ -681,27 +695,9 @@ export class Warehouses {
 
   // ---- saving ---------------------------------------------------------------------
 
-  /**
-   * Saved warehouses go back into a warehouse of the same size: the same one (by its slot, the n-th of
-   * its size on the map) if it's there, otherwise any free one. Rows that don't fit anywhere stay saved.
-   * Returns the rows that were placed, with the slot they ended up in.
-   */
-  restore(rows, accountById) {
-    const placed = [];
-    const slots = this.slots();
-    const free = new Set(this.all.values());
-    const sorted = [...rows].sort((a, b) => (slots.has(b.slot) ? 1 : 0) - (slots.has(a.slot) ? 1 : 0)); // exact slots first
-    for (const row of sorted) {
-      let w = slots.get(row.slot);
-      if (!w || !free.has(w) || w.size !== row.data.size) w = [...free].find((x) => x.size === row.data.size);
-      const account = accountById(row.accountId);
-      if (!w || !account) continue;
-      free.delete(w);
-      w.load(row.data);
-      Object.assign(w, { owner: account, ownerId: account.id });
-      placed.push({ ...row, slot: this.slotOf(w), source: row });
-    }
-    return placed;
+  /** Sizes of the saved factories account has waiting to be loaded into a free warehouse. */
+  storedFor(account) {
+    return account?.id ? this.stored.filter((r) => r.accountId === account.id).map((r) => r.data.size) : [];
   }
 
   /** slot name -> warehouse; a slot is "<size>-<n>", the n-th warehouse of that size by building id. */
@@ -720,8 +716,8 @@ export class Warehouses {
     return null;
   }
 
-  /** Rows to save: one per owned warehouse. */
+  /** Rows to save: one per owned warehouse, and the ones still waiting to be loaded. */
   toSave() {
-    return [...this.slots()].filter(([, w]) => w.owner).map(([slot, w]) => ({ slot, accountId: w.ownerId, data: w.save() }));
+    return [...[...this.slots()].filter(([, w]) => w.owner).map(([slot, w]) => ({ slot, accountId: w.ownerId, data: w.save() })), ...this.stored];
   }
 }

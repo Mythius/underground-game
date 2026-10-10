@@ -7,6 +7,8 @@ import { waterDistance } from './water.js';
 //   Stop in the zone (slower than slowSpeed for searchSec) and they search you and your car:
 //     clean → wave you on; contraband → seized, and you're wanted (smuggling).
 //   A bribe (cash, while you're in the zone) gets you waved through for a while.
+//   Someone else's car (or a Militsiya one) is recognised as stolen: no bribe covers it. Stop and
+//   you're pulled out and wanted for car theft, and the car's taken back; drive on and you ran it.
 
 export class Roadblocks {
   constructor(world, avoid = []) {
@@ -60,13 +62,20 @@ export class Roadblocks {
     return this.list.find((r) => x > r.zone.x - margin && x < r.zone.x + r.zone.w + margin && y > r.zone.y - margin && y < r.zone.y + r.zone.h + margin) ?? null;
   }
 
+  /** Is p driving a car that isn't theirs: someone else's, or a Militsiya car? */
+  stolen(p) {
+    const v = p.vehicle;
+    return Boolean(v && (v.police || (v.owner && v.owner !== p.account)));
+  }
+
   step(dt) {
     const rb = config.roadblocks;
     for (const p of this.world.players.values()) {
       const v = p.vehicle;
+      const mine = v && (!v.police || this.stolen(p)) ? v : null; // (a Militsiya car driven by a player is stolen)
       p.handledAt ??= {};
       // Coming within range of a checkpoint by car: you have checkWithinSec to stop and be checked.
-      const near = v && !v.police ? this.at(v.x, v.y, rb.range) : null;
+      const near = mine && v.driver === p ? this.at(v.x, v.y, rb.range) : null;
       if (near && !p.checkDue && (p.handledAt[near.id] ?? -Infinity) <= this.time) {
         p.checkDue = { id: near.id, until: this.time + rb.checkWithinSec };
         this.events.push({ player: p, kind: 'roadblock_due', sec: rb.checkWithinSec });
@@ -76,12 +85,12 @@ export class Roadblocks {
         const id = p.checkDue.id;
         p.checkDue = null;
         p.handledAt[id] = this.time + rb.againSec;
-        if ((p.bribedUntil ?? -Infinity) <= this.time && p.alive) {
+        if (((p.bribedUntil ?? -Infinity) <= this.time || this.stolen(p)) && p.alive) {
           this.world.police.crime(p, 'run_roadblock', true);
           this.events.push({ player: p, kind: 'roadblock_run' });
         }
       }
-      const block = v && !v.police ? this.at(v.x, v.y) : null;
+      const block = mine && v.driver === p ? this.at(v.x, v.y) : null;
       if (!block) {
         p.checkTimer = 0;
         continue;
@@ -93,7 +102,8 @@ export class Roadblocks {
       p.checkTimer = 0;
       p.checkDue = null; // checked in time
       p.handledAt[block.id] = this.time + rb.againSec;
-      if ((p.bribedUntil ?? -Infinity) > this.time) {
+      const stolen = this.stolen(p);
+      if ((p.bribedUntil ?? -Infinity) > this.time && !stolen) {
         this.events.push({ player: p, kind: 'roadblock_waved' });
         continue;
       }
@@ -108,7 +118,12 @@ export class Roadblocks {
       if (Object.keys(seized).length) {
         this.world.police.crime(p, 'smuggling', true);
         this.events.push({ player: p, kind: 'roadblock_seized', seized });
-      } else this.events.push({ player: p, kind: 'roadblock_clean' });
+      } else if (!stolen) this.events.push({ player: p, kind: 'roadblock_clean' });
+      if (stolen) {
+        this.world.police.crime(p, v.police ? 'steal_police_car' : 'steal_car', true);
+        this.world.impound(v);
+        this.events.push({ player: p, kind: 'roadblock_stolen' });
+      }
     }
   }
 
@@ -117,6 +132,7 @@ export class Roadblocks {
     const rb = config.roadblocks;
     const where = p.vehicle ?? p;
     if (!this.at(where.x, where.y, 200)) return 'no_roadblock';
+    if (this.stolen(p)) return 'stolen_car';
     if ((p.bribedUntil ?? -Infinity) > this.time) return 'already_bribed';
     if (p.cash < rb.bribe) return 'not_enough_cash';
     p.cash -= rb.bribe;

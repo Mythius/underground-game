@@ -153,6 +153,35 @@ test('roadblocks: stop and get searched (contraband seized), bribe to pass, or d
   assert.equal(t3.player.wanted, config.crime.stars.run_roadblock);
 });
 
+test("roadblocks know a car that isn't yours: no bribe, you're pulled out and it goes back", () => {
+  const { world, player } = town();
+  const block = world.roadblocks.list[0];
+  const owner = { id: 99, name: 'owner', bank: 0, guest: false };
+  const car = new Vehicle(9300, 'sedan', block.x, block.y, 0);
+  Object.assign(car, { owner, carId: 5, driver: player, picked: true });
+  world.vehicles.set(car.id, car);
+  Object.assign(player, { vehicle: car, lastVehicle: car, x: car.x, y: car.y, cash: 5000 });
+  const lost = [];
+  world.onCarLost = (v) => lost.push(v);
+  assert.equal(world.roadblocks.bribe(player), 'stolen_car');
+  for (let i = 0; i < 30 * 2; i++) world.roadblocks.step(1 / 30);
+  assert.equal(player.vehicle, null, 'pulled out');
+  assert.equal(player.wanted, config.crime.stars.steal_car);
+  assert.ok(!world.vehicles.has(car.id) && lost[0] === car, "back in the owner's garage");
+  assert.equal(world.roadblocks.events.at(-1).kind, 'roadblock_stolen');
+
+  // Your own car is fine.
+  const t2 = town();
+  const b2 = t2.world.roadblocks.list[0];
+  const mine = new Vehicle(9301, 'sedan', b2.x, b2.y, 0);
+  Object.assign(mine, { owner: t2.player.account, driver: t2.player });
+  t2.world.vehicles.set(mine.id, mine);
+  Object.assign(t2.player, { vehicle: mine, x: mine.x, y: mine.y });
+  for (let i = 0; i < 30 * 2; i++) t2.world.roadblocks.step(1 / 30);
+  assert.equal(t2.player.vehicle, mine);
+  assert.equal(t2.world.roadblocks.events.at(-1).kind, 'roadblock_clean');
+});
+
 test('illegal machines: shacks take only them; making contraband builds heat until a raid seizes it', () => {
   const { world, player, byType } = town();
   const shack = [...world.warehouses.all.values()].find((w) => w.size === 'shack');

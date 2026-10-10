@@ -10,7 +10,7 @@ import { makeLot } from './parking.js';
 export const SIDEWALK = 40;
 
 /** Building types that belong in the city; everything else goes in the countryside. */
-export const CITY_TYPES = new Set(['shop', 'kiosk', 'bank', 'police', 'market', 'gunstore', 'dealership', 'panelka', 'office', 'church', 'garages', 'house', 'garage']);
+export const CITY_TYPES = new Set(['shop', 'kiosk', 'bar', 'bank', 'police', 'market', 'gunstore', 'dealership', 'panelka', 'office', 'church', 'garages', 'house', 'garage']);
 /** Types that get parking spaces of their own. */
 export const BUSINESS_TYPES = new Set([
   'shop', 'kiosk', 'bank', 'police', 'market', 'gunstore', 'dealership', 'office', 'gas',

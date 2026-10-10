@@ -87,26 +87,55 @@ export class Police {
     return r > 0 && this.world.townsfolk.people.some((t) => t !== except && t.inside <= 0 && this.sees(t.x, t.y, t.angle, x, y, r));
   }
 
-  /** Player p did `kind`. With `alarm`, it's reported whatever; otherwise only if someone (other than `except`) saw it. */
-  crime(p, kind, alarm = false, except = null) {
-    if (!p?.alive || p.kind !== 'player') return false;
+  /**
+   * Player (or hire) p did `kind`. With `alarm`, it's reported whatever; otherwise only if someone
+   * (other than `except`) saw it. `stars` overrides how bad it counts.
+   */
+  crime(p, kind, alarm = false, except = null, stars = config.crime.stars[kind] ?? 1) {
+    if (!p?.alive || (p.kind !== 'player' && p.kind !== 'hire')) return false;
     if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
-    const stars = config.crime.stars[kind] ?? 1;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
     // The search starts from here.
     this.#lastKnown(p);
+    p.inSight = this.policeSee(p.x, p.y, p); // (a phoned-in report doesn't mean they're watching)
     if (!before) p.reportedAt = this.time;
-    if (p.wanted > before) this.events.push({ player: p, kind: 'crime', crime: kind, stars: p.wanted });
+    if (p.wanted > before && p.kind === 'player') this.events.push({ player: p, kind: 'crime', crime: kind, stars: p.wanted });
+    // An officer who saw it with their own eyes (on foot or from a passing car) goes after them at once,
+    // without waiting for the call to come through.
+    const range = this.#spotRange(p, config.crime.policeSees);
+    for (const u of this.units) {
+      const o = u.officer;
+      if (u.target || o.health <= 0 || !this.sees(o.x, o.y, o.angle, p.x, p.y, range)) continue;
+      u.target = p;
+      u.route = [];
+    }
+    if (p.wanted > before && p.kind === 'hire') this.world.hires.traced(p, kind, stars); // a witness may know who they work for
     return true;
+  }
+
+  /** Everyone the Militsiya might be after: players and hired muscle. */
+  #suspects() {
+    return [...this.world.players.values(), ...(this.world.hires?.list ?? [])];
   }
 
   /** The Militsiya know where p is right now: the trail starts again from here. */
   #lastKnown(p) {
     p.lastSeen = this.time;
-    p.lastKnown = { x: p.vehicle?.x ?? p.x, y: p.vehicle?.y ?? p.y };
+    p.lastKnown = { x: p.vehicle?.x ?? p.x, y: p.vehicle?.y ?? p.y, inCar: Boolean(p.vehicle) };
     p.searched = new Set();
     p.searchSpots = null;
+    p.hideSpot = null;
+    p.inSight = true;
+  }
+
+  /**
+   * They had eyes on p a moment ago and now they don't: if p ducked into a hiding place right there
+   * (a dumpster, under a tree, a parked car, a building), the Militsiya saw where they went.
+   */
+  #sawHide(p) {
+    const spot = this.#spots(p).find((s) => this.#hidingAt(p, s));
+    if (spot) p.hideSpot = spot.key;
   }
 
   // ---- robbery and pickpocketing ------------------------------------------------------
@@ -132,7 +161,7 @@ export class Police {
       const car = w.lockedCarNear(p);
       if (!car) return 'nothing_to_rob';
       p.robbing = { kind: 'carpick', car, x: car.x, y: car.y, elapsed: 0, sec: config.vehicles.lockpickSec };
-      this.crime(p, 'steal_car');
+      this.crime(p, car.police ? 'steal_police_car' : 'steal_car', car.police); // a Militsiya car is always reported
       return null;
     }
     const rule = config.robbery[kind];
@@ -240,7 +269,7 @@ export class Police {
     }
     // The officer reports it only if they survived and can see who did it; otherwise only if someone else saw.
     const seenByVictim = officer.health > 0 && attacker && this.sees(officer.x, officer.y, officer.angle, attacker.x, attacker.y, config.crime.policeSees);
-    if (attacker?.kind === 'player') this.crime(attacker, 'attack_police', seenByVictim);
+    if (attacker?.kind === 'player' || attacker?.kind === 'hire') this.crime(attacker, 'attack_police', seenByVictim);
     if (attacker) attacker.shotPolice = true;
   }
 
@@ -248,6 +277,7 @@ export class Police {
 
   #bust(p) {
     const w = this.world;
+    if (p.kind === 'hire') return w.hires.busted(p); // hired muscle is taken away
     if (p.vehicle) w.leaveSeat(p);
     // Illegal goods are confiscated (from hands and the car with them).
     const holders = [hotbarOf(p)];
@@ -319,11 +349,14 @@ export class Police {
     this.#jail();
     // While they can see you they know where you are; out of sight long enough (longer for worse
     // crimes) and they give up.
-    for (const p of this.world.players.values()) {
+    for (const p of this.#suspects()) {
       if (!p.wanted) continue;
       if (p.jailed) continue;
       if (this.policeSee(p.x, p.y, p)) this.#lastKnown(p);
-      else if (this.time - (p.lastSeen ?? 0) > config.crime.searchSec[p.wanted]) {
+      else if (p.inSight) {
+        p.inSight = false;
+        this.#sawHide(p);
+      } else if (this.time - (p.lastSeen ?? 0) > config.crime.searchSec[p.wanted]) {
         p.wanted = 0;
         p.lastKnown = null;
         this.events.push({ player: p, kind: 'lost_you' });
@@ -339,7 +372,7 @@ export class Police {
       if (u.target && (!u.target.alive || !u.target.wanted || u.target.jailed)) u.target = null;
     }
     // Cars only go out a little while after the call comes in.
-    const wanted = [...this.world.players.values()].filter((p) => p.alive && p.wanted > 0 && !p.jailed && this.time - (p.reportedAt ?? -Infinity) >= config.police.responseSec);
+    const wanted = this.#suspects().filter((p) => p.alive && p.wanted > 0 && !p.jailed && this.time - (p.reportedAt ?? -Infinity) >= config.police.responseSec);
     for (const p of wanted.sort((a, b) => b.wanted - a.wanted)) {
       const chasing = this.units.filter((u) => u.target === p).length;
       const free = this.units
@@ -368,7 +401,12 @@ export class Police {
     const t = u.target;
     const seen = t && t.lastSeen === this.time; // someone has eyes on them right now
     if (o.onFoot) {
-      if (car) car.ai = { gas: -0.3, steer: 0, drift: false }; // parked
+      if (car) car.ai = car.driver || car.speed < 5 ? null : { gas: vehicleMotion(car).forward > 0 ? -0.5 : 0.5, steer: 0, drift: false }; // parked: brake to a stop (not creep off in reverse)
+      const ownCar = car && !car.driver ? car : null;
+      // They've jumped in a car (or were last seen driving): back to the cruiser to give chase.
+      const d = t ? Math.hypot((t.vehicle?.x ?? t.x) - o.x, (t.vehicle?.y ?? t.y) - o.y) : 0;
+      const drivingOff = t && (t.vehicle ? t.vehicle.speed > 60 || d > 300 : !seen && t.lastKnown?.inCar && !t.hideSpot);
+      if (ownCar && drivingOff) return this.#walkBack(u, ownCar, dt);
       if (t && seen && Math.hypot(t.x - o.x, t.y - o.y) < 900) this.#footChase(u, t, dt);
       else if (t?.lastKnown) this.#search(u, t, dt);
       else this.#walkBack(u, car, dt);
@@ -389,8 +427,10 @@ export class Police {
     o.angle = car.angle;
     car.siren = Boolean(t);
     if (t && !seen && t.lastKnown) {
-      // Out of sight: drive to where they were last seen, then search on foot.
       const lk = t.lastKnown;
+      // Lost in a car chase: cruise the roads round where they were last seen, looking.
+      if (lk.inCar && !t.hideSpot) return this.#cruise(u, car, lk, dt);
+      // Out of sight: drive to where they were last seen, then search on foot.
       if (Math.hypot(lk.x - car.x, lk.y - car.y) < 300 || (u.stuck > 0.6 && Math.hypot(lk.x - car.x, lk.y - car.y) < 700)) {
         o.onFoot = true;
         o.x = car.x - Math.sin(car.angle) * 50;
@@ -420,15 +460,36 @@ export class Police {
       return;
     }
     // Patrol along the roads.
+    u.cruiseFor = null;
     const graph = this.world.townsfolk.graph;
     if (!u.route.length && graph.nodes.length) {
       const node = graph.nodes[Math.floor(Math.random() * graph.nodes.length)];
       u.route = graph.route({ x: car.x, y: car.y }, node);
     }
+    this.#followRoute(u, car, 0.55, dt);
+  }
+
+  #followRoute(u, car, throttle, dt) {
     const next = u.route[0];
     if (!next) return void (car.ai = { gas: 0, steer: 0, drift: false });
     if (Math.hypot(next.x - car.x, next.y - car.y) < 90) u.route.shift();
-    this.#drive(u, car, next.x, next.y, 0.55, dt);
+    this.#drive(u, car, next.x, next.y, throttle, dt);
+  }
+
+  /** Looking for a car that got away: to where it was last seen, then round the roads near there. */
+  #cruise(u, car, lk, dt) {
+    const graph = this.world.townsfolk.graph;
+    car.siren = true;
+    if (u.cruiseFor !== lk) {
+      u.cruiseFor = lk;
+      u.route = graph.nodes.length ? graph.route({ x: car.x, y: car.y }, lk) : [{ x: lk.x, y: lk.y }];
+    }
+    if (!u.route.length) {
+      const near = graph.nodes.filter((n) => Math.hypot(n.x - lk.x, n.y - lk.y) < config.police.cruiseRadius);
+      const node = near[Math.floor(Math.random() * near.length)];
+      if (node) u.route = graph.route({ x: car.x, y: car.y }, node);
+    }
+    this.#followRoute(u, car, config.police.chaseThrottle * 0.85, dt);
   }
 
   /** Steer a car toward (tx, ty) at a share of full throttle; back out when stuck on something. */
@@ -499,6 +560,11 @@ export class Police {
   #search(u, t, dt) {
     const o = u.officer;
     u.arrest = 0;
+    // They saw where you hid: straight there.
+    if (t.hideSpot && !t.searched.has(t.hideSpot) && u.spot?.key !== t.hideSpot) {
+      u.spot = this.#spots(t).find((s) => s.key === t.hideSpot) ?? u.spot;
+      u.inspect = 0;
+    }
     const taken = new Set(this.units.filter((x) => x !== u && x.target === t && x.spot).map((x) => x.spot.key));
     if (!u.spot || t.searched.has(u.spot.key)) {
       u.spot = this.#spots(t)
@@ -555,20 +621,23 @@ export class Police {
       return;
     }
     u.arrest = 0;
-    if (Math.hypot(car.x - o.x, car.y - o.y) < 60) {
+    if (Math.hypot(car.x - o.x, car.y - o.y) < car.stats.length / 2 + 40) { // beside it (front, back or side)
       o.onFoot = false;
+      car.picked = false; // back in: locked again
       return;
     }
     o.angle = Math.atan2(car.y - o.y, car.x - o.x);
-    this.#walk(o, car.x, car.y, dt);
+    this.#walk(o, car.x, car.y, dt, car);
   }
 
-  #walk(o, tx, ty, dt) {
+  #walk(o, tx, ty, dt, toCar = null) {
     const d = Math.hypot(tx - o.x, ty - o.y);
     if (d < 1) return;
     const step = Math.min(d, config.police.footSpeed * dt);
-    o.x += ((tx - o.x) / d) * step;
-    o.y += ((ty - o.y) / d) * step;
+    const heading = Math.atan2(ty - o.y, tx - o.x);
+    const way = this.world.steerAroundCars?.(o.x, o.y, heading, toCar) ?? heading; // round parked cars, not into them
+    o.x += Math.cos(way) * step;
+    o.y += Math.sin(way) * step;
     const r = 16;
     // Officers open any public door they walk up to.
     for (const e of this.world.wallGrid.query(o.x, o.y, r + 24)) {

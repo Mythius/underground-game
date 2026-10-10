@@ -233,6 +233,26 @@ export const BUILDING_TYPES = {
     floor: '#b8a890', wall: '#3f6d8a', roof: '#d8a23a', pattern: 'flat', label: 'ЛАРЁК',
   }),
 
+  // A smoky dive where the barman knows people: hire goons, guards and hitmen here.
+  bar: () => ({
+    w: 320, h: 240,
+    walls: [
+      ...perimeter(320, 240, 12, { s: door(0.75, 70) }),
+      { x: 30, y: 80, w: 170, h: 18, c: '#5a3a22' }, // the bar
+      { x: 210, y: 12, w: 12, h: 100 }, // back room
+    ],
+    decor: [
+      { x: 24, y: 20, w: 180, h: 16, c: '#7a4a2a' }, // bottles on the back shelf
+      { x: 40, y: 140, w: 36, h: 36, c: '#6b4a2b' }, // tables
+      { x: 110, y: 160, w: 36, h: 36, c: '#6b4a2b' },
+      { x: 240, y: 30, w: 56, h: 56, c: '#2f5a3a' }, // card table in the back
+      { x: 30, y: 196, w: 120, h: 20, c: '#8b1a1a' }, // worn carpet
+    ],
+    roofDecor: [{ x: 250, y: 160, w: 30, h: 30, c: '#4a4f54' }], // vent
+    npc: { x: 110, y: 56, angle: Math.PI / 2, role: 'barman' }, // behind the bar
+    floor: '#5a4636', wall: '#4a3428', roof: '#3b2f2a', pattern: 'flat', label: 'БАР',
+  }),
+
   cabin: () => ({
     w: 180, h: 160,
     walls: perimeter(180, 160, 14, { e: door(0.5, 56) }),

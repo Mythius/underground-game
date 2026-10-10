@@ -89,6 +89,45 @@ export function generateBays(buildings, width, height, factoryTypes, isWet = () 
   return bays;
 }
 
+/**
+ * Car pads: a concrete slab beside the front door of every starter house, where your garage is (E
+ * there to take out a car you've bought; it's parked on the pad). First that fits: beside a door ·
+ * straight out from it · along any wall. Same rules as bays: clear of other buildings, `avoid`
+ * rects and water.
+ */
+export function generatePads(buildings, types, width, height, isWet = () => false, avoid = []) {
+  const pads = [];
+  const inMap = (r) => r.x > 0 && r.y > 0 && r.x + r.w < width && r.y + r.h < height;
+  const fits = (r, own) => inMap(r) && !isWet(r) && !pads.some((x) => overlaps(r, x, 10)) && !avoid.some((a) => overlaps(r, a, 8)) &&
+    !buildings.some((b) => overlaps(r, b, b === own ? -2 : 10));
+  // A car lies along the long side; the pad's angle is the way it's parked.
+  const flat = (cx, cy, horizontal) => (horizontal ? { x: cx - BAY_LONG / 2, y: cy - BAY_WIDE / 2, w: BAY_LONG, h: BAY_WIDE } : { x: cx - BAY_WIDE / 2, y: cy - BAY_LONG / 2, w: BAY_WIDE, h: BAY_LONG });
+  for (const b of buildings) {
+    if (!types.includes(b.type)) continue;
+    const tries = [];
+    for (const d of b.doors.filter((x) => x.exterior)) {
+      const horizontal = d.w > d.h; // the door's in a horizontal wall
+      const along = (horizontal ? d.w : d.h) / 2 + 30 + BAY_LONG / 2;
+      const out = BAY_WIDE / 2 + 8;
+      const towardMiddle = horizontal ? Math.sign(b.x + b.w / 2 - (d.x + d.w / 2)) || 1 : Math.sign(b.y + b.h / 2 - (d.y + d.h / 2)) || 1;
+      for (const side of [towardMiddle, -towardMiddle]) {
+        tries.push([flat(d.x + d.w / 2 + d.nx * out + (horizontal ? along * side : 0), d.y + d.h / 2 + d.ny * out + (horizontal ? 0 : along * side), horizontal), horizontal ? 0 : Math.PI / 2]);
+      }
+      const cx = d.x + d.w / 2 + d.nx * (BAY_LONG / 2 + 40), cy = d.y + d.h / 2 + d.ny * (BAY_LONG / 2 + 40);
+      tries.push([flat(cx, cy, !horizontal), Math.atan2(d.ny, d.nx)]);
+    }
+    for (const [nx, ny] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const horizontal = ny !== 0;
+      const cx = nx ? (nx > 0 ? b.x + b.w + 8 + BAY_WIDE / 2 : b.x - 8 - BAY_WIDE / 2) : b.x + b.w / 2;
+      const cy = ny ? (ny > 0 ? b.y + b.h + 8 + BAY_WIDE / 2 : b.y - 8 - BAY_WIDE / 2) : b.y + b.h / 2;
+      tries.push([flat(cx, cy, horizontal), horizontal ? 0 : Math.PI / 2]);
+    }
+    const hit = tries.find(([r]) => fits(r, b));
+    if (hit) pads.push({ ...round(hit[0]), building: b.id, angle: hit[1] });
+  }
+  return pads;
+}
+
 /** Up to `count` parking lots, each against the edge of a road, clear of buildings, bays and water. */
 export function generateLots(roads, buildings, bays, width, height, count, isWet = () => false, avoid = []) {
   const lots = [];

@@ -30,6 +30,13 @@ export const config = Object.freeze({
   allowedOrigins: list('ALLOWED_ORIGINS'),
   // Needed to save maps from the editor. Unset = saving is disabled.
   adminPassword: env.ADMIN_PASSWORD || null,
+  // Google sign-in goes through our CAS server (msouthwick-cas): it sends the browser back to
+  // <this site>/auth/callback/cas with a signed token, which we check with the CAS server's /auth/verify.
+  // The game must be listed as `clientId` in the CAS server's clients.json, with that callback address.
+  cas: {
+    url: env.CAS_URL || 'https://cas.msouthwick.com',
+    clientId: env.CAS_CLIENT_ID || 'underground',
+  },
 
   // Simulation runs at tickRate; state is sent to clients at snapshotRate.
   tickRate: int('TICK_RATE', 30),
@@ -134,7 +141,7 @@ export const config = Object.freeze({
   accounts: {
     startingBank: 20000, // generous while testing
     topUpTo: 20000, // one-time top-up for browsers that already had an account (see AccountStore)
-    sessionDays: 30, // sessions from future login methods (e.g. Google)
+    sessionDays: 365, // Google sign-ins (through CAS) stay signed in this long
     deviceDays: 3650, // a browser keeps its account this long
   },
 
@@ -381,15 +388,15 @@ export const config = Object.freeze({
     fleeSec: 5, // running away this long, then (if still alive) they call the cops
   },
 
-  // Every account gets a small starter house: you (re)spawn there, and E inside opens your garage of
-  // bought cars. Homes (houses, cabins, mansions, apartment blocks) are locked to everyone but their
+  // Every account gets a small starter house: you (re)spawn there, and E on the car pad outside opens
+  // your garage of bought cars. Homes (houses, cabins, mansions, apartment blocks) are locked to everyone but their
   // owner; hold F at a door to pick it (a break-in).
   homes: {
     starterTypes: ['house', 'cabin'], // what can be handed out as a starter house
     lockedTypes: ['house', 'cabin', 'mansion', 'panelka'], // whose outside doors are locked
     lockpickSec: 5,
     unlockedSec: 90, // a picked lock stays open this long
-    garageReach: 140, // from the spot inside where you spawn
+    garageReach: 140, // from the middle of the car pad outside
     saveCarsEverySec: 20, // fuel and trunk of saved cars out on the road
   },
 
@@ -462,6 +469,7 @@ export const config = Object.freeze({
     responseSec: 8, // a reported crime takes this long before cars are sent
     chaseThrottle: 0.85, // how hard they drive after you
     searchRadius: 550, // hiding spots (trees, dumpsters, cars, buildings) they check round your last known spot
+    cruiseRadius: 1800, // lost in a car chase: they cruise the roads this far round where you were last seen
     inspectSec: 1.5, // looking into each one
     hideSeenRange: 140, // under a tree or in a parked car you're only noticed this close
     exitRange: 260, // officers get out of the car this close to a suspect on foot…
@@ -476,5 +484,33 @@ export const config = Object.freeze({
     respawnSec: 60, // a downed officer is replaced at the station after this
     bailPerStar: 250, // paid from cash, then the bank
     jailSecPerStar: 30, // if you can't make bail
+  },
+  // Hired muscle from the БАР (the barman): goons follow you (and ride along in your car), guards hold
+  // your home or a warehouse from the inside, a hitman hunts one player. Hiring is paid from the bank;
+  // goons and guards also draw a wage every minute and walk off if you can't pay it.
+  hires: {
+    reach: 130, // from the barman's centre to your edge (same as a market's, which the client's E prompt uses)
+    radius: 18,
+    health: 150,
+    armor: 0.5, // body armour: share of each hit it soaks up
+    regenPerSec: 1,
+    speed: 250, // walking; goons catching up with you and hitmen on the hunt run at runSpeed
+    runSpeed: 320,
+    weapon: 'rifle',
+    fireEverySec: 0.35,
+    aimSpread: 0.12,
+    shootRange: 600,
+    engageRange: 750, // goons and guards go for threats this close
+    foeSec: 15, // whoever fights you (or your hire) is fair game this long
+    traceChance: 0.35, // a goon or guard's crime is traced back to whoever hired them (hitmen never are)
+    catchUpRange: 2200, // goons this far behind turn up near you again
+    goonOfflineSec: 120, // goons whose boss has left go home after this
+    boardRange: 400, // goons this close to your car when you get in walk over and hop in
+    lockpickSec: 5, // a hitman picks a locked door this fast
+    goon: { name: 'Goon', fee: 2500, wagePerMin: 40, max: 2 },
+    guard: { name: 'Guard', fee: 2000, wagePerMin: 30, max: 3 },
+    // A hitman drives his own car, parks in range and snipes: he lines up each shot for aimSec (a red
+    // laser shows), likes to be range[0]–range[1] away, and drives again when you're past driveFrom.
+    hitman: { name: 'Hitman', fee: 6000, contractSec: 600, refundShare: 0.5, max: 1, weapon: 'sniper', car: 'sedan', range: [450, 1150], aimSec: 1.1, spread: 0.02, driveFrom: 1600 },
   },
 });

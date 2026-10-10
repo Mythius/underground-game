@@ -85,6 +85,23 @@ function tooManyAuthAttempts(ip) {
   return ++entry.count > 15;
 }
 
+/** The user in a token from the CAS server ({ sub, name, email, provider }), or null if it isn't valid. */
+async function verifyCasToken(token) {
+  try {
+    const res = await fetch(`${config.cas.url}/auth/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json();
+    return res.ok && data.valid ? data.user : null;
+  } catch (err) {
+    logger.warn('CAS verify failed', { err: err.message });
+    return null;
+  }
+}
+
 const bearer = (req) => (req.headers.authorization ?? '').replace(/^Bearer /, '');
 
 const server = http.createServer(async (req, res) => {
@@ -92,7 +109,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(status, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
   };
-  if (req.url === '/') {
+  // The CAS server sends the browser back here after Google sign-in (?token=…): the page finishes it.
+  if (req.url === '/' || (req.method === 'GET' && req.url.startsWith('/auth/callback/cas'))) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(landingPage);
   }
@@ -176,7 +194,27 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && req.url === '/auth/me') {
     const account = accounts.accountForToken(bearer(req));
-    return account ? json(200, { account }) : json(401, { error: 'not logged in' });
+    const cas = { url: config.cas.url, clientId: config.cas.clientId };
+    if (!account) return json(401, { error: 'not logged in', cas });
+    return json(200, { account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id), cas });
+  }
+  if (req.method === 'POST' && req.url === '/auth/cas') {
+    // Finishing Google sign-in: check the CAS token, then link or switch this browser's account.
+    if (tooManyAuthAttempts(req.socket.remoteAddress)) return json(429, { error: 'Too many tries — wait a minute' });
+    let body;
+    try {
+      body = JSON.parse(await readBody(req, 8000));
+    } catch {
+      return json(400, { error: 'bad request' });
+    }
+    if (typeof body?.token !== 'string' || body.token.length > 4000) return json(400, { error: 'bad request' });
+    const user = await verifyCasToken(body.token);
+    if (!user?.sub) return json(401, { error: 'Sign-in failed — try again' });
+    const current = accounts.accountForToken(body.device);
+    const provider = user.provider === 'google' || !user.provider ? 'google' : `cas-${user.provider}`;
+    const { token, account } = accounts.signIn(provider, String(user.sub), { name: user.name || (user.email ?? '').split('@')[0] || 'player', email: user.email ?? null, currentId: current?.id ?? null });
+    logger.info('signed in', { provider, account: account.id, linked: current?.id === account.id });
+    return json(200, { token, account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id) });
   }
   if (req.url === '/health') return json(200, { ok: true });
   if (req.url === '/stats') {
@@ -235,7 +273,12 @@ wss.on('connection', (ws, req) => {
 function handleMessage(client, msg) {
   switch (msg.t) {
     case ClientMsg.JOIN: {
-      // First join on this connection decides the account: logged in (token) or a guest.
+      // Each join uses the account the browser holds now (it may have signed in or out since the last one).
+      if (client.player?.alive) break;
+      if (client.account && msg.token && accounts.accountForToken(msg.token)?.id !== client.account.id) {
+        if (playingAccounts.get(client.account.id) === client) playingAccounts.delete(client.account.id);
+        client.account = null;
+      }
       if (!client.account) {
         if (msg.token) {
           const account = accounts.accountForToken(msg.token);
@@ -287,6 +330,9 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.BODY:
       client.room?.bodyAction(client, msg);
+      break;
+    case ClientMsg.HIRE:
+      client.room?.hireAction(client, msg);
       break;
     case ClientMsg.INPUT:
       client.room?.handleInput(client, msg);

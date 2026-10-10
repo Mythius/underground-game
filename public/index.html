@@ -112,6 +112,9 @@
     }
     #account-box { margin: .8rem auto 0; font-size: .9rem; color: #ddd; }
     #account-box .note { color: #888; font-size: .8rem; }
+    #account-box button { margin-left: .4rem; padding: .2rem .6rem; font-size: .8rem; border-radius: 6px; border: 1px solid #555; background: #222; color: #eee; cursor: pointer; }
+    #account-box button:hover { background: #333; }
+    #account-box .gsign { background: #fff; color: #222; border-color: #ccc; font-weight: 600; }
     #place { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; width: min(560px, calc(100vw - 2rem));
       max-height: calc(100vh - 3rem); overflow-y: auto; padding: 1.1rem 1.2rem; border-radius: .8rem; background: rgba(22, 22, 22, .96);
       border: 2px solid #e67e22; text-align: left; box-shadow: 0 10px 40px rgba(0, 0, 0, .6); font-size: .88rem;
@@ -379,7 +382,7 @@
     <h1>Underground</h1>
     <p id="subtitle">Coming soon.</p>
     <p><span id="dot" class="dot"></span><span id="status">Checking server…</span></p>
-    <div id="account-box">🏦 Bank: <b id="acct-bank">…</b> <span class="note">· saved in this browser</span></div>
+    <div id="account-box">🏦 Bank: <b id="acct-bank">…</b> <span class="note" id="acct-who">· saved in this browser</span> <span id="acct-actions"></span></div>
     <form id="start" class="start">
       <input id="name" placeholder="Your name" maxlength="16" autocomplete="off">
       <button id="play" type="submit" disabled>Start</button>
@@ -410,7 +413,7 @@
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
     <button id="settings-btn" type="button" title="Settings" aria-expanded="false" aria-controls="settings">⚙️</button>
-    <aside id="leaderboard" hidden><h2>Leaderboard</h2><ol id="leaderboard-list"></ol></aside>
+    <aside id="leaderboard" hidden><h2>Richest · bank</h2><ol id="leaderboard-list"></ol></aside>
     <div id="settings" hidden>
       <h3>Settings</h3>
       <label>Volume <input type="range" id="set-volume" min="0" max="100" step="5"></label>
@@ -552,6 +555,8 @@
     let vehicleReach = 40;
     let homesCfg = { lockedTypes: [], garageReach: 140 };
     let myHome = null; // [building id, garage x, y]
+    let storedFactories = []; // sizes of my saved factories waiting to be loaded into a free warehouse (after a restart)
+    let storedReminded = false;
     const explosions = []; // { x, y, start }
     let doorReach = 45;
     let useRequested = false;
@@ -708,7 +713,8 @@
           if (msg.kind === 'roadblock_waved') toast('👮 Checkpoint: the officer remembers your "gift" and waves you through');
           if (msg.kind === 'roadblock_due') { checkDueUntil = performance.now() + msg.sec * 1000; toast(`🛑 Militsiya checkpoint ahead — stop in it to be checked within ${msg.sec} s`); }
           if (msg.kind === 'roadblock_run') { checkDueUntil = 0; toast('🚨 You drove past the checkpoint without stopping — the Militsiya want you'); }
-          if (msg.kind === 'roadblock_clean' || msg.kind === 'roadblock_seized' || msg.kind === 'roadblock_waved') checkDueUntil = 0;
+          if (msg.kind === 'roadblock_clean' || msg.kind === 'roadblock_seized' || msg.kind === 'roadblock_waved' || msg.kind === 'roadblock_stolen') checkDueUntil = 0;
+          if (msg.kind === 'roadblock_stolen') { sfx('busted'); toast("🚨 Checkpoint: they know that car isn't yours — you're pulled out and it's taken back"); }
           if (msg.kind === 'roadblock_bribed') { sfx('coin'); toast(`💵 Bribe paid — checkpoints wave you through for a couple of minutes`); }
           if (msg.kind === 'roadblock_seized') { sfx('busted'); toast(`🚨 Checkpoint search: contraband seized (${Object.entries(msg.seized).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')})`); }
           if (msg.kind === 'warehouse_raid') {
@@ -726,6 +732,14 @@
           if (msg.kind === 'crime') toast(`🚨 Someone saw that — ${CRIME_NAMES[msg.crime] ?? 'a crime'} reported. The Militsiya will come looking.`);
           if (msg.kind === 'lost_you') toast('😮‍💨 The Militsiya have stopped looking for you');
           if (msg.kind === 'found_you') toast('👮 They found you!');
+          if (msg.kind === 'hire_died') toast(`💀 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} was killed`);
+          if (msg.kind === 'hire_busted') toast(`🚔 The Militsiya arrested your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}`);
+          if (msg.kind === 'hire_quit') toast(`👋 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} walked off — no pay, no work`);
+          if (msg.kind === 'traced') { sfx('alarm'); toast(`🚨 A witness tied your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}'s crime to you — the Militsiya want you too`); }
+          if (msg.kind === 'contract_on_you') { sfx('alarm'); toast('🎯 Word on the street: someone has put a contract on you. Watch your back.'); }
+          if (msg.kind === 'contract_over') toast('😮‍💨 The contract on you is off');
+          if (msg.kind === 'contract_done') toast(`🎯 The job is done — ${msg.name} is dead`);
+          if (msg.kind === 'contract_failed') toast(`🎯 The hitman ${msg.killed ? 'was killed' : 'failed'} — ${money(msg.refund)} back to your bank`);
           break;
         case 'jobs':
           jobBoard = msg;
@@ -777,7 +791,13 @@
           if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
           if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
           if (msg.what === 'team_invite') toast('👥 Invite sent');
+          if (msg.what === 'hire_goon') toast('🥊 A goon is with you now — he follows you and gets in your car');
+          if (msg.what === 'hire_guard') toast('🛡️ A guard is on his way in — he holds the place from inside');
+          if (msg.what === 'hire_hitman') toast('🎯 The hitman is on it');
+          if (msg.what === 'hire_dismiss') toast('You let them go');
+          if (msg.what.startsWith('hire_') && msg.bank !== undefined) bankBalance = msg.bank;
           if (msg.what === 'wh_buy') toast('🏬 The warehouse is yours — walk in and start building');
+          if (msg.what === 'wh_bring') toast('📦 Your factory is set up in here again, just as you left it');
           if (msg.what === 'wh_sell') { toast('Warehouse sold'); closeWarehouse(); }
           if (msg.what === 'wh_load') toast('📥 Unloaded onto the IN pallet');
           if (msg.what === 'wh_take' || msg.what === 'wh_mtake') toast('📤 Loaded into your cargo');
@@ -823,7 +843,7 @@
           if (msg.code === 'not_enough_bank') toast("You don't have that much in the bank");
           if (ECON_ERRORS[msg.code]) toast(ECON_ERRORS[msg.code]);
           else if (WH_ERRORS[msg.code]) toast(WH_ERRORS[msg.code]);
-          if (msg.code === 'already_playing') { toast('You are already playing in another tab of this browser'); play.disabled = false; }
+          if (msg.code === 'already_playing') { toast('This account is already playing somewhere else (another tab or device)'); play.disabled = false; }
           if (msg.code === 'session_expired') {
             // This browser's key is no longer known (e.g. the server's data was reset): start a fresh account.
             try { localStorage.removeItem('ug-device'); } catch {}
@@ -1132,20 +1152,86 @@
       return { token, bank: account.bank };
     }
 
+    // Google sign-in (through the CAS server) ties this account to your Google account, so your bank,
+    // what you carry, factories, cars and home follow you to any device. Without it, it lives in this browser.
+    let casInfo = null; // { url, clientId } from the server
+    let linked = null; // { provider, email } once signed in
+
+    function showWho() {
+      const who = document.getElementById('acct-who');
+      const actions = document.getElementById('acct-actions');
+      actions.replaceChildren();
+      const btn = (label, cls, onClick) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        if (cls) b.className = cls;
+        b.onclick = onClick;
+        actions.append(b);
+      };
+      if (linked) {
+        who.textContent = `· signed in${linked.email ? ` as ${linked.email}` : ' with Google'}`;
+        btn('Sign out', '', signOut);
+      } else {
+        who.textContent = '· saved in this browser';
+        if (casInfo) btn('Sign in with Google', 'gsign', signIn);
+      }
+    }
+
+    function signIn() {
+      const back = `${location.origin}/auth/callback/cas`;
+      location.href = `${casInfo.url}/auth/google?${new URLSearchParams({ client_id: casInfo.clientId, redirect_uri: back })}`;
+    }
+
+    async function signOut() {
+      try { localStorage.removeItem('ug-device'); } catch {}
+      session = null;
+      linked = null;
+      await loadSession(); // a fresh account for this browser; signing in again brings yours back
+      toast('Signed out');
+    }
+
+    /** Back from the CAS server with ?token=…: link (or switch to) the Google account, then tidy the address bar. */
+    async function finishSignIn() {
+      if (!location.pathname.startsWith('/auth/callback/cas')) return;
+      const casToken = new URLSearchParams(location.search).get('token');
+      history.replaceState(null, '', '/');
+      if (!casToken) return toast('Sign-in was cancelled');
+      let device = null;
+      try { device = localStorage.getItem('ug-device'); } catch {}
+      try {
+        const res = await fetch('/auth/cas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: casToken, device }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        try { localStorage.setItem('ug-device', data.token); } catch {}
+        toast(`✅ Signed in${data.linked?.email ? ` as ${data.linked.email}` : ''} — your progress is saved to your Google account`);
+      } catch (err) {
+        toast(err.message || 'Sign-in failed — try again');
+      }
+    }
+
     async function loadSession() {
+      await finishSignIn();
       let token = null;
       try { token = localStorage.getItem('ug-device'); } catch {}
       try {
         if (token) {
           const res = await fetch('/auth/me', { headers: { authorization: `Bearer ${token}` } });
-          if (res.ok) session = { token, bank: (await res.json()).account.bank };
+          const data = await res.json();
+          casInfo = data.cas ?? casInfo;
+          if (res.ok) {
+            session = { token, bank: data.account.bank };
+            linked = data.linked ?? null;
+          }
         }
         session ??= await newDeviceAccount();
+        if (!casInfo) casInfo = (await (await fetch('/auth/me')).json()).cas ?? null;
         showBank(session.bank);
       } catch {
         session = null; // play as a guest; nothing is saved
         showBank(null);
       }
+      showWho();
     }
     loadSession();
 
@@ -1254,8 +1340,8 @@
     };
     const placeEl = document.getElementById('place');
     const fuelEl = document.getElementById('fuel-gauge');
-    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer' };
-    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station']);
+    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen' };
+    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
     let rail = null; // the railway: { y, stopX, length, station, smuggler, wagons, x, speed, state, nextIn, at }
     let roadblocks = { list: [], bribe: 500 };
@@ -1266,6 +1352,13 @@
     const RAIL_LOOK = { skin: '#f1c27d', shirt: '#2c3e50', pants: '#1c2833', hat: 'furazhka' }; // railway uniform
     const SMUGGLER_LOOK = { skin: '#e0ac69', shirt: '#1a1a1a', pants: '#2d2d2d', hat: 'beanie' }; // leather jacket
     const TRADER_LOOK = { skin: '#e0ac69', shirt: '#e67e22', pants: '#5d4037', hat: 'cowboy' };
+    const BARMAN_LOOK = { skin: '#f1c27d', shirt: '#ecf0f1', pants: '#1c1c1c', hat: 'none' }; // vest and shirtsleeves
+    // Hired muscle: goons in tracksuits, guards in black with caps, hitmen in a dark coat and hat.
+    const HIRE_LOOKS = [
+      { skin: '#e0ac69', shirt: '#1f3a93', pants: '#1f3a93', hat: 'beanie' },
+      { skin: '#c68642', shirt: '#1c1c1c', pants: '#2d2d2d', hat: 'cap' },
+      { skin: '#f1c27d', shirt: '#2b2b2b', pants: '#151515', hat: 'tophat' },
+    ];
     const ECON_ERRORS = {
       no_room: 'Not enough cargo space — bring a car or truck',
       sold_out: 'Sold out here right now',
@@ -1302,6 +1395,7 @@
       closed_raid: 'Closed after a Militsiya raid — come back later',
       no_roadblock: 'There is no checkpoint here',
       already_bribed: 'They already took your money',
+      stolen_car: "No bribe covers a stolen car",
       bag_full: 'Your hands are full — sell your haul to the foreman (or drop something)',
       one_tool: 'You can only borrow one tool at a time',
       owner_broke: "The owner can't pay right now",
@@ -1314,6 +1408,9 @@
       cant_drop_starter: "You can't drop your knife",
       robbed_atm: "You just robbed this ATM — they'd notice. Use another ATM or a bank teller.",
       in_vehicle: 'Get out of the vehicle first',
+      hire_limit: 'You already have as many of those as you can',
+      not_your_building: 'You can only post guards in your own home or warehouses',
+      no_target: "That player isn't here any more",
     };
 
     const money = (n) => `${Math.round(n).toLocaleString('ru-RU')} ₽`; // rubles
@@ -1432,6 +1529,8 @@
           }
         }
         placeEl.append(h, sub, cargo, table);
+      } else if (d.kind === 'bar') {
+        barSection(d, h, sub);
       } else if (d.kind === 'market') {
         h.textContent = RAW_NAMES[d.type] ?? 'Market';
         sub.textContent = {
@@ -1540,6 +1639,61 @@
         if (plan.batches && plan.batches < plan.wanted) box.append(` (you have inputs for ${plan.wanted})`);
       }
       return box;
+    }
+
+    // ---- the bar: hired muscle ---------------------------------------------------------
+
+    const HIRE_NAMES = { goon: '🥊 Goon', guard: '🛡️ Guard', hitman: '🎯 Hitman' };
+    const barChoice = { post: 0, target: 0 }; // kept across the panel's refreshes
+    function barSection(d, h, sub) {
+      h.textContent = '🍺 Bar';
+      sub.textContent = 'The barman knows people. Armoured, armed with rifles, and they patch themselves up. Paid from your bank.';
+      const mine = (role) => d.mine.filter((x) => x.role === role);
+      const select = (options, key, empty) => {
+        const sel = document.createElement('select');
+        if (!options.length) sel.append(new Option(empty, 0));
+        for (const o of options) sel.append(new Option(o.label, o.id));
+        if (!options.some((o) => o.id === barChoice[key])) barChoice[key] = options[0]?.id ?? 0;
+        sel.value = barChoice[key];
+        sel.onchange = () => { barChoice[key] = Number(sel.value); };
+        sel.disabled = !options.length;
+        return sel;
+      };
+      const table = document.createElement('table');
+      const row = (role, text, extra, action) => {
+        const pr = d.prices[role];
+        const tr = table.insertRow();
+        tr.insertCell().textContent = HIRE_NAMES[role];
+        const info = tr.insertCell(); info.textContent = text;
+        const act = tr.insertCell(); act.className = 'num';
+        if (extra) act.append(extra, ' ');
+        const full = mine(role).length >= pr.max;
+        act.append(button(full ? `Max ${pr.max}` : `Hire ${money(pr.fee)}`, action, { disabled: full || bankBalance < pr.fee || (extra && extra.disabled), cls: 'go' }));
+      };
+      const wage = (role) => `${money(d.prices[role].wage)}/min`;
+      row('goon', `Follows you and rides in your car; shoots whoever fights you. ${wage('goon')} · ${mine('goon').length}/${d.prices.goon.max}`, null, () => send({ t: 'hire', action: 'goon' }));
+      const posts = select(d.posts, 'post', 'You own nowhere to guard');
+      row('guard', `Stays inside your home or warehouse and shoots intruders. ${wage('guard')} · ${mine('guard').length}/${d.prices.guard.max}`, posts, () => send({ t: 'hire', action: 'guard', id: barChoice.post }));
+      const targets = select(d.targets.map((t) => ({ id: t.id, label: t.name })), 'target', 'Nobody else is here');
+      row('hitman', `Drives after one player and snipes them from a distance, for ${Math.round(d.prices.hitman.sec / 60)} min. Half back if he fails. The target gets a warning.`, targets, () => send({ t: 'hire', action: 'hitman', id: barChoice.target }));
+      const crew = document.createElement('table');
+      crew.style.marginTop = '.6rem';
+      if (d.mine.length) {
+        const head = crew.insertRow();
+        head.insertCell().outerHTML = '<th colspan="3" style="text-align:left">Your people</th>';
+      }
+      for (const x of d.mine) {
+        const tr = crew.insertRow();
+        tr.insertCell().textContent = HIRE_NAMES[x.role];
+        const what = x.role === 'guard' ? `guarding ${d.posts.find((p) => p.id === x.post)?.label ?? 'a building'}` : x.role === 'hitman' ? `after ${x.target} · ${clock(x.left)} left` : x.riding ? 'riding with you' : 'with you';
+        tr.insertCell().textContent = `${what} · ❤ ${x.health}/${x.max}`;
+        const act = tr.insertCell(); act.className = 'num';
+        act.append(button(x.role === 'hitman' ? 'Call off' : 'Let go', () => send({ t: 'hire', action: 'dismiss', id: x.id })));
+      }
+      const bank = document.createElement('div');
+      bank.className = 'cargo';
+      bank.textContent = `🏦 ${money(bankBalance)} in the bank`;
+      placeEl.append(h, sub, bank, table, crew);
     }
 
     // ---- gun stores, dealers and delivery jobs ---------------------------------------
@@ -1737,6 +1891,7 @@
     const whEl = document.getElementById('wh');
     const MACHINE_COLORS = { saw: '#8b5a2b', mill: '#c9b27a', furnace: '#4a4f57', press: '#5d6d7e', assembler: '#34495e' };
     const WH_ERRORS = {
+      nothing_stored: 'You have no saved factory of this size',
       already_owned: 'Someone already owns this warehouse',
       not_owner: "That's not your warehouse",
       wrong_input: "This machine's recipe doesn't use that",
@@ -1850,7 +2005,7 @@
       const mine = whMine(l);
       const selLive = live?.machines.get(wh.selected);
       const docks = l.pieces.filter((p) => p.kind.startsWith('dock')).map((p) => live?.machines.get(p.id)?.[2]);
-      const key = JSON.stringify([l.version, l.owner, wh.tool, wh.selected, insideWarehouse(l), live?.unpaid, docks, selLive?.[2], selLive?.[3], cargoSummary(), bankBalance >= size.price]);
+      const key = JSON.stringify([l.version, l.owner, wh.tool, wh.selected, insideWarehouse(l), live?.unpaid, docks, selLive?.[2], selLive?.[3], cargoSummary(), bankBalance >= size.price, storedFactories.join()]);
       const progress = document.getElementById('wh-progress');
       if (progress && selLive) progress.textContent = `⚙️ ${Math.round(selLive[1] * 100)}%`;
       if ((key === whKey && whEl.childElementCount) || dragging) return;
@@ -1873,7 +2028,12 @@
         sub.textContent = `For sale: ${money(size.price)} from your bank · property tax ${money(size.taxPerHour)}/hour`;
         const s = section();
         s.append('Build your own factory: place machines and conveyor belts on the floor grid. Goods go in on the IN pallet and come out on the OUT pallet. Your warehouse is saved, and locked to everyone else.');
-        whEl.append(button(`Buy for ${money(size.price)}`, () => whSend('buy'), { disabled: bankBalance < size.price, cls: 'big go' }));
+        if (storedFactories.includes(l.size)) {
+          const note = section();
+          note.append(`📦 You have a saved ${size.name ?? 'factory'} from before the restart — load it in here, machines, belts, stock and all, free.`);
+          whEl.append(button('📦 Load my saved factory here', () => whSend('bring'), { cls: 'big go' }));
+        }
+        whEl.append(button(`Buy for ${money(size.price)}`, () => whSend('buy'), { disabled: bankBalance < size.price, cls: storedFactories.includes(l.size) ? 'big' : 'big go' }));
       } else if (!mine) {
         sub.textContent = `🔒 Owned by ${l.owner}`;
         const s = section();
@@ -2394,7 +2554,7 @@
         row.append(swatch, name, info, take);
         garageEl.append(row);
       }
-      garageEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'It gets parked outside your door. E or Esc to close.' }));
+      garageEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'It gets parked on the pad here. E or Esc to close.' }));
     }
 
     function renderBody() {
@@ -2677,7 +2837,7 @@
     function drawPlaceKeepers() {
       for (const p of econ.places) {
         if (p.x < viewBox.l || p.x > viewBox.r || p.y < viewBox.t || p.y > viewBox.b) continue;
-        const look = { factory: CLERK_LOOK, gunshop: GUNSHOP_LOOK, dealer: DEALER_LOOK, station: RAIL_LOOK, smuggler: SMUGGLER_LOOK }[p.role] ?? TRADER_LOOK;
+        const look = { factory: CLERK_LOOK, gunshop: GUNSHOP_LOOK, dealer: DEALER_LOOK, station: RAIL_LOOK, smuggler: SMUGGLER_LOOK, barman: BARMAN_LOOK }[p.role] ?? TRADER_LOOK;
         drawPerson({ x: p.x, y: p.y, r: 20, aim: p.angle, weapon: p.role === 'gunshop' ? 'rifle' : null }, look);
       }
     }
@@ -2780,15 +2940,15 @@
 
     // Minimap icons by building type. Factories (any type in econ.factories) get 🏭.
     const MAP_ICONS = {
-      police: '🚓', bank: '🏦', shop: '🛒', kiosk: '🛒', gas: '⛽', market: '🏪', gunstore: '🔫', dealership: '🚗',
+      police: '🚓', bank: '🏦', shop: '🛒', kiosk: '🛒', gas: '⛽', market: '🏪', gunstore: '🔫', dealership: '🚗', bar: '🍺',
       farm: '🌾', logging: '🪵', mine: '⛏️', oilwell: '🛢️', quarry: '🏖️', scrapyard: '🔩', station: '🚂', church: '⛪', powerplant: '⚡',
     };
     const MAP_NAMES = {
-      police: 'Militsiya station', bank: 'Bank', shop: 'Shop', kiosk: 'Kiosk', church: 'Church', powerplant: 'Power plant',
+      police: 'Militsiya station', bank: 'Bank', shop: 'Shop', kiosk: 'Kiosk', church: 'Church', powerplant: 'Power plant', bar: 'Bar — hire goons, guards and hitmen',
     };
     /** What a minimap icon is, for the hover label. */
     function mapIconName(b) {
-      if (b.id === myHome?.[0]) return '🏠 Your home — garage inside';
+      if (b.id === myHome?.[0]) return '🏠 Your home — garage on the car pad outside';
       const icon = mapIcon(b);
       if (icon === '📦') return '📦 Your warehouse';
       const name = MAP_NAMES[b.type] ?? RAW_NAMES[b.type]?.replace(/^\S+\s/, '') ?? econ.factories[b.type]?.name ?? b.type;
@@ -3590,7 +3750,7 @@
     // renders it with the game's own renderer. Buildings, paths and rails come from the server's own
     // modules (served at /src/...), so what you place is exactly what the game builds.
 
-    const BUILDING_ICONS = { house: '🏠', cabin: '🛖', barn: '🌾', warehouse: '🏭', shop: '🏪', bunker: '🧱', church: '⛪', watchtower: '🗼', mansion: '🏛️', gas: '⛽', office: '🏢', garage: '🔧', bank: '🏦',
+    const BUILDING_ICONS = { bar: '🍺', house: '🏠', cabin: '🛖', barn: '🌾', warehouse: '🏭', shop: '🏪', bunker: '🧱', church: '⛪', watchtower: '🗼', mansion: '🏛️', gas: '⛽', office: '🏢', garage: '🔧', bank: '🏦',
       sawmill: '🪚', furniture: '🛋️', flourmill: '🥡', bakery: '🍞', foundry: '🔥', machineshop: '⚙️', refinery: '🛢️', glassworks: '🪟', carfactory: '🚗', gunfactory: '🔫',
       logging: '🌲', farm: '🌾', mine: '⛏️', oilwell: '🛢️', scrapyard: '🔩', quarry: '🏖️', market: '🏪' };
     const VEHICLE_TOOLS = [['sedan', '🚗', 'Car'], ['sports', '🏎️', 'Sports car'], ['pickup', '🛻', 'Pickup truck'], ['truck', '🚚', 'Box truck']];
@@ -3684,6 +3844,7 @@
         lots: m.lots ?? [], // generated ones show once the map is saved and live
         city: m.city ?? null,
         bays: [],
+        pads: [],
       };
       lamps = m.lamps;
       const npcs = buildings.filter((b) => b.npc).map((b) => b.npc);
@@ -4330,6 +4491,13 @@
     }
     setInterval(updateTeamDistances, 500);
 
+    /** Bank balances on the leaderboard are rounded on the server; shown as ~12k ₽. */
+    function roughMoney(n) {
+      if (n >= 1e6) return `~${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M ₽`;
+      if (n >= 1e3) return `~${Math.round(n / 1e3)}k ₽`;
+      return `${n} ₽`;
+    }
+
     function renderLeaderboard(entries) {
       leaderboard.hidden = entries.length === 0;
       leaderboardList.replaceChildren(...entries.map(({ id, name, score }) => {
@@ -4341,7 +4509,7 @@
         n.style.color = info.get(id)?.color ?? '';
         const s = document.createElement('span');
         s.className = 'score';
-        s.textContent = score;
+        s.textContent = roughMoney(score);
         li.append(n, s);
         return li;
       }));
@@ -4889,12 +5057,14 @@
       for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked });
       soundsFromSnapshot(players, msg.bullets ?? []);
       const npcs = new Map();
-      for (const [id, x, y, angle, armed] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed });
+      for (const [id, x, y, angle, state] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1, fleeing: state === 2 });
       const cops = new Map();
       for (const [id, x, y, angle] of msg.cops ?? []) cops.set(id, { x, y, angle });
+      const crew = new Map(); // hired muscle: goons, guards, hitmen
+      for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
       const corpses = new Map();
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, bodies: corpses });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -4947,6 +5117,12 @@
       setInventory(you.inv, now);
       econ.trunk = you.trunk ?? null;
       myHome = you.home ?? null;
+      storedFactories = you.stored ?? [];
+      if (storedFactories.length && !storedReminded) {
+        storedReminded = true;
+        const names = [...new Set(storedFactories)].map((sz) => wh.cfg?.sizes?.[sz]?.name ?? sz).join(', ');
+        toast(`📦 Your saved factory is waiting: find a free ${names} and load it in (no charge)`);
+      }
       myJob = you.job ?? null;
       carrying = you.carry ?? 0;
       hiddenSelf = Boolean(you.hidden);
@@ -4999,14 +5175,19 @@
       const npcs = new Map();
       for (const [id, nb] of b.npcs ?? []) {
         const na = a.npcs?.get(id);
-        npcs.set(id, na ? { x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t), armed: nb.armed } : nb);
+        npcs.set(id, na ? { x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t), armed: nb.armed, fleeing: nb.fleeing } : nb);
       }
       const cops = new Map();
       for (const [id, cb] of b.cops ?? []) {
         const ca = a.cops?.get(id);
         cops.set(id, ca ? { x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t) } : cb);
       }
-      return { players, bullets, vehicles, npcs, cops, bodies: b.bodies };
+      const crew = new Map();
+      for (const [id, hb] of b.crew ?? []) {
+        const ha = a.crew?.get(id);
+        crew.set(id, ha ? { ...hb, x: lerp(ha.x, hb.x, t), y: lerp(ha.y, hb.y, t), angle: lerpAngle(ha.angle, hb.angle, t) } : hb);
+      }
+      return { players, bullets, vehicles, npcs, cops, crew, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -5518,6 +5699,31 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('ПОГРУЗКА', 0, 0); // "loading"
+        ctx.restore();
+      }
+      // Car pads outside starter houses: a concrete slab with oil-stained wheel tracks (the garage).
+      for (const b of terrain.pads ?? []) {
+        if (!inView(b)) continue;
+        const mine = b.building === myHome?.[0];
+        ctx.fillStyle = mix('#9a9893', '#c6cdd3', snowAmount * 0.6);
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = 'rgba(0, 0, 0, .12)'; // slab joints
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.save();
+        ctx.translate(b.x + b.w / 2, b.y + b.h / 2);
+        if (b.h > b.w) ctx.rotate(Math.PI / 2);
+        const long = Math.max(b.w, b.h), wide = Math.min(b.w, b.h);
+        ctx.fillStyle = 'rgba(40, 36, 30, .18)'; // wheel tracks
+        ctx.fillRect(-long / 2 + 10, -wide / 2 + 14, long - 20, 12);
+        ctx.fillRect(-long / 2 + 10, wide / 2 - 26, long - 20, 12);
+        ctx.fillStyle = 'rgba(20, 20, 20, .22)'; // an oil stain
+        ctx.beginPath(); ctx.ellipse(long / 10, 0, 16, 10, 0.3, 0, Math.PI * 2); ctx.fill();
+        if (mine) {
+          ctx.strokeStyle = 'rgba(201, 164, 106, .85)';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(-long / 2 + 3, -wide / 2 + 3, long - 6, wide - 6);
+        }
         ctx.restore();
       }
     }
@@ -6415,6 +6621,108 @@
     }
 
     // look: resolved { skin, shirt, pants, hat }.
+    // ---- NPC speech: short lines in a bubble over their heads ---------------------------------
+    // Worked out here from what you can see (nothing new from the server): townsfolk greet you as
+    // you pass, curse you mid-fight and shout for the Militsiya while they run; shopkeepers and
+    // traders say hello when you walk up and bye when you go; cops bark at you while you're wanted.
+
+    const SPEECH = {
+      greet: ['Privet.', 'Good day.', 'Zdravstvuyte.', 'Cold one today.', 'Watch where you walk.', 'Got a light?', 'Spare a few roubles?', 'Hm.'],
+      chatter: ['Bread went up again…', 'They still haven\'t paid my pension.', 'My cousin\'s selling jeans, cheap.', 'Where is that bus?', 'Everything costs dollars now.', 'Did you see the match?', 'Such times, such times.'],
+      fight: ['Hooligan!', 'Get away from me!', 'Take that!', 'Shame on you!', 'I\'ll show you!'],
+      flee: ['Militsiya! Help!', 'Help! Robbery!', 'Somebody call the police!', 'Murderer!'],
+      shop: ['Welcome! Bread is fresh today.', 'What will it be?', 'Hello, come in.', 'Cash only.'],
+      market: ['Buying and selling, come look.', 'Good prices today.', 'What have you got for me?'],
+      factory: ['You want something made? Bring the materials.', 'Talk business.'],
+      gunshop: ['Looking for protection?', 'No questions asked.'],
+      barman: ['What\'ll it be?', 'Need a problem solved?', 'I know some people.', 'Vodka? Or business?'],
+      dealer: ['Fine cars, almost new!', 'Come, take a look.'],
+      station: ['The train is late. As always.', 'Freight? I can arrange it.'],
+      smuggler: ['…You didn\'t see me.', 'Psst. Got something special.'],
+      teller: ['Next, please.', 'Passbook?', 'The bank is open.'],
+      bye: ['Come again.', 'All the best.', 'Poka.', 'Goodbye.'],
+      copWanted: ['Stop! Militsiya!', 'Hands where I can see them!', 'Halt!', 'You\'re under arrest!'],
+      copIdle: ['Documents, please.', 'Move along.', 'Keep it quiet.'],
+    };
+    const SAY_SEC = 3.2;
+    const speech = new Map(); // speaker key -> { text, until, near } (near: you were close last frame)
+    const pick = (list) => list[Math.floor(Math.random() * list.length)];
+
+    /** Update and draw everyone's lines. Each speaker says one thing at a time. */
+    function drawSpeech(v, now) {
+      const t = now / 1000;
+      const mine = me && !me.car && !hiddenSelf ? me : null;
+      const wantedNow = crimeState.wanted > 0;
+      const seen = new Set();
+      const speaker = (key, x, y, head, lines) => {
+        if (x < viewBox.l - 100 || x > viewBox.r + 100 || y < viewBox.t - 100 || y > viewBox.b + 100) return;
+        seen.add(key);
+        let s = speech.get(key);
+        if (!s) speech.set(key, (s = { text: null, until: 0, near: false, next: t + 4 + Math.random() * 20 }));
+        const d = mine ? Math.hypot(mine.x - x, mine.y - y) : Infinity;
+        const line = lines(s, d, t);
+        if (line && (!s.text || line.urgent || s.until < t)) Object.assign(s, { text: line.text, until: t + SAY_SEC });
+        if (s.text && s.until > t && !hiddenUnderRoof(x, y)) bubble(s.text, x, y - head, Math.min(1, (s.until - t) / 0.4));
+      };
+      // Walking into / out of earshot.
+      const approach = (s, d, hi, lo) => {
+        const was = s.near;
+        s.near = d < (was ? lo : hi);
+        return s.near && !was ? 'in' : !s.near && was ? 'out' : null;
+      };
+      for (const [id, n] of v.npcs ?? []) {
+        speaker(`n${id}`, n.x, n.y, 30, (s, d) => {
+          const edge = approach(s, d, 110, 170);
+          if (n.fleeing) return s.mode !== 'flee' ? ((s.mode = 'flee'), { text: pick(SPEECH.flee), urgent: true }) : null;
+          if (n.armed) return s.mode !== 'fight' ? ((s.mode = 'fight'), { text: pick(SPEECH.fight), urgent: true }) : null;
+          s.mode = null;
+          if (edge === 'in' && Math.random() < 0.35) return { text: pick(SPEECH.greet) };
+          if (t > s.next) { s.next = t + 25 + Math.random() * 40; if (Math.random() < 0.5) return { text: pick(SPEECH.chatter) }; }
+          return null;
+        });
+      }
+      const keeperLines = (list) => (s, d) => {
+        const edge = approach(s, d, 140, 200);
+        if (edge === 'in') return { text: pick(list), urgent: true };
+        if (edge === 'out') return { text: pick(SPEECH.bye), urgent: true };
+        return null;
+      };
+      for (const k of shop.shopkeepers) speaker(`k${k.x},${k.y}`, k.x, k.y, 52, keeperLines(SPEECH.shop));
+      for (const k of bankData.tellers) speaker(`t${k.x},${k.y}`, k.x, k.y, 36, keeperLines(SPEECH.teller));
+      for (const p of econ.places) speaker(`p${p.id}`, p.x, p.y, 36, keeperLines(SPEECH[p.role] ?? SPEECH.market));
+      for (const [id, o] of v.cops ?? []) {
+        speaker(`c${id}`, o.x, o.y, 36, (s, d) => {
+          const edge = approach(s, d, 260, 340);
+          if (wantedNow && d < 700 && t > (s.shout ?? 0)) { s.shout = t + 4 + Math.random() * 3; return { text: pick(SPEECH.copWanted), urgent: true }; }
+          if (!wantedNow && edge === 'in' && Math.random() < 0.4) return { text: pick(SPEECH.copIdle) };
+          return null;
+        });
+      }
+      for (const key of speech.keys()) if (!seen.has(key)) speech.delete(key);
+    }
+
+    /** A speech bubble: white rounded box with a little tail, its bottom at (x, y). */
+    function bubble(text, x, y, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const w = ctx.measureText(text).width + 16, h = 22;
+      ctx.fillStyle = 'rgba(250, 248, 240, .94)';
+      ctx.strokeStyle = 'rgba(0, 0, 0, .45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - h - 6, w, h, 8);
+      ctx.moveTo(x - 5, y - 6.5); ctx.lineTo(x, y); ctx.lineTo(x + 5, y - 6.5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillRect(x - 4.5, y - 8, 9, 3); // hide the box's edge where the tail joins
+      ctx.fillStyle = '#1d1d1d';
+      ctx.fillText(text, x, y - h / 2 - 6);
+      ctx.restore();
+    }
+
     function drawPerson(p, look) {
       ctx.save();
       ctx.translate(p.x, p.y);
@@ -6669,6 +6977,33 @@
         if (o.x < viewBox.l || o.x > viewBox.r || o.y < viewBox.t || o.y > viewBox.b) continue;
         drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'pistol' }, { ...POLICE_LOOK, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' });
       }
+      // Hired muscle on foot: yours get a gold tag; anyone hurt shows a health bar.
+      for (const [, h] of view.crew ?? []) {
+        // A hitman lining up a shot: a thin red laser (it reaches well beyond what's on screen).
+        if (h.aiming) {
+          ctx.save();
+          ctx.strokeStyle = `rgba(255, 30, 30, ${0.45 + 0.25 * Math.sin(frameTime / 60)})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(h.x + Math.cos(h.angle) * 40, h.y + Math.sin(h.angle) * 40);
+          ctx.lineTo(h.x + Math.cos(h.angle) * 1400, h.y + Math.sin(h.angle) * 1400);
+          ctx.stroke();
+          ctx.restore();
+        }
+        if (h.x < viewBox.l || h.x > viewBox.r || h.y < viewBox.t || h.y > viewBox.b) continue;
+        drawPerson({ x: h.x, y: h.y, r: 18, aim: h.angle, weapon: h.role === 2 ? 'sniper' : 'rifle' }, HIRE_LOOKS[h.role] ?? HIRE_LOOKS[0]);
+        if (hiddenUnderRoof(h.x, h.y) && !h.mine) continue;
+        if (h.hp < 100) {
+          ctx.fillStyle = 'rgba(0, 0, 0, .6)'; ctx.fillRect(h.x - 18, h.y - 34, 36, 5);
+          ctx.fillStyle = h.hp > 50 ? '#5ad15a' : h.hp > 25 ? '#f4c430' : '#e74c3c'; ctx.fillRect(h.x - 18, h.y - 34, 36 * h.hp / 100, 5);
+        }
+        if (h.mine) {
+          ctx.font = '700 12px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#f4c430';
+          ctx.fillText(['★ Goon', '★ Guard', '★ Hitman'][h.role], h.x, h.y - 40);
+        }
+      }
       // Townsfolk out and about (each one's look comes from their id, so it never changes).
       for (const [id, n] of view.npcs ?? []) {
         if (n.x < viewBox.l || n.x > viewBox.r || n.y < viewBox.t || n.y > viewBox.b) continue;
@@ -6699,13 +7034,14 @@
         ctx.fillStyle = '#f4c430';
         ctx.fillText('🛒 Food', k.x, k.y - 34);
       }
-      if (myHome && playing) { // my home: a label over the garage spot
+      if (myHome && playing) { // my home: a label over the garage (the car pad outside)
         ctx.font = '700 13px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#c9a46a';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        ctx.strokeText('🏠 Home · 🚗 Garage', myHome[1], myHome[2] - 70); ctx.fillText('🏠 Home · 🚗 Garage', myHome[1], myHome[2] - 70);
+        ctx.strokeText('🚗 Garage', myHome[1], myHome[2] - 60); ctx.fillText('🚗 Garage', myHome[1], myHome[2] - 60);
       }
+      if (playing) drawSpeech(view, frameTime);
       const keeper = me && playing && !me.car ? nearestShopkeeper() : null; // for closing panels I walk away from
       const banker = me && playing && !me.car ? nearestBanker() : null;
       const place = me && playing && !me.car ? nearestPlace() : null;

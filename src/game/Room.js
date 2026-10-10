@@ -5,6 +5,30 @@ import { round1 } from '../utils/math.js';
 import { Environment } from './Environment.js';
 import { Teams } from './teams.js';
 import { createWorld } from './World.js';
+import { makeWeapon } from './entities.js';
+
+/** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). */
+export function carriedSlots(p) {
+  return p.inventory.map((s) => (!s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo }));
+}
+
+/** Saved hotbar slots back into a player's hotbar (anything no longer in the game is dropped). */
+export function restoreSlots(p, slots) {
+  if (!Array.isArray(slots)) return;
+  const qty = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
+  const inv = p.inventory.map((_, i) => {
+    const s = slots[i];
+    if (s?.good && config.goods[s.good] && qty(s.qty)) return { good: s.good, qty: s.qty };
+    if (s?.food && config.economy.menu[s.food] && qty(s.qty)) return { food: s.food, qty: s.qty };
+    if (s?.type && config.weapons[s.type]) return { ...makeWeapon(s.type), ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize) };
+    return null;
+  });
+  if (!inv.some((s) => s?.type === p.inventory[0]?.type)) { // never without the starting knife
+    const free = inv.indexOf(null);
+    if (free !== -1) inv[free] = p.inventory[0];
+  }
+  p.inventory = inv;
+}
 
 let nextRoomId = 1;
 
@@ -54,6 +78,7 @@ export class Room {
   }
 
   stop() {
+    for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player);
     this.#saveWarehouses();
     this.#saveCars();
     clearInterval(this.timer);
@@ -109,6 +134,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.hires.events.splice(0)) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.roadblocks.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -157,12 +186,17 @@ export class Room {
       }
     }
     this.carSaveTimer += dt;
-    if (this.carSaveTimer >= config.homes.saveCarsEverySec) this.#saveCars();
+    if (this.carSaveTimer >= config.homes.saveCarsEverySec) {
+      this.#saveCars();
+      for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player); // (in case the server goes down)
+    }
     this.saveTimer += dt;
     if (this.saveTimer >= config.warehouses.saveEverySec || (warehouses.changed && this.saveTimer >= 2)) this.#saveWarehouses();
     for (const d of doorChanges) this.broadcast({ t: ServerMsg.DOOR, id: d.id, open: d.open });
     for (const e of explosions) this.broadcast({ t: ServerMsg.BOOM, x: e.x, y: e.y });
     for (const { victim, killer } of deaths) {
+      // What they carried is on their body now: nothing to come back with.
+      if (victim.account?.id && !victim.account.guest) this.#store('setCarried', victim.account.id, 0, null);
       const client = this.#clientForPlayer(victim);
       if (client) {
         client.player = null;
@@ -188,6 +222,21 @@ export class Room {
       v.carId = this.store.addCar(v.owner.id, { type: v.type, color: v.color, fuel: v.fuel, cargo: v.cargo });
     };
     w.onCarLost = (v) => this.#saveCar(v);
+  }
+
+  /** A store call that can't take the game down if the database has a problem. */
+  #store(method, ...args) {
+    if (!this.store) return;
+    try {
+      this.store[method](...args);
+    } catch (err) {
+      logger.error(`store.${method} failed`, { err: err.message });
+    }
+  }
+
+  /** Cash and hotbar onto the account. */
+  #saveCarried(p) {
+    if (p.account?.id && !p.account.guest) this.#store('setCarried', p.account.id, p.cash, carriedSlots(p));
   }
 
   #saveCar(v) {
@@ -225,15 +274,11 @@ export class Room {
     });
   }
 
-  /** Owned warehouses back from the database, each into a warehouse of the same size. */
+  /** Owned factories back from the database: each waits for its owner to load it into a free warehouse of the same size. */
   #restoreWarehouses() {
-    this.unplaced = [];
     if (!this.store) return;
-    const rows = this.store.loadWarehouses();
-    const placed = this.world.warehouses.restore(rows, (id) => this.store.live(id));
-    // Ones with nowhere to go (the map has fewer warehouses of that size now) stay saved for later.
-    this.unplaced = rows.filter((r) => !placed.some((x) => x.source === r));
-    if (rows.length) logger.info('warehouses restored', { room: this.id, placed: placed.length, waiting: this.unplaced.length });
+    this.world.warehouses.stored = this.store.loadWarehouses();
+    if (this.world.warehouses.stored.length) logger.info('saved factories waiting to be loaded', { room: this.id, count: this.world.warehouses.stored.length });
   }
 
   #saveWarehouses() {
@@ -241,7 +286,7 @@ export class Room {
     this.world.warehouses.changed = false;
     if (!this.store) return;
     try {
-      this.store.saveWarehouses([...this.world.warehouses.toSave(), ...this.unplaced]);
+      this.store.saveWarehouses(this.world.warehouses.toSave());
     } catch (err) {
       logger.error('saving warehouses failed', { err: err.message });
     }
@@ -316,6 +361,7 @@ export class Room {
         lots: this.world.lots,
         city: this.world.city, // asphalt + sidewalks inside, gravel outside (null: asphalt everywhere)
         bays: this.world.bays,
+        pads: this.world.pads, // car pads outside starter houses (garages)
       },
       // Lets the client predict its own movement with the server's formula.
       player: {
@@ -334,6 +380,7 @@ export class Room {
 
   /** Swap in a new map: everyone's sent back to the menu and gets the new world. */
   loadMap(map) {
+    for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player); // they keep what they carried
     for (const c of this.clients) c.player = null;
     this.#saveWarehouses();
     this.#saveCars();
@@ -354,6 +401,13 @@ export class Room {
     this.teams.remove(client);
     this.#sendTeams();
     if (client.player) {
+      // Logging off alive: what they carry goes with the account (not onto the ground).
+      const p = client.player;
+      if (p.alive && p.account?.id && !p.account.guest) {
+        this.#saveCarried(p);
+        p.cash = 0;
+        p.inventory = p.inventory.map(() => null);
+      }
       this.world.removePlayer(client.player.id);
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
     }
@@ -369,6 +423,11 @@ export class Room {
     if (account?.id && !account.guest) this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
+    // Back with what they had on them when they last left.
+    if (account?.id && !account.guest) {
+      player.cash = account.cash ?? 0;
+      restoreSlots(player, account.carried);
+    }
     client.player = player;
     client.name = player.name;
     client.send({
@@ -406,6 +465,9 @@ export class Room {
 
   /** Markets and factories: describe, trade, factory actions and refuelling. */
   inspect(client, id) {
+    // The bar: the barman's list of muscle for hire, and yours.
+    const hires = this.world.hires;
+    if (hires.bar && id === hires.bar.id) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...hires.describe(client.player) });
     // The station: its freight clerk (building id) or the black-market buyer round the back (−id).
     const rail = this.world.railway;
     if (rail?.station && Math.abs(id) === rail.station.id) {
@@ -455,6 +517,17 @@ export class Room {
     const what = msg.t === 'factory' ? msg.action : msg.t === 'trade' ? msg.side : msg.t === 'refuel' ? (msg.can ? 'pour' : 'refuel') : msg.t;
     client.send({ t: ServerMsg.DONE, what, good: msg.good, qty: msg.qty, type: msg.type, ...extra });
     if (msg.id !== undefined) this.inspect(client, msg.id);
+  }
+
+  /** At the bar: hire a goon, a guard (id: building to guard) or a hitman (id: target player), or let one go (id: hire). */
+  hireAction(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const hires = this.world.hires;
+    const error = msg.action === 'dismiss' ? hires.dismiss(p, msg.id) : hires.hire(p, msg.action, { post: msg.id, target: msg.id });
+    if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+    client.send({ t: ServerMsg.DONE, what: `hire_${msg.action}`, bank: Math.floor(p.account?.bank ?? 0) });
+    if (hires.bar) this.inspect(client, hires.bar.id);
   }
 
   /** Bodies: open (look in its pockets), loot a slot (−1: its cash), carry it, drop / get rid of the one you carry. */
@@ -584,10 +657,11 @@ export class Room {
         return v ? [v.id, v.type, v.cargo.map((s) => (s ? [s.good, s.qty] : null))] : null;
       })(),
       slot: me.selected,
+      stored: this.world.warehouses.storedFor(me.account), // sizes of my saved factories waiting to be loaded
       home: (() => { // my home: [building id, garage spot x, y]
         const b = this.world.homes.homeOf(me.account);
         if (!b) return null;
-        const at = this.world.homes.spawnPoint(b);
+        const at = this.world.homes.garagePoint(b);
         return [b.id, Math.round(at.x), Math.round(at.y)];
       })(),
       // While driving: the car's exact state, so the client can predict it.
@@ -652,6 +726,7 @@ export class Room {
           npcs: this.world.townsfolk.visible(cx, cy, config.world.viewDistance),
           bodies: this.world.bodies.near(cx, cy, config.world.viewDistance),
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
+          crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),
           // Teammates wherever they are, for the map: [player id, x, y, driving].
           team: this.teams.mates(client).filter((c) => c.player?.alive).map((c) => [c.player.id, Math.round(c.player.x), Math.round(c.player.y), c.player.vehicle ? 1 : 0]),
         },

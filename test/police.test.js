@@ -369,3 +369,89 @@ test('a victim only reports you if they see you and live: stabbed from behind or
   stab(5);
   assert.equal(p.wanted, config.crime.stars.assault);
 });
+
+test('taking a Militsiya car is always reported, even with nobody watching', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  const car = police.units[0].car;
+  nobodyAround(world);
+  Object.assign(car, { x: 5000, y: 3500, vx: 0, vy: 0, picked: true });
+  police.units[0].officer.onFoot = true; // (out of it)
+  Object.assign(p, { x: car.x, y: car.y + 60 });
+  p.input.use = true;
+  world.step(1 / 30);
+  assert.equal(p.vehicle, car);
+  assert.equal(p.wanted, config.crime.stars.steal_police_car);
+});
+
+test('a patrol car that sees a crime goes after you at once, without waiting for the call', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  const unit = police.units[0];
+  Object.assign(unit.car, { x: 2000, y: 1935, angle: 0, vx: 0, vy: 0 });
+  Object.assign(unit.officer, { x: 2000, y: 1935, angle: 0, onFoot: false });
+  Object.assign(p, { x: 2400, y: 1935 });
+  assert.equal(police.crime(p, 'fire'), true);
+  assert.equal(unit.target, p, 'on it straight away');
+  for (let i = 0; i < 30 * 4; i++) world.step(1 / 30);
+  assert.ok(unit.officer.onFoot, 'pulled over and got out');
+});
+
+test('seen ducking into a hiding place, the Militsiya go straight to it', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  // Three dumpsters; the officer is nearest the two you don't use.
+  const decoys = [{ x: 3200, y: 2400, w: 56, h: 36 }, { x: 3300, y: 2500, w: 56, h: 36 }];
+  const d = { x: 2700, y: 2400, w: 56, h: 36 };
+  world.dumpsters.push(...decoys, d);
+  const unit = police.units[0];
+  Object.assign(unit.officer, { health: 50, onFoot: true, x: 3300, y: 2440, angle: Math.PI });
+  Object.assign(p, { x: d.x + 28, y: d.y + 80 });
+  police.crime(p, 'murder', true);
+  unit.target = p;
+  world.step(1 / 30);
+  assert.ok(p.inSight, 'the officer is watching');
+  p.input.use = true;
+  world.step(1 / 30);
+  assert.ok(p.hidden);
+  assert.ok(p.hideSpot, 'saw where you went');
+  for (let i = 0; i < 30 * 15 && p.hidden; i++) world.step(1 / 30);
+  assert.equal(p.hidden, null, 'found');
+  assert.equal(p.searched.size, 0, 'no other spot checked first (the chase starts afresh)');
+});
+
+test('jump in a car and drive off: officers on foot run back to their own car', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  const unit = police.units[0];
+  Object.assign(unit.car, { x: 3000, y: 1935, angle: 0, vx: 0, vy: 0 });
+  Object.assign(unit.officer, { health: 50, onFoot: true, x: 3150, y: 1935, angle: 0 });
+  const getaway = world.spawnVehicle('sedan');
+  Object.assign(getaway, { x: 3500, y: 1935, angle: 0, vx: 300, vy: 0, driver: p });
+  p.vehicle = getaway;
+  p.wanted = 2;
+  police.crime(p, 'murder', true);
+  unit.target = p;
+  for (let i = 0; i < 30 * 3 && unit.officer.onFoot; i++) {
+    getaway.vx = 300; // (keep it moving)
+    world.step(1 / 30);
+  }
+  assert.equal(unit.officer.onFoot, false, 'back in the cruiser');
+});
+
+test('lost in a car chase, cruisers drive round looking instead of searching on foot', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  const unit = police.units[0];
+  Object.assign(unit.car, { x: 1000, y: 1935, angle: 0, vx: 0, vy: 0 });
+  Object.assign(unit.officer, { health: 50, onFoot: false, x: 1000, y: 1935 });
+  p.wanted = 3;
+  p.lastSeen = -5;
+  p.lastKnown = { x: 1300, y: 1935, inCar: true };
+  p.searched = new Set();
+  Object.assign(p, { x: 5900, y: 3900 }); // long gone
+  unit.target = p;
+  for (let i = 0; i < 30 * 10; i++) world.step(1 / 30);
+  assert.equal(unit.officer.onFoot, false, 'still driving');
+  assert.ok(unit.cruiseFor, 'cruising round');
+  assert.ok(Math.hypot(unit.car.x - 1000, unit.car.y - 1935) > 200, 'on the move');
+});

@@ -15,10 +15,11 @@ import { Police } from './police.js';
 import { hotbarOf, trunkOf } from './cargo.js';
 import { Warehouses } from './warehouse.js';
 import { Homes } from './homes.js';
-import { generateBays, generateLots, makeLot } from './parking.js';
+import { generateBays, generateLots, generatePads, makeLot } from './parking.js';
 import { Railway, planRailway, railCorridor } from './railway.js';
 import { Roadblocks } from './roadblocks.js';
 import { Bodies, generateDumpsters } from './bodies.js';
+import { Hires } from './hires.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -90,7 +91,9 @@ export class World {
     this.lots = map?.lots
       ? ownLots
       : [...ownLots, ...generateLots(this.roads, this.buildings, [...this.bays, ...ownLots], this.width, this.height, opts.parkingLots ?? 0, wetRect, [...fixtures, ...this.rails, ...railStrip, ...(this.city ? [this.city] : [])])];
-    const paved = [...this.bays, ...this.lots, ...railStrip];
+    // A car pad outside every starter house: its garage.
+    this.pads = generatePads(this.buildings, config.homes.starterTypes, this.width, this.height, wetRect, [...fixtures, ...this.bays, ...this.lots, ...roadZones, ...railStrip]);
+    const paved = [...this.bays, ...this.lots, ...this.pads, ...railStrip];
     this.trees = this.trees.filter((t) => {
       const m = t.canopy * 0.7; // keep canopies mostly off them, so parked cars aren't hidden
       return !paved.some((r) => t.x > r.x - m && t.x < r.x + r.w + m && t.y > r.y - m && t.y < r.y + r.h + m);
@@ -103,7 +106,7 @@ export class World {
     this.dumpsters = generateDumpsters(this.buildings, this.city, (r) =>
       r.x > 50 && r.y > 50 && r.x + r.w < this.width - 50 && r.y + r.h < this.height - 50 &&
       !this.buildings.some((b) => r.x < b.x + b.w + 6 && b.x < r.x + r.w + 6 && r.y < b.y + b.h + 6 && b.y < r.y + r.h + 6) &&
-      ![...roadZones, ...this.lots, ...this.bays, ...railStrip, ...fixtures].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
+      ![...roadZones, ...this.lots, ...this.bays, ...this.pads, ...railStrip, ...fixtures].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
       !this.trees.some((t) => Math.abs(t.x - (r.x + r.w / 2)) < 40 && Math.abs(t.y - (r.y + r.h / 2)) < 40) && !wetRect(r));
     const station = this.buildings.find((b) => b.type === 'station') ?? null;
     this.railway = this.railwayY !== null ? new Railway(this, this.railwayY, station) : null;
@@ -162,6 +165,7 @@ export class World {
     this.onCarBought = null; // (vehicle) a car bought at a dealership: save it to the owner's garage
     this.onCarLost = null; // (vehicle) a saved car blown up: what was in its trunk is gone
     this.roadblocks = new Roadblocks(this, railStrip); // after vehicle ids start: their Militsiya cars are vehicles
+    this.hires = new Hires(this); // goons, guards and hitmen from the БАР
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.rebuildGrid();
@@ -223,7 +227,7 @@ export class World {
     this.roads = terrain ? generateTownRoads(opts.width, opts.height, this.city) : [];
     // The essentials of a town first (so they always find a spot), then one city-run factory of each
     // kind (players build their own in warehouses), warehouses, and the rest.
-    const fixed = { panelka: 0, police: 2, bank: 3, market: 3, gunstore: 2, dealership: 2, shop: 8, gas: 6, church: 1, office: 4, powerplant: 1 }; // panel blocks first: they need the most room
+    const fixed = { panelka: 0, police: 2, bar: 1, bank: 3, market: 3, gunstore: 2, dealership: 2, shop: 8, gas: 6, church: 1, office: 4, powerplant: 1 }; // panel blocks first: they need the most room
     for (const t of Object.keys(config.factories)) fixed[t] = 1;
     for (const [type, size] of Object.entries(WAREHOUSE_SIZES)) fixed[type] = config.warehouses.sizes[size].count;
     // A Soviet town: apartment blocks, street kiosks, lock-up garages (more of them on bigger maps).
@@ -509,8 +513,8 @@ export class World {
   }
 
   /**
-   * Out of the garage: one of p's saved cars (`saved`: { id, type, color, fuel, cargo }) parked
-   * outside their home. If it's already out somewhere with nobody in it, it's brought back here.
+   * Out of the garage: one of p's saved cars (`saved`: { id, type, color, fuel, cargo }) parked on
+   * the car pad outside their home. If it's already out somewhere with nobody in it, it's brought back here.
    */
   bringCar(p, saved) {
     const home = this.homes.homeOf(p.account);
@@ -523,7 +527,7 @@ export class World {
       Object.assign(saved, { fuel: out.fuel, cargo: out.cargo.map((s) => s && { ...s }) });
       this.vehicles.delete(out.id);
     }
-    const v = this.parkNewVehicle(saved.type, home.id, p.account);
+    const v = this.#parkOnPad(saved.type, this.homes.padOf(home), p) ?? this.parkNewVehicle(saved.type, home.id, p.account);
     if (!v) {
       if (out) this.vehicles.set(out.id, out); // nowhere to put it: leave it where it was
       return 'no_parking';
@@ -532,6 +536,28 @@ export class World {
     saved.cargo.forEach((s, i) => { if (i < v.cargo.length) v.cargo[i] = s && { good: s.good, qty: s.qty }; });
     p.lastVehicle = v;
     return null;
+  }
+
+  /** A new vehicle for p parked on a car pad, if nothing's in the way (p, standing on it, is nudged off). */
+  #parkOnPad(type, pad, p) {
+    if (!pad) return null;
+    const stats = config.vehicles.types[type];
+    const x = pad.x + pad.w / 2, y = pad.y + pad.h / 2;
+    const probe = { x, y, angle: pad.angle };
+    const circles = vehicleCircles(probe, stats);
+    if (circles.some((c) => this.isBlocked(c.x, c.y, c.r)) || [...this.vehicles.values()].some((o) => Math.hypot(o.x - x, o.y - y) < o.radius + stats.length / 2)) return null;
+    const v = new Vehicle(this.nextEntityId++, type, x, y, pad.angle);
+    v.owner = p.account;
+    v.fuel = 100;
+    this.vehicles.set(v.id, v);
+    this.grid.insert(v);
+    // Step off the pad, to whichever long side you're on.
+    const side = pad.w > pad.h ? (p.y < y ? -1 : 1) : (p.x < x ? -1 : 1);
+    const off = Math.min(pad.w, pad.h) / 2 + p.radius + 12;
+    if (circles.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < c.r + p.radius)) {
+      if (pad.w > pad.h) p.y = y + side * off; else p.x = x + side * off;
+    }
+    return v;
   }
 
   /** C: headlights on or off (driver only). */
@@ -756,6 +782,7 @@ export class World {
       this.removePlayer(p.id);
       deaths.push({ victim: p, killer: { name: 'a townsperson' } });
     }
+    this.hires.step(dt);
     for (const p of this.players.values()) p.arrest = 0;
     this.police.step(dt);
     for (const { victim, killer } of deaths) this.bodies.setKiller(victim.id, killer);
@@ -799,8 +826,9 @@ export class World {
     return null;
   }
 
-  /** Someone else's car is locked to you (not their teammates) until its lock is picked. */
+  /** Someone else's car (or a Militsiya one) is locked to you (not their teammates) until its lock is picked. */
   carLockedFor(v, p) {
+    if (v.police) return !v.picked;
     if (!v.owner || v.owner === p.account || v.picked) return false;
     const owner = [...this.players.values()].find((o) => o.account === v.owner);
     return !(owner && this.areTeammates(owner, p));
@@ -818,9 +846,47 @@ export class World {
     return best;
   }
 
+  /**
+   * The heading a walker at (x, y) should take to go `angle` without walking into a car: if a car body
+   * is right in front of them, they turn to skirt round its edge (on whichever side is nearer their
+   * way) rather than pressing into it and being shoved straight back. `except` is a car they're
+   * walking up to on purpose.
+   */
+  steerAroundCars(x, y, angle, except = null) {
+    const r = config.townsfolk.bodyRadius + 4;
+    const fx = Math.cos(angle), fy = Math.sin(angle);
+    let worst = null;
+    for (const v of this.vehicles.values()) {
+      if (v === except || Math.abs(v.x - x) > v.radius + r || Math.abs(v.y - y) > v.radius + r) continue;
+      for (const c of vehicleCircles(v, v.stats)) {
+        const dx = c.x - x, dy = c.y - y;
+        const gap = Math.hypot(dx, dy) - c.r - r;
+        if (gap > 0 || dx * fx + dy * fy <= 0) continue; // not touching, or already heading away
+        if (!worst || gap < worst.gap) worst = { dx, dy, gap };
+      }
+    }
+    if (!worst) return angle;
+    const toCar = Math.atan2(worst.dy, worst.dx);
+    const side = worst.dx * fy - worst.dy * fx >= 0 ? 1 : -1; // which way round is closer to where they're going
+    return toCar + (side * Math.PI) / 2;
+  }
+
   /** Distance from a point to the edge of a vehicle's body (negative = inside). */
   #vehicleDistance(v, x, y) {
     return Math.min(...vehicleCircles(v, v.stats).map((c) => Math.hypot(c.x - x, c.y - y) - c.r));
+  }
+
+  /**
+   * A stolen car taken back by the Militsiya: everyone's put out beside it. A saved car goes back to
+   * its owner's garage (trunk and all); any other is left parked there, locked again.
+   */
+  impound(v) {
+    for (const p of [v.driver, v.passenger]) if (p && !this.#exitVehicle(p)) this.leaveSeat(p);
+    Object.assign(v, { vx: 0, vy: 0, picked: false });
+    if (v.carId) {
+      this.vehicles.delete(v.id);
+      this.onCarLost?.(v);
+    }
   }
 
   /** Gets the driver out beside the vehicle. Returns false if every side is blocked. */
@@ -906,7 +972,7 @@ export class World {
         continue;
       }
       if (best.kind === 'vehicle') {
-        if (best.police) this.police.crime(p, 'steal_police_car');
+        if (best.police) this.police.crime(p, 'steal_police_car', true); // the radio's in it: they always know
         else if (best.owner && best.owner !== p.account) this.police.crime(p, 'steal_car');
         if (best.owner && best.owner === p.account) best.picked = false; // back in your own car: locked again
         best.driver = p;
@@ -1046,7 +1112,7 @@ export class World {
   /** Players on foot bump townsfolk and officers out of their way (people don't walk through people). */
   #bumpNpcs() {
     const r = config.townsfolk.bodyRadius;
-    const walkers = [...this.townsfolk.people.filter((t) => t.inside <= 0), ...this.police.units.map((u) => u.officer).filter((o) => o.onFoot && o.health > 0)];
+    const walkers = [...this.townsfolk.people.filter((t) => t.inside <= 0), ...this.police.units.map((u) => u.officer).filter((o) => o.onFoot && o.health > 0), ...this.hires.list.filter((h) => !h.vehicle)];
     for (const p of this.players.values()) {
       if (p.vehicle || !p.alive) continue;
       for (const w of walkers) {
@@ -1070,6 +1136,7 @@ export class World {
     const walkers = [
       ...this.townsfolk.people.filter((t) => t.inside <= 0),
       ...this.police.units.map((u) => u.officer).filter((o) => o.onFoot && o.health > 0),
+      ...this.hires.list.filter((h) => !h.vehicle),
     ];
     const r = config.townsfolk.bodyRadius;
     for (const v of this.vehicles.values()) {
@@ -1184,9 +1251,12 @@ export class World {
     for (const o of this.players.values()) if (o !== p && o.alive && !o.vehicle && !o.hidden) consider('player', o, o.radius);
     for (const t of this.townsfolk.people) if (t.inside <= 0) consider('npc', t, 17);
     for (const u of this.police.units) if (u.officer.onFoot && u.officer.health > 0) consider('officer', u.officer, 20);
+    for (const h of this.hires.list) if (!h.vehicle && h.employer !== p.account) consider('hire', h, h.radius);
     if (!best) return;
     const t = best.ref;
     if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
+    if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
+    this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
     t.health -= t.maxHealth * stats.share + 0.01; // (+ a hair, so three stabs always do it)
     const killed = t.health <= 0;
@@ -1223,9 +1293,16 @@ export class World {
         b.y = py + (b.y - py) * t;
       }
 
-      // Officers on foot and townsfolk out walking.
+      // Hired muscle on foot (anyone's but the shooter's own side).
       const shooter = b.owner;
-      if (shooter.kind === 'player') {
+      const hire = this.hires.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq, shooter);
+      if (hire) {
+        this.bullets.delete(b.id);
+        this.hires.damage(hire, b.damage, shooter);
+        continue;
+      }
+      // Officers on foot and townsfolk out walking.
+      if (shooter.kind === 'player' || shooter.kind === 'hire') {
         const officer = this.police.officerHit(px, py, b.x, b.y, b.radius, segmentDistSq);
         if (officer) {
           this.bullets.delete(b.id);
@@ -1246,21 +1323,27 @@ export class World {
       for (const p of nearby) {
         if (p.kind === 'vehicle') {
           if (!this.vehicles.has(p.id) || p === b.owner.vehicle) continue;
+          if (shooter.kind === 'hire' && p.driver?.account === shooter.employer) continue; // not the boss's car
           const hit = vehicleCircles(p, p.stats).some((c) => segmentDistSq(px, py, b.x, b.y, c.x, c.y) < (c.r + b.radius) ** 2);
           if (!hit) continue;
           this.bullets.delete(b.id);
           p.health -= b.damage;
-          if (p.driver && shooter.kind === 'player') this.police.crime(shooter, 'assault');
+          if (p.driver && (shooter.kind === 'player' || shooter.kind === 'hire')) {
+            this.police.crime(shooter, 'assault');
+            this.hires.noteAttack(shooter, p.driver);
+          }
           if (p.health <= 0) this.#destroyVehicle(p, b.owner, deaths, explosions);
           break;
         }
         if (p.kind !== 'player' || !p.alive || p === b.owner || p.vehicle) continue;
+        if (shooter.kind === 'hire' && p.account === shooter.employer) continue; // they don't hit their boss
         const reach = p.radius + b.radius;
         if (segmentDistSq(px, py, b.x, b.y, p.x, p.y) >= reach * reach) continue;
         this.bullets.delete(b.id);
         p.health -= b.damage;
         const killed = p.health <= 0;
-        if (shooter.kind === 'player') this.police.crime(shooter, killed ? 'murder' : 'assault');
+        if (shooter.kind === 'player' || shooter.kind === 'hire') this.police.crime(shooter, killed ? 'murder' : 'assault');
+        this.hires.noteAttack(shooter, p);
         if (killed) {
           this.removePlayer(p.id);
           deaths.push({ victim: p, killer: b.owner });
@@ -1366,10 +1449,20 @@ export class World {
     return this.grid.query(x, y, range);
   }
 
+  /** The richest players in the game, by bank balance — rounded, so nobody learns exact sums. */
   leaderboard(limit = 10) {
+    const bank = (p) => p.account?.bank ?? 0;
     return [...this.players.values()]
-      .sort((a, b) => b.mass - a.mass)
+      .sort((a, b) => bank(b) - bank(a))
       .slice(0, limit)
-      .map((p) => ({ id: p.id, name: p.name, score: p.score }));
+      .map((p) => ({ id: p.id, name: p.name, score: roughly(bank(p)) }));
   }
+}
+
+/** A rough figure: 2 significant digits (12 345 -> 12 000, 987 -> 990). */
+export function roughly(n) {
+  n = Math.max(0, Math.floor(n));
+  if (n < 100) return n;
+  const unit = 10 ** (Math.floor(Math.log10(n)) - 1);
+  return Math.round(n / unit) * unit;
 }

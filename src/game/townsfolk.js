@@ -220,6 +220,11 @@ export class Townsfolk {
    */
   provoke(person, player, crime = 'assault') {
     if (!player?.alive || person.inside > 0 || !this.people.includes(person)) return;
+    if (player.kind === 'hire' && !person.flee) { // nobody takes a purse to an armed thug: they run and phone it in
+      person.fight = null;
+      person.flee = { from: player, crime, until: this.time + config.townsfolk.fleeSec };
+      return;
+    }
     if (person.flee) {
       const stars = config.crime.stars;
       if ((stars[crime] ?? 1) > (stars[person.flee.crime] ?? 1)) person.flee.crime = crime;
@@ -315,13 +320,20 @@ export class Townsfolk {
       while (move > 0 && person.route.length) {
         const next = person.route[0];
         const d = Math.hypot(next.x - person.x, next.y - person.y);
-        if (d <= move) {
+        const heading = Math.atan2(next.y - person.y, next.x - person.x);
+        const around = this.world.steerAroundCars?.(person.x, person.y, heading) ?? heading; // parked cars in the way
+        if (around !== heading && d < 50 && person.route.length > 1) {
+          person.route.shift(); // the waypoint's under the car: skip on to the next one
+          continue;
+        }
+        if (d <= move && around === heading) {
           person.x = next.x;
           person.y = next.y;
           person.route.shift();
           move -= d;
         } else {
-          person.angle = Math.atan2(next.y - person.y, next.x - person.x);
+          person.angle = around;
+          move = Math.min(move, d);
           person.x += Math.cos(person.angle) * move;
           person.y += Math.sin(person.angle) * move;
           move = 0;
@@ -363,12 +375,12 @@ export class Townsfolk {
     }
   }
 
-  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle, fighting (purse swinging)]. */
+  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle, 1 fighting (purse swinging) · 2 running away · 0]. */
   visible(x, y, range) {
     const out = [];
     for (const p of this.people) {
       if (p.inside > 0 || Math.abs(p.x - x) > range || Math.abs(p.y - y) > range) continue;
-      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? 1 : 0]);
+      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? 1 : p.flee ? 2 : 0]);
     }
     return out;
   }

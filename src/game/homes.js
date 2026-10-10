@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 
 // Homes: every account gets a small starter house (a house or cabin on the map). You spawn there and
-// respawn there after dying, and E at the spot inside opens your garage of bought cars.
+// respawn there after dying, and E on the car pad outside it opens your garage of bought cars.
 //
 // Homes (houses, cabins, mansions, apartment blocks) are private: their outside doors are locked to
 // everyone but the owner. Hold F at a door to pick the lock (a break-in), and it stays open a while.
@@ -54,7 +54,9 @@ export class Homes {
     let b = savedSlot ? slots.get(savedSlot) : null;
     if (!b || this.owners.has(b.id)) {
       const free = [...slots.values()].filter((x) => !this.owners.has(x.id));
-      b = free[Math.floor(Math.random() * free.length)] ?? null;
+      const withPad = free.filter((x) => this.padOf(x)); // houses with a car pad outside first
+      const pick = withPad.length ? withPad : free;
+      b = pick[Math.floor(Math.random() * pick.length)] ?? null;
     }
     if (!b) return null;
     this.owners.set(b.id, account);
@@ -63,7 +65,7 @@ export class Homes {
     return b;
   }
 
-  /** Where you appear at home (and where E opens the garage): the open spot inside nearest its middle. */
+  /** Where you appear at home: the open spot inside nearest its middle. */
   spawnPoint(b) {
     if (b.spawn) return b.spawn;
     const r = this.world.playerOpts.startMass ** 0.5 * 4 + 10;
@@ -80,11 +82,22 @@ export class Homes {
     return b.spawn;
   }
 
-  /** Is p standing by their garage (the spot inside their home)? */
+  /** The car pad outside a starter house, or null if none fit there. */
+  padOf(b) {
+    return this.world.pads?.find((x) => x.building === b.id) ?? null;
+  }
+
+  /** Where E opens the garage: the middle of the car pad outside (inside, where you spawn, if it has none). */
+  garagePoint(b) {
+    const pad = this.padOf(b);
+    return pad ? { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 } : this.spawnPoint(b);
+  }
+
+  /** Is p standing by their garage (the car pad outside their home)? */
   atGarage(p) {
     const b = this.homeOf(p.account);
     if (!b || p.vehicle) return false;
-    const at = this.spawnPoint(b);
+    const at = this.garagePoint(b);
     return Math.hypot(at.x - p.x, at.y - p.y) < config.homes.garageReach + p.radius;
   }
 

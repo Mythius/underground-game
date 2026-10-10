@@ -8,12 +8,13 @@ import { config } from './config.js';
 export const DB_PATH = fileURLToPath(new URL('../data/game.db', import.meta.url));
 
 /**
- * Player accounts. Only the bank balance is persistent; everything carried is per life.
+ * Player accounts: the bank balance, plus what you were carrying (cash and hotbar) when you last left.
+ * Warehouses, cars and your home hang off the account too (their own tables).
  *
- * For now each browser gets its own account automatically (provider 'device'): the browser keeps the
- * session token in localStorage and that's the only "login". Login methods live in `identities`,
- * separate from `accounts`, so adding Google sign-in later means verifying Google's ID token, then
- * calling findOrCreateByIdentity('google', <google user id>, name) — nothing else here needs to change.
+ * Every browser gets an account automatically (provider 'device'): the browser keeps the session
+ * token in localStorage. Signing in with Google (through the CAS server) links a Google identity to
+ * that account — or, if that Google account is already linked, switches the browser to it — so the
+ * same account can be played from any device. Login methods live in `identities`, apart from `accounts`.
  */
 export class AccountStore {
   constructor(path = DB_PATH) {
@@ -61,8 +62,13 @@ export class AccountStore {
         expires_at INTEGER NOT NULL
       );
     `);
+    // Columns added after the tables were first made.
+    const has = (table, column) => this.db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    if (!has('accounts', 'cash')) this.db.exec('ALTER TABLE accounts ADD COLUMN cash INTEGER NOT NULL DEFAULT 0');
+    if (!has('accounts', 'carried')) this.db.exec('ALTER TABLE accounts ADD COLUMN carried TEXT'); // JSON hotbar slots when they left
+    if (!has('identities', 'email')) this.db.exec('ALTER TABLE identities ADD COLUMN email TEXT');
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried FROM accounts WHERE id = ?'),
       accountByName: this.db.prepare('SELECT id FROM accounts WHERE name = ?'),
       insertAccount: this.db.prepare('INSERT INTO accounts (name, bank, created_at) VALUES (?, ?, ?)'),
       identity: this.db.prepare('SELECT account_id, secret FROM identities WHERE provider = ? AND subject = ?'),
@@ -71,8 +77,11 @@ export class AccountStore {
       session: this.db.prepare('SELECT account_id, expires_at FROM sessions WHERE token = ?'),
       pruneSessions: this.db.prepare('DELETE FROM sessions WHERE expires_at < ?'),
       setBank: this.db.prepare('UPDATE accounts SET bank = ? WHERE id = ?'),
+      setCarried: this.db.prepare('UPDATE accounts SET cash = ?, carried = ? WHERE id = ?'),
+      linked: this.db.prepare("SELECT provider, email FROM identities WHERE account_id = ? AND provider != 'device' LIMIT 1"),
+      rename: this.db.prepare('UPDATE accounts SET name = ? WHERE id = ?'),
     };
-    this.liveAccounts = new Map(); // account id -> the one shared { id, name, bank, guest } object
+    this.liveAccounts = new Map(); // account id -> the one shared { id, name, bank, guest, … } object
     this.q.pruneSessions.run(Date.now());
     this.#migrate();
   }
@@ -115,13 +124,32 @@ export class AccountStore {
     return { token: this.#newSession(id, config.accounts.deviceDays), account: this.account(id) };
   }
 
-  /** For OAuth providers (e.g. Google): the account linked to this identity, creating one if new. */
-  findOrCreateByIdentity(provider, subject, preferredName) {
+  /**
+   * Signing in with an outside provider (Google via CAS): the account already linked to that
+   * identity; otherwise this browser's account (`currentId`), if it isn't linked to anyone else yet,
+   * becomes theirs (keeping its progress); otherwise a new account. Returns { token, account }.
+   */
+  signIn(provider, subject, { name = 'player', email = null, currentId = null } = {}) {
     const row = this.q.identity.get(provider, subject);
     if (row) return { token: this.#newSession(row.account_id), account: this.account(row.account_id) };
-    const id = this.#createAccount(this.#freeName(preferredName));
+    let id = currentId && this.account(currentId) && !this.q.linked.get(currentId) ? currentId : null;
+    if (id) {
+      // A browser account's made-up name ("player1234") gives way to their real one.
+      if (/^player\d*$/i.test(this.account(id).name)) {
+        const fresh = this.#freeName(name);
+        this.q.rename.run(fresh, id);
+        if (this.liveAccounts.has(id)) this.liveAccounts.get(id).name = fresh;
+      }
+    } else id = this.#createAccount(this.#freeName(name));
     this.q.insertIdentity.run(provider, subject, id, null);
+    this.db.prepare('UPDATE identities SET email = ? WHERE provider = ? AND subject = ?').run(email, provider, subject);
     return { token: this.#newSession(id), account: this.account(id) };
+  }
+
+  /** The outside login linked to an account ({ provider, email }), or null. */
+  linkedLogin(id) {
+    const row = this.q.linked.get(id);
+    return row ? { provider: row.provider, email: row.email } : null;
   }
 
   /** The account a session token belongs to, or null if it's unknown or expired. */
@@ -134,7 +162,17 @@ export class AccountStore {
 
   account(id) {
     const row = this.q.accountById.get(id);
-    return row ? { id: row.id, name: row.name, bank: row.bank } : null;
+    if (!row) return null;
+    let carried = null;
+    try { carried = row.carried ? JSON.parse(row.carried) : null; } catch {}
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried };
+  }
+
+  /** What they're carrying (cash and hotbar slots) — saved when they leave, cleared when they die. */
+  setCarried(id, cash, slots) {
+    this.q.setCarried.run(Math.max(0, Math.round(cash)), slots ? JSON.stringify(slots) : null, id);
+    const live = this.liveAccounts.get(id);
+    if (live) Object.assign(live, { cash: Math.max(0, Math.round(cash)), carried: slots });
   }
 
   /**
