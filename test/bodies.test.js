@@ -75,7 +75,7 @@ test('carry a body: slower, no shooting, no driving; get rid of it in a dumpster
   assert.equal(d.hidden, false);
 });
 
-test('a body left in the open gets found and its killer is wanted for murder; a hidden one is not', () => {
+test('a body left in the open gets found (the killer hears, but isn\'t named unless seen); a hidden one is not', () => {
   const w = world();
   const killer = w.spawnPlayer('killer');
   Object.assign(killer, { x: 100, y: 100 });
@@ -86,7 +86,7 @@ test('a body left in the open gets found and its killer is wanted for murder; a 
   for (let i = 0; i < 40; i++) w.step(1 / 30);
   assert.equal(open.reported, true);
   assert.equal(hidden.reported, false);
-  assert.equal(killer.wanted, config.crime.stars.murder);
+  assert.equal(killer.wanted, 0, 'nobody saw who did it');
   assert.equal(w.bodies.events.at(-1).kind, 'body_found');
 });
 
@@ -99,4 +99,20 @@ test('walking into townsfolk bumps them out of the way', () => {
   p.applyInput({ seq: 1, angle: 0, throttle: 0, aim: 0 });
   w.step(1 / 30);
   assert.ok(Math.hypot(person.x - p.x, person.y - p.y) >= p.radius + config.townsfolk.bodyRadius - 0.01);
+});
+
+test('being seen standing next to a body in the open makes you wanted', () => {
+  const w = world();
+  const victim = w.spawnPlayer('victim');
+  Object.assign(victim, { x: 500, y: 500 });
+  victim.health = 0;
+  w.removePlayer(victim.id);
+  const p = w.spawnPlayer('passer-by');
+  Object.assign(p, { x: 1500, y: 1500 });
+  w.police.witnessed = () => true;
+  for (let i = 0; i < 40; i++) w.step(1 / 30);
+  assert.equal(p.wanted, 0, 'far away: fine');
+  Object.assign(p, { x: 560, y: 500 });
+  for (let i = 0; i < 40; i++) w.step(1 / 30);
+  assert.equal(p.wanted, config.crime.stars.near_body);
 });

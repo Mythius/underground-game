@@ -68,9 +68,32 @@ test('meals use a shop\'s bread and cost more when bread is scarce; anyone can r
   shop.goods.bread.stock = 1;
   assert.ok(eco.foodPrice(shop, 'burger') > normal, 'scarce bread, dearer burgers');
   assert.equal(world.buy(p, 'burger'), 'sold_out', 'a burger needs 2 bread');
-  assert.equal(world.buy(p, 'apple'), null);
+  assert.equal(world.buy(p, 'bread'), null);
   assert.equal(shop.goods.bread.stock, 0);
   hotbarOf(p).add('bread', 5);
   assert.equal(eco.trade(p, shopB.id, 'bread', 5, 'sell'), null);
   assert.equal(shop.goods.bread.stock, 5);
+});
+
+test('provoked townsfolk hit you twice with their purse, run, then call the cops', () => {
+  const world = town();
+  world.police.witnessed = () => false; // nobody else sees a thing
+  world.police.policeSee = () => false;
+  const folk = world.townsfolk;
+  const person = folk.people[0];
+  person.inside = 0;
+  const p = world.spawnPlayer('victim');
+  p.x = person.x + 40;
+  p.y = person.y;
+  folk.provoke(person, p);
+  for (let i = 0; i < 30 * 3 && !person.flee; i++) world.step(1 / 30);
+  assert.ok(person.flee, 'ran off after their hits');
+  assert.equal(p.health, p.maxHealth * (1 - config.townsfolk.purseHits * config.townsfolk.purseShare));
+  assert.equal(p.wanted, 0, 'not called in yet');
+  for (let i = 0; i < 30 * (config.townsfolk.fleeSec - 0.5); i++) world.step(1 / 30);
+  assert.ok(Math.hypot(person.x - p.x, person.y - p.y) > 300, 'ran away');
+  assert.equal(p.wanted, 0);
+  for (let i = 0; i < 30; i++) world.step(1 / 30);
+  assert.equal(person.flee, null);
+  assert.equal(p.wanted, config.crime.stars.assault, 'called the cops');
 });

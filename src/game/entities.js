@@ -5,6 +5,9 @@ const COLORS = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4'
 export const massToRadius = (mass) => 4 * Math.sqrt(mass);
 
 /** A gun in someone's inventory. Ammo and reload progress belong to the gun, not the player. */
+/** What everyone starts with; it can't be dropped or looted. */
+export const STARTER_WEAPON = 'knife';
+
 export const makeWeapon = (type) => ({ type, ammo: config.weapons[type].magazineSize, reloadTimer: 0 });
 
 export class Player {
@@ -26,7 +29,7 @@ export class Player {
     this.exhausted = false; // ran dry; can't sprint until staminaMinToSprint is back
     this.shotCooldown = 0;
     this.inventory = Array.from({ length: config.player.inventorySize }, () => null);
-    this.inventory[0] = makeWeapon('pistol');
+    this.inventory[0] = makeWeapon(STARTER_WEAPON);
     this.selected = 0;
     this.vehicle = null; // the Vehicle being driven
     this.lastVehicle = null; // the one they last drove (its cargo counts as theirs while it's close)

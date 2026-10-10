@@ -6,7 +6,7 @@ import { AccountStore } from './accounts.js';
 import { SoundStore } from './sounds.js';
 import { config } from './config.js';
 import { RoomManager } from './game/RoomManager.js';
-import { World } from './game/World.js';
+import { createWorld } from './game/World.js';
 import { saveMap, validateMap } from './game/mapFile.js';
 import { Client } from './net/Client.js';
 import { ClientMsg, ServerMsg, decodeClientMessage } from './net/protocol.js';
@@ -119,7 +119,7 @@ const server = http.createServer(async (req, res) => {
       buildingCount: scaled(config.world.buildingCount), forests: scaled(config.world.forests), scatteredTrees: scaled(config.world.scatteredTrees),
       lakes: scaled(config.world.lakes), rivers: Math.max(1, Math.round(config.world.rivers * Math.sqrt(k))),
     };
-    return json(200, { map: new World(opts).toMap() });
+    return json(200, { map: createWorld(opts).toMap() });
   }
   if (req.method === 'POST' && req.url === '/map') {
     if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
@@ -276,6 +276,9 @@ function handleMessage(client, msg) {
     case ClientMsg.BRIBE:
       client.room?.crimeAction(client, msg);
       break;
+    case ClientMsg.TEAM:
+      client.room?.teamAction(client, msg);
+      break;
     case ClientMsg.TRAIN:
       client.room?.trainAction(client, msg);
       break;
@@ -287,6 +290,9 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.BUY:
       client.room?.buy(client, msg.item);
+      break;
+    case ClientMsg.EAT:
+      client.room?.eat(client);
       break;
     case ClientMsg.CHAT:
       client.room?.chat(client, msg.text);

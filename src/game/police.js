@@ -80,17 +80,17 @@ export class Police {
     return r > 0 && this.units.some((u) => u.officer.health > 0 && this.sees(u.officer.x, u.officer.y, u.officer.angle, x, y, r));
   }
 
-  /** Would anyone report what happens at (x, y)? An officer, or a townsperson out walking who's facing that way. */
-  witnessed(x, y, target = null) {
+  /** Would anyone report what happens at (x, y)? An officer, or a townsperson out walking who's facing that way (other than `except`). */
+  witnessed(x, y, target = null, except = null) {
     if (this.policeSee(x, y, target)) return true;
     const r = this.#spotRange(target, config.crime.witnessSees);
-    return r > 0 && this.world.townsfolk.people.some((t) => t.inside <= 0 && this.sees(t.x, t.y, t.angle, x, y, r));
+    return r > 0 && this.world.townsfolk.people.some((t) => t !== except && t.inside <= 0 && this.sees(t.x, t.y, t.angle, x, y, r));
   }
 
-  /** Player p did `kind`. With `alarm`, it's reported whatever; otherwise only if someone saw it. */
-  crime(p, kind, alarm = false) {
+  /** Player p did `kind`. With `alarm`, it's reported whatever; otherwise only if someone (other than `except`) saw it. */
+  crime(p, kind, alarm = false, except = null) {
     if (!p?.alive || p.kind !== 'player') return false;
-    if (!alarm && !this.witnessed(p.x, p.y, p)) return false;
+    if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
     const stars = config.crime.stars[kind] ?? 1;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
@@ -133,7 +133,8 @@ export class Police {
     const key = `${kind}:${Math.round(target.x)},${Math.round(target.y)}`;
     if ((this.robCooldown.get(key) ?? 0) > this.time) return 'recently_robbed';
     p.robbing = { kind, key, x: target.x, y: target.y, elapsed: 0, sec: rule.sec };
-    this.crime(p, `rob_${kind}`, true);
+    // A shop or bank: the clerk is right there and calls it in. An ATM: only if someone sees you.
+    this.crime(p, `rob_${kind}`, kind !== 'atm');
     return null;
   }
 
@@ -167,6 +168,7 @@ export class Police {
       const take = Math.round(rule.min + Math.random() * (rule.max - rule.min));
       p.cash += take;
       this.robCooldown.set(r.key, this.time + rule.cooldownSec);
+      if (r.kind === 'atm') (p.robbedAtms ??= new Map()).set(r.key, this.time + rule.noDepositSec); // no paying it straight back in here
       this.events.push({ player: p, kind: 'robbed', amount: take, what: r.kind });
       p.robbing = null;
     }
@@ -180,10 +182,16 @@ export class Police {
     const reach = rule.reach + p.radius;
     const npc = this.world.townsfolk.people.find((t) => t.inside <= 0 && Math.hypot(t.x - p.x, t.y - p.y) < reach);
     let take = 0;
+    let unnoticed = false;
     if (npc) {
       take = Math.min(Math.floor(npc.wallet), Math.round(rule.npcMin + Math.random() * (rule.npcMax - rule.npcMin)));
       npc.wallet -= take;
-      npc.mood = Math.max(0, npc.mood - 0.1);
+      // From behind (you're outside the half circle they face), they never feel a thing.
+      unnoticed = !npc.fight && (p.x - npc.x) * Math.cos(npc.angle ?? 0) + (p.y - npc.y) * Math.sin(npc.angle ?? 0) < 0;
+      if (!unnoticed) {
+        npc.mood = Math.max(0, npc.mood - 0.1);
+        this.world.townsfolk.provoke(npc, p, 'pickpocket'); // they noticed — and they've got a purse
+      }
     } else {
       const victim = [...this.world.players.values()].find((o) => o !== p && o.alive && !o.vehicle && Math.hypot(o.x - p.x, o.y - p.y) < reach + o.radius);
       if (!victim) return 'nobody_to_rob';
@@ -193,8 +201,8 @@ export class Police {
     }
     p.pickpocketReady = this.time + rule.cooldownSec;
     p.cash += take;
-    this.crime(p, 'pickpocket');
-    return { amount: take };
+    this.crime(p, 'pickpocket', false, unnoticed ? npc : null); // (someone else may still see it)
+    return { amount: take, unnoticed };
   }
 
   // ---- being shot -------------------------------------------------------------------
@@ -216,7 +224,9 @@ export class Police {
     if (alive && officer.health <= 0) {
       this.world.bodies?.add({ x: officer.x, y: officer.y, angle: officer.angle ?? 0, kind: 'officer', look: [0, 0, 0, 0], items: [{ type: 'rifle', ammo: config.weapons.rifle.magazineSize, reloadTimer: 0 }], killer: attacker?.kind === 'player' ? attacker : null });
     }
-    if (attacker?.kind === 'player') this.crime(attacker, 'attack_police', true);
+    // The officer reports it only if they survived and can see who did it; otherwise only if someone else saw.
+    const seenByVictim = officer.health > 0 && attacker && this.sees(officer.x, officer.y, officer.angle, attacker.x, attacker.y, config.crime.policeSees);
+    if (attacker?.kind === 'player') this.crime(attacker, 'attack_police', seenByVictim);
     if (attacker) attacker.shotPolice = true;
   }
 
@@ -224,10 +234,7 @@ export class Police {
 
   #bust(p) {
     const w = this.world;
-    if (p.vehicle) {
-      p.vehicle.driver = null;
-      p.vehicle = null;
-    }
+    if (p.vehicle) w.leaveSeat(p);
     // Illegal goods are confiscated (from hands and the car with them).
     const holders = [hotbarOf(p)];
     const v = w.economy.vehicleOf(p);
@@ -499,6 +506,7 @@ export class Police {
       return;
     }
     o.angle = Math.atan2((s.ref.y ?? s.y) - o.y, (s.ref.x ?? s.x) - o.x);
+    if (s.kind === 'building') this.#openDoor(s.ref.doors.find((x) => x.exterior)); // have a look inside
     u.inspect = (u.inspect ?? 0) + dt;
     if (u.inspect < config.police.inspectSec) return;
     t.searched.add(s.key);
@@ -548,6 +556,13 @@ export class Police {
     o.x += ((tx - o.x) / d) * step;
     o.y += ((ty - o.y) / d) * step;
     const r = 16;
+    // Officers open any public door they walk up to.
+    for (const e of this.world.wallGrid.query(o.x, o.y, r + 24)) {
+      const door = e.door;
+      if (!door || door.open) continue;
+      const cx = Math.min(Math.max(o.x, door.x), door.x + door.w), cy = Math.min(Math.max(o.y, door.y), door.y + door.h);
+      if (Math.hypot(o.x - cx, o.y - cy) <= r + 20) this.#openDoor(door);
+    }
     for (const w of this.world.wallsNear(o.x, o.y, r)) {
       // Slide along walls rather than through them.
       const cx = Math.min(Math.max(o.x, w.x), w.x + w.w);
@@ -560,6 +575,13 @@ export class Police {
         o.y += (dy / dd) * (r - dd);
       }
     }
+  }
+
+  /** Open a closed public door (not a privately owned warehouse's) and tell everyone. */
+  #openDoor(door) {
+    if (!door || door.open || this.world.warehouses.all.get(door.building)?.owner) return;
+    door.open = true;
+    this.world.pendingDoors.push(door);
   }
 
   #clearShot(ax, ay, bx, by) {

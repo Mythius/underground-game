@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { config } from '../src/config.js';
 import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
+import { makeWeapon } from '../src/game/entities.js';
 
 // A small town with a police station, a shop, a bank and a road.
 function town({ townsfolk = true } = {}) {
@@ -55,8 +56,9 @@ test('a crime counts only if police or a townsperson sees it; alarms always coun
   assert.equal(p.wanted, config.crime.stars.murder);
 });
 
-test('robbing an ATM takes a few seconds, pays cash and sets off the alarm', () => {
+test('robbing an ATM takes a few seconds and pays cash; it\'s only reported if someone sees', () => {
   const { world, p, police } = town();
+  police.witnessed = () => true; // someone's watching
   const atm = world.atms[0];
   assert.ok(atm, 'the shop or bank has an ATM');
   p.x = atm.x;
@@ -64,7 +66,7 @@ test('robbing an ATM takes a few seconds, pays cash and sets off the alarm', () 
   p.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, rob: true }); // hold F
   world.step(1 / 30);
   assert.ok(p.robbing, 'robbing');
-  assert.equal(p.wanted, config.crime.stars.rob_atm, 'alarm: wanted straight away');
+  assert.equal(p.wanted, config.crime.stars.rob_atm, 'seen: wanted straight away');
   for (let i = 0; i < config.robbery.atm.sec * 30 + 5; i++) world.step(1 / 30);
   assert.ok(p.cash >= config.robbery.atm.min);
   assert.equal(world.rob(p), 'recently_robbed');
@@ -236,10 +238,134 @@ test('shooting a townsperson is murder if anyone sees it', () => {
   const target = person(1500, 3000, { health: 1 });
   world.townsfolk.people.push(target);
   world.townsfolk.people.push(person(1700, 3000, { angle: Math.PI })); // a witness, looking this way
+  p.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   p.x = 1400;
   p.y = 3000;
   p.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
   for (let i = 0; i < 15; i++) world.step(1 / 30);
   assert.ok(!world.townsfolk.people.includes(target), 'killed');
   assert.equal(p.wanted, config.crime.stars.murder);
+});
+
+test('officers on foot open public doors on their way through', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  const house = world.buildings.find((b) => b.type === 'house');
+  const door = house.doors.find((d) => d.exterior);
+  door.open = false;
+  // Wanted, and hiding indoors: the officer heads in after them.
+  Object.assign(p, { x: house.x + house.w / 2, y: house.y + house.h / 2 });
+  police.crime(p, 'murder', true);
+  const unit = police.units[0];
+  const out = { x: door.x + door.w / 2 + door.nx * 120, y: door.y + door.h / 2 + door.ny * 120 };
+  Object.assign(unit.officer, { health: 50, onFoot: true, ...out, angle: 0 });
+  unit.target = p;
+  for (let i = 0; i < 30 * 20 && !door.open; i++) world.step(1 / 30);
+  assert.ok(door.open, 'the officer opened the door');
+});
+
+test("you can't pay cash straight back in at the ATM you just robbed", () => {
+  const { world, p } = town();
+  p.account.bank = 0;
+  const atm = world.atms[0];
+  Object.assign(p, { x: atm.x, y: atm.y + 30, cash: 0 });
+  p.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, rob: true });
+  for (let i = 0; i < config.robbery.atm.sec * 30 + 10; i++) world.step(1 / 30);
+  assert.ok(p.cash > 0, 'robbed it');
+  p.applyInput({ seq: 2, angle: 0, throttle: 0, boost: false, rob: false });
+  world.step(1 / 30);
+  assert.equal(world.bank(p, 'deposit', 50), 'robbed_atm');
+  assert.equal(world.bank(p, 'withdraw', 0) ?? null, null, 'withdrawing is still fine');
+  world.economy.time += config.robbery.atm.noDepositSec + 1; // later, it's fine
+  assert.equal(world.bank(p, 'deposit', 50), null);
+});
+
+test('a knife takes a third of anyone’s health; stabbed (or robbed) townsfolk fight back with a purse', () => {
+  const { world, p } = town({ townsfolk: false });
+  nobodyAround(world);
+  assert.equal(p.inventory[0].type, 'knife', 'everyone starts with a knife');
+  // Another player: three stabs.
+  const other = world.spawnPlayer('victim');
+  Object.assign(p, { x: 3000, y: 3000 });
+  Object.assign(other, { x: 3040, y: 3000 });
+  const stab = (seq) => {
+    p.applyInput({ seq, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
+    world.step(1 / 30);
+    p.applyInput({ seq: seq + 1, angle: 0, throttle: 0, boost: false, aim: 0, fire: false });
+    for (let i = 0; i < 30; i++) world.step(1 / 30);
+  };
+  stab(1);
+  assert.ok(Math.abs(other.health - other.maxHealth * (2 / 3)) < 1, `a third gone (${other.health})`);
+  stab(3);
+  stab(5);
+  assert.equal(other.alive, false, 'three stabs kill');
+  // A townsperson: stab them once and they come at you swinging a purse.
+  const t = person(3040, 3000, { angle: Math.PI });
+  world.townsfolk.people.push(t);
+  p.health = p.maxHealth;
+  stab(7);
+  assert.ok(t.fight, 'fighting back');
+  const before = p.health;
+  for (let i = 0; i < 30 * 1.2; i++) world.step(1 / 30);
+  assert.ok(p.health < before, 'they hit back');
+  assert.ok(before - p.health <= p.maxHealth * config.townsfolk.purseShare * config.townsfolk.purseHits, 'a couple of purse hits at most');
+  assert.ok(p.alive);
+  // Pickpocketing one does it too.
+  world.townsfolk.people.length = 0; // (the angry one goes home)
+  const mark = person(2000, 2000);
+  world.townsfolk.people.push(mark);
+  Object.assign(p, { x: 2030, y: 2000 });
+  world.pickpocket(p);
+  assert.ok(mark.fight, 'robbed: fighting back');
+  // …but not if you lift it from behind: they never notice (and don't report it).
+  world.townsfolk.people.length = 0;
+  const unaware = person(2000, 2000, { angle: Math.PI }); // facing away from you
+  world.townsfolk.people.push(unaware);
+  Object.assign(p, { wanted: 0, pickpocketReady: 0 });
+  const result = world.pickpocket(p);
+  assert.equal(result.unnoticed, true);
+  assert.ok(!unaware.fight, 'no fight');
+  assert.equal(p.wanted, 0, 'nobody reported it');
+});
+
+test('an ATM robbed with nobody looking is not reported', () => {
+  const { world, p, police } = town();
+  police.witnessed = () => false;
+  police.policeSee = () => false;
+  const atm = world.atms[0];
+  Object.assign(p, { x: atm.x, y: atm.y + 30 });
+  p.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, rob: true });
+  world.step(1 / 30);
+  assert.ok(p.robbing);
+  assert.equal(p.wanted, 0);
+});
+
+test('a victim only reports you if they see you and live: stabbed from behind or killed, nobody calls it in', () => {
+  const { world, p } = town({ townsfolk: false });
+  nobodyAround(world);
+  const stab = (seq) => {
+    p.applyInput({ seq, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
+    world.step(1 / 30);
+    p.applyInput({ seq: seq + 1, angle: 0, throttle: 0, boost: false, aim: 0, fire: false });
+    for (let i = 0; i < 20; i++) world.step(1 / 30);
+  };
+  Object.assign(p, { x: 3000, y: 3000 });
+  // Facing away from you: hurt, but didn't see who.
+  const back = person(3040, 3000, { angle: 0 });
+  world.townsfolk.people.push(back);
+  stab(1);
+  assert.ok(back.health < config.townsfolk.health, 'stabbed');
+  assert.equal(p.wanted, 0, 'they never saw you');
+  // Killed outright: can't report either.
+  world.townsfolk.people.length = 0;
+  const dead = person(3040, 3000, { angle: Math.PI, health: 1 });
+  world.townsfolk.people.push(dead);
+  stab(3);
+  assert.ok(!world.townsfolk.people.includes(dead), 'dead');
+  assert.equal(p.wanted, 0, 'the dead tell no tales');
+  // Facing you and still standing: they report it.
+  const front = person(3040, 3000, { angle: Math.PI });
+  world.townsfolk.people.push(front);
+  stab(5);
+  assert.equal(p.wanted, config.crime.stars.assault);
 });

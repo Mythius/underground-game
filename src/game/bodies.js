@@ -8,8 +8,8 @@ import { waterDistance } from './water.js';
 //                     at a river or an unfrozen lake → thrown in the water (gone)
 //                     under a tree → hidden there (the Militsiya won't find it)
 //                     anywhere else → put down
-// A body lying in the open is found sooner or later: if the Militsiya or a passer-by sees it, its
-// killer is wanted for murder. Being seen carrying one is a crime too.
+// A body lying in the open is found sooner or later (its killer hears about it). Being seen carrying
+// one is a crime, and so is being seen standing right next to one.
 //
 // Dumpsters stand beside city buildings (and some country ones): solid green bins.
 
@@ -88,13 +88,21 @@ export class Bodies {
         p.carrySeenAt = this.time;
         w.police.crime(p, 'carry_body', true);
       }
-      // A body lying in the open gets found, and its killer is wanted.
+      // Seen standing over a body that's lying in the open: that's suspicious enough to be wanted.
+      if (!p && !b.hidden) {
+        for (const o of w.players.values()) {
+          if (!o.alive || o.vehicle || o.hidden || o.jailed || (o.nearBodySeenAt ?? -Infinity) > this.time - 10) continue;
+          if (Math.hypot(o.x - b.x, o.y - b.y) > config.bodies.nearRange + o.radius) continue;
+          if (!w.police.witnessed(o.x, o.y, o)) continue;
+          o.nearBodySeenAt = this.time;
+          w.police.crime(o, 'near_body', true);
+        }
+      }
+      // A body lying in the open gets found. That alone doesn't name the killer (only being seen does:
+      // at the killing, or near the body); they just hear about it.
       if (!p && !b.hidden && !b.reported && (w.police.policeSee(b.x, b.y) || w.police.witnessed(b.x, b.y))) {
         b.reported = true;
-        if (b.killer?.alive) {
-          w.police.crime(b.killer, 'murder', true);
-          this.events.push({ player: b.killer, kind: 'body_found' });
-        }
+        if (b.killer?.alive) this.events.push({ player: b.killer, kind: 'body_found' });
       }
     }
   }
@@ -167,6 +175,13 @@ export class Bodies {
       else b.items[slot] = null;
       return null;
     }
+    if (item.food) {
+      const left = this.world.addFood(p, item.food, item.qty);
+      if (left === item.qty) return 'no_room';
+      if (left > 0) item.qty = left;
+      else b.items[slot] = null;
+      return null;
+    }
     // A gun.
     if (p.hasWeapon(item.type)) return 'already_have';
     if (!p.inventory.includes(null)) return 'no_room';
@@ -184,7 +199,7 @@ export class Bodies {
       kind: b.kind,
       name: b.name,
       cash: b.cash,
-      items: b.items.map((s) => (s?.good ? ['goods', s.good, s.qty] : s ? [s.type, s.ammo] : null)),
+      items: b.items.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s ? [s.type, s.ammo] : null)),
     };
   }
 

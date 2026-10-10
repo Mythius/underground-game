@@ -9,7 +9,8 @@ import { config } from '../config.js';
 //   leaving  → it pulls out east and off the map, and the next contracts go up
 //
 // Contracts: { good, qty, delivered, price }. Deliveries count toward them (partly is fine) and are
-// paid per unit. Delivery jobs also haul contract goods here (see Economy).
+// paid per unit. Delivery jobs also haul contract goods here (see Economy). Outside the contracts the
+// clerk buys any legal good at any time, for a bit under market price (freight).
 // Behind the station a black-market buyer takes contraband any time, at a discount.
 
 export const TRACK_HALF = 40; // the track bed is 80 wide
@@ -155,6 +156,7 @@ export class Railway {
       v.vy = 0;
       v.health -= this.train.speed * 0.3 * dt * 30;
       if (v.driver) v.driver.y = v.y;
+      if (v.passenger) v.passenger.y = v.y;
       if (v.health <= 0) this.wrecked.push(v);
     }
     for (const t of w.townsfolk.people) if (t.inside <= 0 && inside(t.x, t.y, 16)) shove(t, 16);
@@ -166,19 +168,27 @@ export class Railway {
     return at && Math.hypot(at.x - p.x, at.y - p.y) < config.railway.reach + p.radius;
   }
 
-  /** Sell `qty` of `good` to the freight clerk toward a contract (the train must be in). */
+  /**
+   * Sell `qty` of a legal `good` to the freight clerk. While the train's in, a matching contract
+   * takes what it still needs at the contract price; the rest goes as freight.
+   */
   deliver(p, good, qty) {
     if (!this.#near(p, this.clerk)) return 'too_far';
-    if (this.train.state !== 'docked') return 'no_train';
-    const c = this.contracts.find((x) => x.good === good);
-    if (!c) return 'not_wanted';
+    if (!config.goods[good] || config.goods[good].illegal) return 'not_wanted';
     const holder = this.world.economy.cargoOf(p);
-    qty = Math.min(qty, holder.count(good), c.qty - c.delivered);
-    if (qty <= 0) return c.delivered >= c.qty ? 'contract_full' : 'not_carrying';
+    qty = Math.min(qty, holder.count(good));
+    if (qty <= 0) return 'not_carrying';
+    const c = this.train.state === 'docked' ? this.contracts.find((x) => x.good === good) : null;
+    const onContract = c ? Math.min(qty, c.qty - c.delivered) : 0;
+    const paid = onContract * (c?.price ?? 0) + (qty - onContract) * this.freightPrice(good);
     holder.add(good, -qty);
-    c.delivered += qty;
-    p.cash += qty * c.price;
-    return { qty, paid: qty * c.price };
+    if (c) c.delivered += onContract;
+    p.cash += paid;
+    return { qty, paid };
+  }
+
+  freightPrice(good) {
+    return Math.round(config.goods[good].base * config.railway.freightShare);
   }
 
   /** A delivery job's cargo dropped at the station: it counts toward a matching contract, if any. */
@@ -213,6 +223,7 @@ export class Railway {
       nextIn: this.nextIn,
       leavesIn: this.train.state === 'docked' ? Math.round(this.train.timer) : 0,
       contracts: this.contracts.map((c) => ({ ...c, have: holder?.count(c.good) ?? 0 })),
+      freight: Object.entries(config.goods).filter(([, g]) => !g.illegal).map(([good]) => ({ good, price: this.freightPrice(good), have: holder?.count(good) ?? 0 })),
       black: Object.entries(config.goods).filter(([, g]) => g.illegal).map(([good]) => ({ good, price: this.blackPrice(good), have: holder?.count(good) ?? 0 })),
     };
   }

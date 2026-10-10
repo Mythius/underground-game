@@ -55,7 +55,7 @@ test('prices rise as a market runs low and fall when it is flooded', () => {
   assert.ok(eco.buyPrice(depot, 'planks') > eco.sellPrice(depot, 'planks'), 'you buy dearer than you sell');
 });
 
-test('on foot, bought goods fill the free hotbar slots (the pistol keeps its slot)', () => {
+test('on foot, bought goods fill the free hotbar slots (the starting knife keeps its slot)', () => {
   const { eco, player, byType, standAt } = town();
   const camp = byType('logging');
   standAt(camp);
@@ -64,7 +64,7 @@ test('on foot, bought goods fill the free hotbar slots (the pistol keeps its slo
   assert.equal(eco.trade(player, camp.id, 'logs', fit + 1, 'buy'), 'no_room');
   assert.equal(eco.trade(player, camp.id, 'logs', fit, 'buy'), null);
   assert.equal(carried(player).logs, fit);
-  assert.equal(player.inventory[0].type, 'pistol');
+  assert.equal(player.inventory[0].type, 'knife');
   assert.ok(player.inventory.slice(1).every((s) => s.good === 'logs' && s.qty === perSlot('logs')));
   assert.ok(player.cash < 1000);
   assert.equal(eco.trade(player, camp.id, 'logs', 1, 'sell'), 'not_bought_here');
@@ -211,7 +211,7 @@ test('Q drops the selected slot; someone else can pick it up, you only after a m
   assert.equal(carried(other).logs, 5);
 
   player.selected = 0;
-  assert.equal(world.drop(player), 'cant_drop_pistol');
+  assert.equal(world.drop(player), 'cant_drop_starter');
 });
 
 test('trunks: only from the driver seat, take a stack into your hotbar or put one in; C toggles the lights', () => {
@@ -251,5 +251,5 @@ test('dragging: drop any hotbar slot', () => {
   player.selected = 0;
   assert.equal(world.drop(player, slot), null);
   assert.equal(player.inventory[slot], null);
-  assert.equal(world.drop(player, 0), 'cant_drop_pistol');
+  assert.equal(world.drop(player, 0), 'cant_drop_starter');
 });

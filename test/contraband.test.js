@@ -38,15 +38,21 @@ test('the freight train arrives, takes contract goods at a premium, leaves, and 
   assert.ok(rail.contracts.length >= config.railway.contracts[0]);
   const c = rail.contracts[0];
   at(rail.clerk.x, rail.clerk.y + 40);
-  hotbarOf(player).add(c.good, 3);
-  assert.equal(rail.deliver(player, c.good, 3), 'no_train');
+  hotbarOf(player).add(c.good, 4);
+  // No train: the clerk still buys it, as freight (below market).
+  assert.deepEqual(rail.deliver(player, c.good, 1), { qty: 1, paid: rail.freightPrice(c.good) });
   rail.train.timer = 0;
   for (let i = 0; i < 30 * 60 && rail.train.state !== 'docked'; i++) world.step(1 / 30);
   assert.equal(rail.train.state, 'docked');
   const r = rail.deliver(player, c.good, 3);
   assert.deepEqual(r, { qty: Math.min(3, c.qty), paid: Math.min(3, c.qty) * c.price });
   assert.equal(c.price, Math.round(config.goods[c.good].base * config.railway.premium));
-  assert.equal(rail.deliver(player, 'logs', 1), 'not_wanted');
+  // Any legal good sells as freight, any time; contraband doesn't.
+  hotbarOf(player).add('wheat', 2);
+  assert.deepEqual(rail.deliver(player, 'wheat', 2), { qty: 2, paid: 2 * Math.round(config.goods.wheat.base * config.railway.freightShare) });
+  assert.equal(rail.deliver(player, 'wheat', 1), 'not_carrying');
+  hotbarOf(player).add('vodka', 1);
+  assert.equal(rail.deliver(player, 'vodka', 1), 'not_wanted');
   const before = rail.contracts;
   for (let i = 0; i < 30 * (config.railway.dockSec + 120) && rail.train.state !== 'away'; i++) world.step(1 / 30);
   assert.equal(rail.train.state, 'away');

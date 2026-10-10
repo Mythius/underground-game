@@ -83,7 +83,7 @@ function industrial({ roof, wall = '#9aa1a8', floor = '#6f7378', machines = [], 
  * with a wide gate in the south side (rotate to face the road), the foreman's hut just inside the gate
  * with the foreman out front, and a `work` area where the resources are (placed by the server).
  */
-function site({ w, h, label, ground, fence, decor = [], props = [], work, hut: withHut = true, npc = null, picket = false, groundDecor = true, roofs = [] }) {
+function site({ w, h, label, ground, fence, decor = [], props = [], work, hut: withHut = true, npc = null, picket = false, groundDecor = true, roofs = [], pumps = null }) {
   const gx = w / 2;
   const hut = { x: gx + 140, y: h - 6 - 150, w: 150, h: 110 };
   const fenceWalls = perimeter(w, h, 6, { s: door(0.5, 170) }).map((f) => (picket ? { ...f, picket: true } : f));
@@ -109,6 +109,7 @@ function site({ w, h, label, ground, fence, decor = [], props = [], work, hut: w
     npc: npc ?? { x: gx + 100, y: h - 6 - 50, angle: Math.PI / 2, role: 'market' }, // by the gate, facing the road
     work: work ?? { x: 80, y: 80, w: w - 160, h: h - 330 },
     floor: ground, wall: fence, roof: ground, pattern: 'none', label,
+    ...(pumps ? { pumps } : {}),
   };
 }
 
@@ -488,7 +489,7 @@ export const BUILDING_TYPES = {
   // Work sites: each fills a country block (size given when placed; these defaults are for the editor).
   logging: (size = { w: 1500, h: 1500 }) => {
     const { w, h } = size;
-    return site({ ...size, label: 'ЛЕСПРОМХОЗ', ground: '#6e6247', fence: '#7a5a3a',
+    return site({ ...size, label: 'ЛЕСПРОМХОЗ', ground: '#6e6247', fence: '#7a5a3a', groundDecor: false, // the trees stand on the ordinary ground
       decor: [
         { x: 60, y: h - 280, w: w * 0.35, h: 60, c: '#8b5a2b' }, { x: 60, y: h - 200, w: w * 0.35, h: 60, c: '#7a4a22' }, // log stacks by the gate
         { x: w * 0.42, y: h - 300, w: 90, h: 90, c: '#a0703c', round: true }, // sawdust heap
@@ -541,26 +542,36 @@ export const BUILDING_TYPES = {
       work: { x: 90, y: 90, w: w - 180, h: h - 420 },
     });
   },
-  oilwell: (size = { w: 1400, h: 1400 }) => {
+  oilwell: (size = { w: 800, h: 800 }) => {
     const { w, h } = size;
-    // An oil field: pumpjacks nodding on pads, a tank farm and pipes back to the gate.
-    const jacks = [];
-    for (let y = 120; y < h - 400; y += 260) for (let x = 120; x < w - 200; x += 300) jacks.push({ x, y, w: 80, h: 36, c: '#2c3e50', pumpjack: true });
-    return site({ ...size, label: 'НЕФТЕВЫШКА', ground: '#5f584c', fence: '#555',
+    // An oil field: six big pumpjacks nodding on concrete pads (drawn by the client from `pumps`), in two
+    // columns of three, flow lines to a trunk line and on to the tank farm by the gate, and the foreman
+    // at the gate. It pumps on its own; nobody works it.
+    const top = 70, bottom = h - 290;
+    const cols = [w / 4, (w * 3) / 4].map(Math.round);
+    const rows = [1 / 6, 3 / 6, 5 / 6].map((f) => Math.round(top + (bottom - top) * f));
+    const pumps = rows.flatMap((y) => cols.map((x) => ({ x, y, angle: 0 })));
+    const tanks = [{ x: 50, y: h - 230 }, { x: 160, y: h - 230 }];
+    const pipe = '#6b6f73';
+    const trunkX = cols[1] + 112 + 26; // just past the right-hand wellheads
+    const mainY = h - 262; // across to the tanks
+    return site({ ...size, label: 'НЕФТЕВЫШКА', ground: '#5f584c', fence: '#555', hut: false,
+      npc: { x: w / 2 + 120, y: h - 56, angle: Math.PI / 2, role: 'market' },
       decor: [
-        ...jacks.map((j) => ({ x: j.x - 20, y: j.y - 20, w: 120, h: 76, c: '#4a453c' })), // pads
-        { x: 60, y: h - 300, w: w - 400, h: 14, c: '#b06a2a' }, // pipeline
-        { x: w * 0.5 - 7, y: 100, w: 14, h: h - 400, c: '#b06a2a' },
+        ...pumps.map((p) => ({ x: p.x - 150, y: p.y - 50, w: 300, h: 100, c: '#8a857a', concrete: true })), // concrete pads
+        ...pumps.map((p) => ({ x: p.x + 80, y: p.y - 34, w: 66, h: 66, c: 'rgba(20, 16, 10, .5)', round: true })), // oil stains round the wellheads
+        ...rows.map((y) => ({ x: cols[0] + 112, y: y + 40, w: trunkX - cols[0] - 112 + 8, h: 8, c: pipe })), // flow lines from each row
+        { x: trunkX, y: rows[0] + 40, w: 8, h: mainY - rows[0] - 40 + 8, c: pipe }, // the trunk line
+        { x: 100, y: mainY, w: trunkX - 100 + 8, h: 8, c: pipe }, // …across to the tanks
+        ...tanks.map((t) => ({ x: t.x + 41, y: mainY, w: 8, h: t.y - mainY + 4, c: pipe })),
       ],
       props: [
-        ...jacks.map(({ x, y, w: jw, h: jh, c }) => ({ x, y, w: jw, h: jh, c })),
-        { x: 60, y: h - 260, w: 90, h: 90, c: '#7f8c8d' }, { x: 170, y: h - 260, w: 90, h: 90, c: '#7f8c8d' }, // tanks
+        ...pumps.map((p) => ({ x: p.x - 132, y: p.y - 32, w: 264, h: 64, c: '#3a3d42', pump: true })), // the pumpjack (solid)
+        ...tanks.map((t) => ({ x: t.x, y: t.y, w: 90, h: 90, c: '#7f8c8d' })),
       ],
-      roofs: [ // round tank tops
-        { x: 55, y: h - 265, w: 100, h: 100, c: '#9aa3a8', round: true, cone: true },
-        { x: 165, y: h - 265, w: 100, h: 100, c: '#9aa3a8', round: true, cone: true },
-      ],
+      roofs: tanks.map((t) => ({ x: t.x - 5, y: t.y - 5, w: 100, h: 100, c: '#9aa3a8', round: true, cone: true })), // round tank tops
       work: { x: 0, y: 0, w: 0, h: 0 },
+      pumps,
     });
   },
   scrapyard: () => yard({ label: 'МЕТАЛЛОЛОМ', ground: '#5f5a52', fence: '#7a7a7a', props: [
@@ -731,6 +742,8 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     roofs: (layout.roofs ?? []).map(move), // separate roofs over buildings inside an open-air site
     size: size ? { w: layout.w, h: layout.h } : null, // work sites are sized to their block
     docks: layout.docks ? { in: move(layout.docks.in), out: move(layout.docks.out) } : null,
+    // Oil field pumpjacks: where each stands and which way its beam points.
+    ...(layout.pumps ? { pumps: layout.pumps.map((p) => { const at = move({ x: p.x, y: p.y, w: 0, h: 0 }); return { x: at.x, y: at.y, angle: p.angle + (rot * Math.PI) / 2 }; }) } : {}),
   };
 }
 

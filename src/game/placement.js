@@ -87,16 +87,26 @@ export function placeSites({ width, height, roads, city, counts, avoid = [], isW
   }
   blocks.sort(() => Math.random() - 0.5);
   const out = [];
+  // One of each kind first (so a map short of blocks drops extras, never a whole resource), then the rest.
   // The mine gets the biggest block.
-  const order = Object.entries(counts).flatMap(([t, n]) => Array(n).fill(t)).sort((a, b) => (b === 'mine') - (a === 'mine'));
+  const kinds = Object.keys(counts).filter((t) => counts[t] > 0).sort((a, b) => (b === 'mine') - (a === 'mine'));
+  const order = [...kinds, ...Object.entries(counts).flatMap(([t, n]) => Array(Math.max(0, n - 1)).fill(t))];
   if (order[0] === 'mine') blocks.sort((a, b) => b.w * b.h - a.w * a.h);
   for (const type of order) {
     const block = blocks.shift();
     if (!block) break;
     // Gate toward one of its roads: rot 0 = south, 1 = west, 2 = north, 3 = east.
     const rot = Math.floor(Math.random() * 4);
-    const size = rot % 2 ? { w: Math.round(block.h), h: Math.round(block.w) } : { w: Math.round(block.w), h: Math.round(block.h) };
-    out.push(buildBuilding(type, Math.round(block.x), Math.round(block.y), rot, out.length + 1, size));
+    let size = rot % 2 ? { w: Math.round(block.h), h: Math.round(block.w) } : { w: Math.round(block.w), h: Math.round(block.h) };
+    let { x, y } = block;
+    if (type === 'oilwell') {
+      // Oil fields take a quarter of the block (half each way), against the road their gate faces.
+      size = { w: Math.round(Math.min(size.w, Math.max(700, size.w / 2))), h: Math.round(Math.min(size.h, Math.max(700, size.h / 2))) };
+      const fw = rot % 2 ? size.h : size.w, fh = rot % 2 ? size.w : size.h; // its footprint on the map
+      x += [(block.w - fw) / 2, 0, (block.w - fw) / 2, block.w - fw][rot];
+      y += [block.h - fh, (block.h - fh) / 2, 0, (block.h - fh) / 2][rot];
+    }
+    out.push(buildBuilding(type, Math.round(x), Math.round(y), rot, out.length + 1, size));
     if (order[0] === 'mine' && type === 'mine') blocks.sort(() => Math.random() - 0.5); // the rest anywhere
   }
   return out;
@@ -125,7 +135,8 @@ const overlaps = (a, b, gap = 0) => a.x < b.x + b.w + gap && b.x < a.x + a.w + g
  */
 export function placeTown({ width, height, roads, city, count, fixed = {}, remote = new Set(), avoid = [], isWet = () => false, pre = [] }) {
   const others = Object.keys(BUILDING_TYPES).filter((t) => !(t in fixed) && t !== 'station');
-  const order = Object.entries(fixed).flatMap(([t, n]) => Array(n).fill(t));
+  // One of each fixed type first, so a crowded map drops extras rather than a whole kind (a quarry, a scrapyard).
+  const order = [...Object.keys(fixed).filter((t) => fixed[t] > 0), ...Object.entries(fixed).flatMap(([t, n]) => Array(Math.max(0, n - 1)).fill(t))];
   for (let i = 0; order.length < count; i++) order.push(others[i % others.length]);
   const placed = [...pre]; // already placed (the work sites)
   const lots = [];

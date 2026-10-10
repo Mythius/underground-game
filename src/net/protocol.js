@@ -7,14 +7,16 @@ export const ClientMsg = Object.freeze({
   INPUT: 'input', // { t, seq, angle, throttle, boost (sprint), aim, fire, reload, use (E: doors/vehicles), slot, gas, steer, drift, rob (F held) }
   PING: 'ping', // { t, ts }
   CHAT: 'chat', // { t, text }
-  BUY: 'buy', // { t, item } from a shopkeeper you're standing next to
+  BUY: 'buy', // { t, item } from a shopkeeper you're standing next to (it goes into your hotbar)
+  EAT: 'eat', // { t } E with food selected: eat one (heals over a few seconds)
   BANK: 'bank', // { t, action: 'deposit' | 'withdraw', amount } at an ATM or bank teller
   INSPECT: 'inspect', // { t, id } -> PLACE: what a market or factory (by building id) has
   TRADE: 'trade', // { t, id, good, qty, side: 'buy' | 'sell' | 'under' (contraband over a shop counter) } at a market
   FACTORY: 'factory', // { t, id, action: 'process' } toll processing at a city factory
-  WAREHOUSE: 'wh', // { t, id, action: 'buy' | 'sell' | 'place' | 'remove' | 'rotate' | 'configure' | 'load' | 'take' | 'mload' (hotbar slot -> machine at x,y) | 'mtake' (machine's 'in'/'out' slot -> cargo, via dock), kind?, x?, y?, dir?, value?, slot?, dock? }
+  WAREHOUSE: 'wh', // { t, id, action: 'buy' | 'sell' | 'place' | 'remove' | 'rotate' | 'configure' | 'load' | 'take' | 'mload' (hotbar slot -> machine at x,y) | 'mtake' (machine's 'in'/'out' slot -> cargo, via dock) | 'ptake' / 'pput' (qty of good off / onto the pallet or container at x,y, by hand), kind?, x?, y?, dir?, value?, slot?, dock?, good?, qty? }
   REFUEL: 'refuel', // { t } fill your car at a gas station
-  DROP: 'drop', // { t, slot? } Q (the selected hotbar slot) or dragging a slot out of the hotbar
+  DROP: 'drop', // { t, slot? } Q (the selected hotbar slot) or dragging a slot out of the hotbar; { t, cash } X: drop cash on the ground
+  TEAM: 'team', // { t, action: 'invite' (id = player id) | 'accept' | 'decline' (id = inviter's client id) | 'leave', id? }
   BUY_GUN: 'buygun', // { t, id, type } at a gun store (cash)
   BUY_CAR: 'buycar', // { t, id, type } at a car dealership (bank)
   PICKPOCKET: 'pickpocket', // { t } F: lift cash from the nearest person
@@ -32,7 +34,7 @@ export const ServerMsg = Object.freeze({
   SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}] }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color, look }
   PLAYER_LEFT: 'player_left', // { t, id }
-  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | null]}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights]], npcs: [[id,x,y,angle]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
+  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
   DIED: 'died', // { t, killedBy, score }
   LEADERBOARD: 'leaderboard', // { t, entries: [{name, score}] }
   PONG: 'pong', // { t, ts, serverTime }
@@ -46,7 +48,7 @@ export const ServerMsg = Object.freeze({
   WAREHOUSE: 'wh', // { t, layout } a warehouse's pieces changed (see Warehouse.layout())
   WH_LIVE: 'whlive', // { t, list: [Warehouse.live()] } belt items, machines and docks in warehouses near you
   JOBS: 'jobs', // { t, mine, offers } the job board
-  POLICE: 'police', // { t, kind: 'busted' | 'released' | 'robbed' | 'pickpocketed' | 'crime' | 'stole', … } things that happened to you
+  POLICE: 'police', // { t, kind: 'busted' | 'released' | 'robbed' | 'pickpocketed' | 'crime' | 'stole' (+ unnoticed), … } things that happened to you
   DONE: 'done', // { t, what, ... } a trade, factory action or refuel went through (process: batches, fee)
   TRAIN: 'train', // { t, x, speed, state, nextIn } the freight train (a few times a second)
   NODES: 'nodes', // { t, list: [[id, hp]] } rocks / trees / wheat worked or grown back
@@ -54,6 +56,8 @@ export const ServerMsg = Object.freeze({
   NEWS: 'news', // { t, kind: 'raid', building } something everyone hears about
   SOUNDS_CHANGED: 'sounds_changed', // { t } the sound editor changed a sound; fetch GET /sounds again
   MAP_CHANGED: 'map_changed', // { t } the admin saved a new map; back to the menu (a new welcome follows)
+  TEAM: 'team', // { t, members: [{id (client), name, player (player id, 0 if dead), me}], invites: [{id (client), name}], max } your team panel
+  TEAM_INVITE: 'team_invite', // { t, id (client), name } someone invited you
   ENV: 'env', // { t, clock, daySec, nightSec, rain, fog } every couple of seconds
   ERROR: 'error', // { t, code, message }
 });
@@ -116,18 +120,27 @@ const validators = {
   [ClientMsg.FACTORY]: (m) => (Number.isInteger(m.id) && m.action === 'process' ? { t: m.t, id: m.id, action: m.action } : null),
 
   [ClientMsg.WAREHOUSE]: (m) => {
-    if (!Number.isInteger(m.id) || !['buy', 'sell', 'place', 'remove', 'rotate', 'configure', 'load', 'take', 'mload', 'mtake', 'chop'].includes(m.action)) return null;
+    if (!Number.isInteger(m.id) || !['buy', 'sell', 'place', 'remove', 'rotate', 'configure', 'load', 'take', 'mload', 'mtake', 'chop', 'ptake', 'pput'].includes(m.action)) return null;
     const tile = (v) => Number.isInteger(v) && v >= 0 && v < 64;
-    if (['place', 'remove', 'rotate', 'configure', 'mload', 'mtake'].includes(m.action) && !(tile(m.x) && tile(m.y))) return null;
+    if (['place', 'remove', 'rotate', 'configure', 'mload', 'mtake', 'ptake', 'pput'].includes(m.action) && !(tile(m.x) && tile(m.y))) return null;
+    if (['ptake', 'pput'].includes(m.action) && !(typeof m.good === 'string' && Object.hasOwn(config.goods, m.good) && Number.isInteger(m.qty) && m.qty > 0 && m.qty <= 10000)) return null;
     if (m.action === 'mload' && !(Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 64)) return null;
     if (m.action === 'place' && !(typeof m.kind === 'string' && (Object.hasOwn(config.machines, m.kind) || Object.hasOwn(config.belts, m.kind)) && [0, 1, 2, 3].includes(m.dir))) return null;
     if (m.action === 'configure' && !(typeof m.value === 'string' && m.value.length < 40)) return null;
-    return { t: m.t, id: m.id, action: m.action, kind: m.kind, x: m.x, y: m.y, dir: m.dir, value: m.value, slot: m.slot, dock: m.dock === 'in' ? 'in' : 'out' };
+    return { t: m.t, id: m.id, action: m.action, kind: m.kind, x: m.x, y: m.y, dir: m.dir, value: m.value, slot: m.slot, dock: m.dock === 'in' ? 'in' : 'out', good: m.good, qty: m.qty };
   },
 
   [ClientMsg.REFUEL]: (m) => ({ t: m.t }),
 
-  [ClientMsg.DROP]: (m) => (m.slot === undefined ? { t: m.t } : Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 64 ? { t: m.t, slot: m.slot } : null),
+  [ClientMsg.EAT]: (m) => ({ t: m.t }),
+
+  [ClientMsg.DROP]: (m) => {
+    if (m.cash !== undefined) return Number.isInteger(m.cash) && m.cash > 0 && m.cash <= 1e9 ? { t: m.t, cash: m.cash } : null;
+    return m.slot === undefined ? { t: m.t } : Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 64 ? { t: m.t, slot: m.slot } : null;
+  },
+
+  [ClientMsg.TEAM]: (m) =>
+    ['invite', 'accept', 'decline', 'leave'].includes(m.action) && (m.action === 'leave' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
 
   [ClientMsg.PICKPOCKET]: (m) => ({ t: m.t }),
 

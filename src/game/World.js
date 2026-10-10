@@ -1,11 +1,12 @@
 import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
 import { clamp, distSq, pushCircleOutOfRect, randRange, segmentDistSq, segmentRectHit } from '../utils/math.js';
 import { WAREHOUSE_SIZES, atmSpotsFor, buildBuilding, generateBuildings } from './buildings.js';
 import { generateLamps, generatePaths, generateTrees, makeTree } from './terrain.js';
 import { SIDEWALK, cityBox, generateTownRoads, inBox, placeSites, placeTown } from './placement.js';
 import { Work } from './work.js';
 import { generateLakes, generateRails, generateRivers, isSwimming, onIce, pushOutOfWater, waterDistance } from './water.js';
-import { Bullet, Food, Pickup, Player, makeWeapon } from './entities.js';
+import { Bullet, Food, Pickup, Player, STARTER_WEAPON, makeWeapon } from './entities.js';
 import { SpatialGrid } from './SpatialGrid.js';
 import { Vehicle, emptyTankGas, stepVehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 import { Economy } from './economy.js';
@@ -22,6 +23,31 @@ import { Bodies, generateDumpsters } from './bodies.js';
  * Pure simulation state. Knows nothing about sockets.
  * With `map` (a validated map file) the scenery comes from it; otherwise it's generated at random.
  */
+/** Every map needs at least one of each of these, so every raw resource can be had. */
+export const REQUIRED_SITES = ['mine', 'logging', 'farm', 'oilwell', 'scrapyard', 'quarry'];
+
+/** The required sites a world is missing. */
+export function missingSites(world) {
+  return REQUIRED_SITES.filter((t) => !world.buildings.some((b) => b.type === t));
+}
+
+/**
+ * A world from `map`, or a fresh random one that has every required site: random maps that come out
+ * without one are made again (keeping the best try, in case the map is too small to ever fit them all).
+ */
+export function createWorld(opts = config.world, playerOpts = config.player, weapons = config.weapons, map = null, tries = 10) {
+  if (map) return new World(opts, playerOpts, weapons, map);
+  let best = null;
+  for (let i = 0; i < tries; i++) {
+    const world = new World(opts, playerOpts, weapons);
+    const missing = missingSites(world).length;
+    if (!missing) return world;
+    if (!best || missing < best.missing) best = { world, missing };
+  }
+  logger.warn('random map is missing resource sites', { missing: missingSites(best.world) });
+  return best.world;
+}
+
 export class World {
   constructor(opts = config.world, playerOpts = config.player, weapons = config.weapons, map = null) {
     this.opts = map ? { ...opts, width: map.width, height: map.height } : opts;
@@ -131,6 +157,7 @@ export class World {
     this.police = new Police(this); // after vehicle ids start, so cruisers get their own
     this.warehouses = new Warehouses(this);
     this.roadblocks = new Roadblocks(this, railStrip); // after vehicle ids start: their Militsiya cars are vehicles
+    this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.rebuildGrid();
   }
@@ -325,16 +352,66 @@ export class World {
     if (bread && bread.stock < food.bread) return 'sold_out';
     const price = this.economy.foodPrice(market, item);
     if (p.cash < price) return 'not_enough_cash';
+    if (!this.foodRoom(p, item)) return 'hotbar_full';
     p.cash -= price;
     if (bread) bread.stock -= food.bread;
+    this.addFood(p, item, 1);
+    return null;
+  }
+
+  /** Room in p's hotbar for one more `item` of food: a stack of it that isn't full, or an empty slot. */
+  foodRoom(p, item) {
+    return p.inventory.some((s) => s === null || (s.food === item && s.qty < config.economy.foodStack));
+  }
+
+  /** Food into the hotbar (topping up stacks, then empty slots). Returns how many didn't fit. */
+  addFood(p, item, qty) {
+    for (const s of p.inventory) {
+      if (qty <= 0) break;
+      if (s?.food !== item) continue;
+      const put = Math.min(qty, config.economy.foodStack - s.qty);
+      s.qty += put;
+      qty -= put;
+    }
+    for (let i = 0; i < p.inventory.length && qty > 0; i++) {
+      if (p.inventory[i] !== null) continue;
+      const put = Math.min(qty, config.economy.foodStack);
+      p.inventory[i] = { food: item, qty: put };
+      qty -= put;
+    }
+    return qty;
+  }
+
+  /** E with food selected: eat one. It heals over the next few seconds (see #digest). */
+  eat(p) {
+    const slot = p.inventory[p.selected];
+    // Shop food, or a stack of bread from the bakery (it eats like a shop loaf).
+    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : null;
+    if (!food) return 'nothing_to_eat';
+    if (p.jailed || p.hidden) return 'busy';
+    slot.qty -= 1;
+    if (slot.qty <= 0) p.inventory[p.selected] = null;
     p.mass += food.mass;
-    p.heal(food.heal);
+    (p.digesting ??= []).push({ perSec: food.heal / food.healSec, left: food.healSec });
     if (food.stamina) {
       p.stamina = this.playerOpts.staminaMax;
       p.exhausted = false;
       p.staminaDelay = 0;
     }
     return null;
+  }
+
+  /** Food eaten heals a little every tick until it's done. */
+  #digest(dt) {
+    for (const p of this.players.values()) {
+      if (!p.digesting?.length) continue;
+      for (const d of p.digesting) {
+        const t = Math.min(dt, d.left);
+        p.heal(d.perSec * t);
+        d.left -= t;
+      }
+      p.digesting = p.digesting.filter((d) => d.left > 0);
+    }
   }
 
   /**
@@ -348,6 +425,10 @@ export class World {
     if (p.vehicle || !(near(this.atms, atmReach) || near(this.tellers, bankReach))) return 'too_far';
     if (action === 'deposit') {
       if (amount > p.cash) return 'not_enough_cash';
+      // Not straight back in at an ATM you've just robbed (a teller, or another ATM, is fine).
+      const robbed = p.robbedAtms ?? new Map();
+      const usable = this.atms.some((a) => Math.hypot(a.x - p.x, a.y - p.y) < atmReach + p.radius && !((robbed.get(`atm:${Math.round(a.x)},${Math.round(a.y)}`) ?? 0) > this.economy.time));
+      if (!usable && !near(this.tellers, bankReach)) return 'robbed_atm';
       p.cash -= amount;
       p.account.bank += amount;
     } else {
@@ -404,17 +485,18 @@ export class World {
 
   /** C: headlights on or off (driver only). */
   toggleLights(p) {
-    if (!p.vehicle) return 'not_driving';
+    if (p.vehicle?.driver !== p) return 'not_driving';
     p.vehicle.lights = !p.vehicle.lights;
     return null;
   }
 
-  /** Q: drop the selected hotbar slot (goods or a found gun; the pistol stays) at your feet. */
+  /** Q: drop the selected hotbar slot (goods or a found gun; the starting knife stays) at your feet. */
   drop(p, index = p.selected) {
     if (p.vehicle) return 'in_vehicle';
     const slot = p.inventory[index];
     if (!slot) return 'nothing_to_drop';
-    if (slot.type === 'pistol') return 'cant_drop_pistol';
+    if (slot.type === STARTER_WEAPON) return 'cant_drop_starter';
+    if (slot.food) return 'cant_drop_food'; // eat it (E)
     if (slot.tool) return 'cant_drop_tool'; // it's the foreman's
     p.inventory[index] = null;
     const pickup = slot.good
@@ -425,6 +507,20 @@ export class World {
     this.pickups.set(pickup.id, pickup);
     this.grid.insert(pickup);
     return null;
+  }
+
+  /** X: drop some of your cash at your feet, for anyone to pick up. Returns how much, or an error. */
+  dropCash(p, amount) {
+    if (p.vehicle) return 'in_vehicle';
+    const cash = Math.min(amount, p.cash);
+    if (cash <= 0) return 'no_cash';
+    p.cash -= cash;
+    const bag = new Pickup(this.nextEntityId++, p.x, p.y, null, cash);
+    bag.droppedBy = p;
+    bag.noPickupUntil = this.tick + Math.round(config.cargo.dropPickupDelaySec * config.tickRate);
+    this.pickups.set(bag.id, bag);
+    this.grid.insert(bag);
+    return cash;
   }
 
   /**
@@ -500,13 +596,19 @@ export class World {
     return p;
   }
 
+  /** Out of whichever seat p has (driver or passenger), wherever the car is. */
+  leaveSeat(p) {
+    const v = p.vehicle;
+    if (!v) return;
+    if (v.driver === p) v.driver = null;
+    if (v.passenger === p) v.passenger = null;
+    p.vehicle = null;
+  }
+
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
-    if (p.vehicle) {
-      p.vehicle.driver = null;
-      p.vehicle = null;
-    }
+    if (p.vehicle) this.leaveSeat(p);
     p.alive = false;
     this.players.delete(id);
     if (p.carrying) {
@@ -518,11 +620,11 @@ export class World {
       this.bodies.add({
         x: p.x, y: p.y, angle: p.input.aim ?? 0, kind: 'player', name: p.name, victimId: p.id,
         look: [p.look.skin, p.look.shirt, p.look.pants, p.look.hat],
-        items: p.inventory.map((s) => (s && s.type !== 'pistol' && !s.tool ? (s.good ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
+        items: p.inventory.map((s) => (s && s.type !== STARTER_WEAPON && !s.tool ? (s.good || s.food ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
         cash: p.cash,
       });
       p.cash = 0;
-      p.inventory = p.inventory.map((s) => (s?.type === 'pistol' ? s : null));
+      p.inventory = p.inventory.map((s) => (s?.type === STARTER_WEAPON ? s : null));
       return;
     }
     // Goods carried in the hotbar are lost; found guns are dropped below.
@@ -534,7 +636,7 @@ export class World {
       p.cash = 0;
     }
     // Found guns fall where the player was, spread out a little.
-    const found = p.inventory.filter((w) => w && w.type !== 'pistol' && !w.tool);
+    const found = p.inventory.filter((w) => w?.type && w.type !== STARTER_WEAPON && !w.tool); // (food is just lost)
     found.forEach((w, i) => {
       const a = (i / found.length) * Math.PI * 2;
       w.reloadTimer = 0;
@@ -579,7 +681,7 @@ export class World {
     this.rebuildGrid();
     const explosions = [];
     const deaths = this.#resolveCollisions(dt);
-    deaths.push(...this.#moveBullets(dt, explosions));
+    deaths.push(...this.#moveBullets(dt, explosions), ...this.meleeDeaths.splice(0));
 
     this.economy.step(dt);
     this.warehouses.step(dt);
@@ -593,7 +695,13 @@ export class World {
         deaths.push({ victim: p, killer: { name: 'the train' } });
       }
     }
+    this.#digest(dt);
     this.townsfolk.step(dt);
+    for (const p of this.townsfolk.kills.splice(0)) { // beaten by a townsperson who fought back
+      if (!p.alive) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'a townsperson' } });
+    }
     for (const p of this.players.values()) p.arrest = 0;
     this.police.step(dt);
     for (const { victim, killer } of deaths) this.bodies.setKiller(victim.id, killer);
@@ -644,8 +752,7 @@ export class World {
       if ([...this.vehicles.values()].some((o) => o !== v && this.#vehicleDistance(o, x, y) < r)) continue;
       p.x = x;
       p.y = y;
-      v.driver = null;
-      p.vehicle = null;
+      this.leaveSeat(p);
       p.lastVehicle = v;
       return true;
     }
@@ -682,7 +789,9 @@ export class World {
         if (dist < reach && dist < bestDist) [best, bestDist] = [d, dist];
       }
       for (const v of this.vehicles.values()) {
-        if (v.driver || p.carrying) continue; // put the body down first
+        if (p.carrying) continue; // put the body down first
+        if (v.driver && (v.passenger || v.driver.kind !== 'player')) continue; // both seats taken
+        if (!v.driver && v.passenger) continue; // (the passenger can climb over; not you)
         const dist = this.#vehicleDistance(v, p.x, p.y) - p.radius;
         if (dist < config.vehicles.reach && dist < bestDist) [best, bestDist] = [v, dist];
       }
@@ -696,6 +805,13 @@ export class World {
       if (!best) continue;
       if (best.dumpster) {
         this.hideIn(p, best.dumpster);
+        continue;
+      }
+      if (best.kind === 'vehicle' && best.driver) { // someone's driving: hop in beside them
+        best.passenger = p;
+        p.vehicle = best;
+        p.x = best.x;
+        p.y = best.y;
         continue;
       }
       if (best.kind === 'vehicle') {
@@ -797,6 +913,11 @@ export class World {
         d.y = v.y;
       }
     }
+    for (const v of this.vehicles.values()) {
+      if (!v.passenger) continue;
+      v.passenger.x = v.x;
+      v.passenger.y = v.y;
+    }
 
     this.#shovePedestrians();
 
@@ -877,21 +998,19 @@ export class World {
     }
   }
 
-  /** A vehicle at 0 health blows up: the driver is thrown out and hurt, and a new one turns up later. */
+  /** A vehicle at 0 health blows up: whoever is in it is thrown out and hurt, and a new one turns up later. */
   #destroyVehicle(v, attacker, deaths, explosions) {
     this.vehicles.delete(v.id);
     this.vehicleRespawns.push(config.vehicles.respawnSec);
     explosions.push({ x: Math.round(v.x), y: Math.round(v.y) });
-    const p = v.driver;
-    if (!p) return;
-    if (!this.#exitVehicle(p)) {
-      p.vehicle = null;
-      v.driver = null;
-    }
-    p.health -= config.vehicles.exitDamage;
-    if (p.health <= 0) {
-      this.removePlayer(p.id);
-      deaths.push({ victim: p, killer: attacker });
+    for (const p of [v.driver, v.passenger]) {
+      if (!p) continue;
+      if (!this.#exitVehicle(p)) this.leaveSeat(p);
+      p.health -= config.vehicles.exitDamage;
+      if (p.health <= 0) {
+        this.removePlayer(p.id);
+        deaths.push({ victim: p, killer: attacker });
+      }
     }
   }
 
@@ -904,6 +1023,12 @@ export class World {
       if (!gun) continue; // empty hand
 
       const stats = this.weapons[gun.type];
+      if (stats.melee) {
+        if (!p.input.fire || p.shotCooldown > 0) continue;
+        p.shotCooldown = stats.cooldownSec;
+        this.#stab(p, stats);
+        continue;
+      }
       if (gun.reloadTimer > 0) {
         gun.reloadTimer = Math.max(0, gun.reloadTimer - dt);
         if (gun.reloadTimer === 0) gun.ammo = stats.magazineSize;
@@ -931,6 +1056,49 @@ export class World {
         p.nextFireCrime = this.economy.time + 1;
         this.police.crime(p, 'fire');
       }
+    }
+  }
+
+  /** A townsperson hurt by player `attacker`: a crime, a body if they die, a fight if they don't. */
+  #hurtTownsperson(person, damage, attacker) {
+    const died = this.townsfolk.damage(person, damage);
+    this.police.crime(attacker, died ? 'murder' : 'assault');
+    if (died) {
+      this.bodies.add({ x: person.x, y: person.y, angle: person.angle ?? 0, kind: 'npc', look: [person.id * 7, person.id * 3, person.id * 5, person.id * 11], cash: person.wallet ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
+    } else this.townsfolk.provoke(person, attacker);
+  }
+
+  /**
+   * A knife: stab whoever's nearest in front of you, within reach — a player, a townsperson or an
+   * officer on foot. Each stab takes a share of their max health (three stabs kill).
+   */
+  #stab(p, stats) {
+    const aim = p.input.aim ?? 0;
+    const inFront = (x, y, r) => {
+      const dx = x - p.x, dy = y - p.y;
+      const d = Math.hypot(dx, dy) - r - p.radius;
+      if (d > stats.reach) return Infinity;
+      if (d > 4 && (dx * Math.cos(aim) + dy * Math.sin(aim)) / Math.hypot(dx, dy) < 0.5) return Infinity; // within about 60° of where you face
+      return d;
+    };
+    let best = null, bestD = Infinity;
+    const consider = (kind, ref, r) => {
+      const d = inFront(ref.x, ref.y, r);
+      if (d < bestD) [best, bestD] = [{ kind, ref }, d];
+    };
+    for (const o of this.players.values()) if (o !== p && o.alive && !o.vehicle && !o.hidden) consider('player', o, o.radius);
+    for (const t of this.townsfolk.people) if (t.inside <= 0) consider('npc', t, 17);
+    for (const u of this.police.units) if (u.officer.onFoot && u.officer.health > 0) consider('officer', u.officer, 20);
+    if (!best) return;
+    const t = best.ref;
+    if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
+    if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
+    t.health -= t.maxHealth * stats.share + 0.01; // (+ a hair, so three stabs always do it)
+    const killed = t.health <= 0;
+    this.police.crime(p, killed ? 'murder' : 'assault');
+    if (killed) {
+      this.removePlayer(t.id);
+      this.meleeDeaths.push({ victim: t, killer: p });
     }
   }
 
@@ -972,11 +1140,7 @@ export class World {
         const person = this.townsfolk.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);
         if (person) {
           this.bullets.delete(b.id);
-          const died = this.townsfolk.damage(person, b.damage);
-          this.police.crime(shooter, died ? 'murder' : 'assault');
-          if (died) {
-            this.bodies.add({ x: person.x, y: person.y, angle: person.angle ?? 0, kind: 'npc', look: [person.id * 7, person.id * 3, person.id * 5, person.id * 11], cash: person.wallet ?? 0, killer: shooter?.kind === 'player' ? shooter : null });
-          }
+          this.#hurtTownsperson(person, b.damage, shooter);
           continue;
         }
       }

@@ -98,9 +98,10 @@ export const config = Object.freeze({
 
   bulletRadius: 4,
 
-  // Every player starts with a pistol; the rest are found on the ground.
+  // Every player starts with a knife (melee: a stab takes `share` of the target's max health); guns are bought or found.
   // barrel: where bullets leave the gun, in player radii from the centre (matches the drawing).
   weapons: {
+    knife: { name: 'Knife', melee: true, share: 1 / 3, reach: 38, cooldownSec: 0.55, magazineSize: 0, reloadSec: 0, barrel: 1.1, spawnWeight: 0 },
     pistol: { name: 'Pistol', damage: 20, cooldownSec: 0.2, magazineSize: 5, reloadSec: 1.5, bulletSpeed: 900, bulletLifetimeSec: 1.2, pellets: 1, spread: 0, barrel: 1.6, spawnWeight: 0 },
     smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
     shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
@@ -144,12 +145,15 @@ export const config = Object.freeze({
     bankReach: 120, // from a bank teller's centre to your edge
     atmReach: 60, // from an ATM's centre to your edge
     // Meals use `bread` from the shop's stock (supplied by bakeries); prices rise as the stock runs low.
+    // Food goes into your hotbar (up to foodStack of a kind per slot); select it and press E to eat.
+    // It heals `heal` over `healSec` seconds, not all at once. (An energy drink's stamina is instant.)
     menu: {
-      apple: { name: 'Apple', icon: '🍎', price: 10, heal: 15, mass: 2, bread: 1 },
-      burger: { name: 'Burger', icon: '🍔', price: 25, heal: 40, mass: 6, bread: 2 },
-      drink: { name: 'Energy drink', icon: '🥤', price: 15, heal: 10, mass: 0, stamina: true, bread: 0 },
-      feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, mass: 15, bread: 4 },
+      bread: { name: 'Bread', icon: '🍞', price: 10, heal: 15, healSec: 6, mass: 2, bread: 1 },
+      burger: { name: 'Burger', icon: '🍔', price: 25, heal: 40, healSec: 10, mass: 6, bread: 2 },
+      drink: { name: 'Energy drink', icon: '🥤', price: 15, heal: 10, healSec: 4, mass: 0, stamina: true, bread: 0 },
+      feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, healSec: 20, mass: 15, bread: 4 },
     },
+    foodStack: 5,
   },
 
   // Day/night and weather. A week is 7 day/night cycles (~2.9 hours).
@@ -246,7 +250,8 @@ export const config = Object.freeze({
       // Shacks in the woods: cheap, small, illegal machines only, and far less likely to be raided.
       shack: { name: 'Shack', price: 2000, taxPerHour: 20, count: 10, illegalOnly: true },
     },
-    dockCapacity: 200, // units each dock bin holds (all goods together)
+    dockCapacity: 200, // units each dock pallet holds (all goods together)
+    containerCapacity: 100, // units a container holds
     dockReach: 150, // from a dock's edge
     beltSpeed: 2, // tiles per second
     machineBuffer: 3, // belts fill a machine's input slot up to this many batches
@@ -284,6 +289,7 @@ export const config = Object.freeze({
     merger: { name: 'Merger', price: 60 },
     splitter: { name: 'Splitter', price: 80 },
     filter: { name: 'Filter', price: 120 },
+    container: { name: 'Container', price: 300 }, // stores goods: belts feed it from any side, belts leading away pull them out
   },
 
   // Raw sites sell one raw good and slowly produce more; trade depots buy and sell everything.
@@ -306,6 +312,13 @@ export const config = Object.freeze({
     bayReach: 150, // …or anywhere in (or this close to) a building whose delivery bay it's parked in
     trunkReach: 70, // how close to a vehicle's back you need to be to open its trunk
     dropPickupDelaySec: 2, // you can't instantly pick up what you just dropped
+    cashDrop: 500, // X drops this much cash (or all you have, if less)
+  },
+
+  // Teams: invite a player, they accept; teammates show on each other's maps.
+  teams: {
+    maxSize: 4,
+    inviteSec: 60, // an invite lasts this long
   },
 
   fuel: {
@@ -351,21 +364,31 @@ export const config = Object.freeze({
     health: 40, // they can be shot (a crime); cars just shove them aside
     bodyRadius: 16, // for being pushed out of the way of cars
     replaceSec: 60, // someone new moves to town this long after a townsperson dies
+    // Stab, shoot or pickpocket one and (if they're still standing) they come at you swinging a purse,
+    // land a couple of hits, then run off and call the Militsiya once they're clear.
+    fightSec: 20, // they give up after this long…
+    fightGiveUpRange: 700, // …or once you're this far away
+    fightSpeed: 230, // running at you (players walk at about 250)
+    fightCooldownSec: 1.1, // between their swings
+    purseReach: 34, // how far a purse swing lands
+    purseShare: 0.15, // of your max health per hit
+    purseHits: 2, // hits before they run for it
+    fleeSec: 5, // running away this long, then (if still alive) they call the cops
   },
 
   // ---- crime and police (stage 4) -------------------------------------------------
   // Each crime sets your wanted level to at least its stars — if the police see it, or a townsperson
   // nearby calls it in. Alarms (robberies) always report.
   crime: {
-    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, break_in: 1, carry_body: 2, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
-    policeSees: 1100, // police notice crimes this close
-    witnessSees: 450, // townsfolk out walking notice (and phone it in) this close
+    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, break_in: 1, carry_body: 2, near_body: 1, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
+    policeSees: 750, // police notice crimes this close
+    witnessSees: 320, // townsfolk out walking notice (and phone it in) this close
     // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
     // from where you were last seen; they give up this long (by stars) after last seeing you.
     searchSec: [0, 30, 50, 75, 110, 150],
   },
   robbery: {
-    atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false },
+    atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false, noDepositSec: 300 }, // noDepositSec: you can't pay the cash straight back in at the ATM you robbed
     shop: { sec: 4, min: 200, max: 600, cooldownSec: 300, needsGun: true },
     bank: { sec: 10, min: 1500, max: 4000, cooldownSec: 600, needsGun: true },
   },
@@ -384,6 +407,7 @@ export const config = Object.freeze({
     wagons: 8,
     contracts: [3, 5], // how many per train
     premium: 1.5, // contract price = base × premium
+    freightShare: 0.8, // the clerk also buys any legal good, any time, at base × this
     contractValue: [2000, 9000], // each contract is worth about this much in total (at most ~a truckload)
     jobShare: 0.7, // share of new delivery jobs that haul contract goods to the station
     reach: 160,
@@ -413,7 +437,7 @@ export const config = Object.freeze({
     },
   },
   // Bodies: loot them (E), carry them (slowly, no shooting), and hide them before someone finds them.
-  bodies: { reach: 55, waterReach: 40, lifeSec: 600, max: 60, carrySpeed: 0.65 },
+  bodies: { reach: 55, waterReach: 40, lifeSec: 600, max: 60, carrySpeed: 0.65, nearRange: 120 }, // nearRange: seen this close to a body (in the open) and you're wanted
   pickpocket: { reach: 45, npcMin: 10, npcMax: 60, playerShare: 0.15, cooldownSec: 3 },
   police: {
     carsPerBuildings: 1 / 18, // patrol cars on duty, per building

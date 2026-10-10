@@ -50,6 +50,31 @@
     #settings label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .3rem 0; cursor: pointer; }
     #settings input[type="range"] { width: 7rem; accent-color: #f4c430; }
     #settings input[type="checkbox"] { width: 1.05rem; height: 1.05rem; accent-color: #f4c430; }
+    #team-btn {
+      height: 2.4rem; border-radius: .5rem; border: 1px solid #444; background: rgba(0, 0, 0, .55);
+      color: #eee; font: 600 .9rem system-ui, sans-serif; cursor: pointer; padding: 0 .7rem; white-space: nowrap;
+    }
+    #team-btn:hover, #team-btn[aria-expanded="true"] { border-color: #2ecc71; }
+    #team-btn.ping { border-color: #2ecc71; animation: teamping 1s ease-in-out infinite; }
+    @keyframes teamping { 50% { background: rgba(46, 204, 113, .35); } }
+    #team {
+      width: 15rem; padding: .6rem .8rem; border-radius: .5rem; background: rgba(0, 0, 0, .7); border: 1px solid #2c6e49;
+      text-align: left; font-size: .85rem;
+    }
+    #team h2 { margin: 0 0 .4rem; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #2ecc71; display: flex; justify-content: space-between; }
+    #team h2 span { color: #888; letter-spacing: 0; }
+    #team ul { margin: 0 0 .5rem; padding: 0; list-style: none; }
+    #team li { display: flex; align-items: center; gap: .4rem; padding: .15rem 0; }
+    #team li .dist { margin-left: auto; color: #8fd19e; font-variant-numeric: tabular-nums; font-size: .78rem; }
+    #team li.dead { color: #777; }
+    #team .invite { background: rgba(46, 204, 113, .12); border-radius: .35rem; padding: .3rem .4rem; margin-bottom: .4rem; }
+    #team button, #team select {
+      font: inherit; font-size: .8rem; border: 1px solid #444; background: #262626; color: #eee; border-radius: .35rem; padding: .15rem .45rem; cursor: pointer;
+    }
+    #team button.go { border-color: #2ecc71; }
+    #team .row { display: flex; gap: .35rem; }
+    #team .row select { flex: 1; min-width: 0; }
+    #team .note { color: #888; font-size: .75rem; margin: .2rem 0 .4rem; }
     #leaderboard {
       min-width: 12rem; max-width: 45vw;
       padding: .6rem .8rem; border-radius: .5rem; background: rgba(0, 0, 0, .55); text-align: left; font-size: .85rem;
@@ -369,8 +394,10 @@
     <div id="chat-log" aria-live="polite"></div>
     <input id="chat-input" maxlength="120" autocomplete="off" placeholder="Press Enter to chat">
   </div>
-  <p id="hint" hidden>WASD move · Shift sprint · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · B warehouse · G bribe · C car lights · J jobs · Space drift · M map</p>
+  <p id="hint" hidden>WASD move · Shift sprint · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B warehouse · G bribe · C car lights · J jobs · Space drift · M map</p>
   <div id="top-right">
+    <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
+    <aside id="team" hidden></aside>
     <button id="settings-btn" type="button" title="Settings" aria-expanded="false" aria-controls="settings">⚙️</button>
     <aside id="leaderboard" hidden><h2>Leaderboard</h2><ol id="leaderboard-list"></ol></aside>
     <div id="settings" hidden>
@@ -607,16 +634,29 @@
           hotbar.hidden = false;
           staminaBar.hidden = false;
           coinsEl.hidden = false;
+          teamBtn.hidden = false;
           selectedSlot = 0;
-          inv = [['pistol', weapons.pistol.magazineSize, 0], null, null, null, null];
+          inv = [['knife', 0, 0], null, null, null, null];
           reloadEnds = [];
           renderHotbar();
           break;
         case 'player_joined':
           info.set(msg.id, msg);
+          if (!teamEl.hidden) renderTeam();
           break;
         case 'player_left':
           info.delete(msg.id);
+          if (!teamEl.hidden) renderTeam();
+          break;
+        case 'team':
+          team = msg;
+          if (!msg.invites.length) teamBtn.classList.remove('ping');
+          renderTeam();
+          break;
+        case 'team_invite':
+          sfx('pickup');
+          toast(`👥 ${msg.name} invited you to their team — press T to answer`);
+          if (teamEl.hidden) teamBtn.classList.add('ping');
           break;
         case 'snapshot':
           if (!editing) onSnapshot(msg);
@@ -647,7 +687,7 @@
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
           if (msg.kind === 'tool_returned') toast(`${TOOL_ICONS[msg.tool] ?? ''} You left the site — the ${TOOL_NAMES[msg.tool]?.toLowerCase() ?? 'tool'} went back to the foreman`);
           if (msg.kind === 'gathered') { sfx('pickup', null, 0.6); toast(`+ ${Object.entries(msg.items).map(([g, q]) => `${q} ${gi(g)}`).join(' ')}`); }
-          if (msg.kind === 'body_found') toast('🚨 Someone found a body you left — the Militsiya want you for murder');
+          if (msg.kind === 'body_found') toast('⚠️ Someone found a body you left — keep away from it');
           if (msg.kind === 'roadblock_clean') toast('👮 Checkpoint: they searched you — clean. Move along.');
           if (msg.kind === 'roadblock_waved') toast('👮 Checkpoint: the officer remembers your "gift" and waves you through');
           if (msg.kind === 'roadblock_due') { checkDueUntil = performance.now() + msg.sec * 1000; toast(`🛑 Militsiya checkpoint ahead — stop in it to be checked within ${msg.sec} s`); }
@@ -663,7 +703,7 @@
           if (msg.kind === 'picked') toast('🔓 Lock picked — the doors stay unlocked for a minute and a half');
           if (msg.kind === 'rob_stopped') toast('Robbery abandoned — you have to keep holding F');
           if (msg.kind === 'robbed') { sfx('coin'); toast(`💰 Got away with ${money(msg.amount)}`); }
-          if (msg.kind === 'stole') { sfx('coin'); toast(msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty'); }
+          if (msg.kind === 'stole') { sfx('coin'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty') + (msg.unnoticed ? ' — they never noticed' : '')); }
           if (msg.kind === 'pickpocketed') toast(`👛 Someone picked your pocket: −${money(msg.amount)}`);
           if (msg.kind === 'crime') sfx('alarm');
           if (msg.kind === 'crime') toast(`🚨 Someone saw that — ${CRIME_NAMES[msg.crime] ?? 'a crime'} reported. The Militsiya will come looking.`);
@@ -713,9 +753,11 @@
         case 'done':
           sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
+          if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
+          if (msg.what === 'team_invite') toast('👥 Invite sent');
           if (msg.what === 'wh_buy') toast('🏬 The warehouse is yours — walk in and start building');
           if (msg.what === 'wh_sell') { toast('Warehouse sold'); closeWarehouse(); }
-          if (msg.what === 'wh_load') toast('📥 Unloaded at the IN dock');
+          if (msg.what === 'wh_load') toast('📥 Unloaded onto the IN pallet');
           if (msg.what === 'wh_take' || msg.what === 'wh_mtake') toast('📤 Loaded into your cargo');
           if (msg.what === 'wh_mload') toast('📥 Loaded into the machine');
           if (msg.what === 'wh_place') sfx('build');
@@ -725,7 +767,7 @@
           if (msg.what === 'work_sell') toast('Site sold');
           if (msg.what === 'body_carry') toast('🫳 Carrying a body — F to put it down. A dumpster, water or a tree hides it.');
           if (msg.what === 'body_drop') { sfx('drop'); toast({ dumpster: '🗑 Into the dumpster. Nobody will find it.', water: '🌊 It sinks out of sight.', tree: '🌲 Hidden under the tree.', ground: 'You put the body down.' }[msg.how]); }
-          if (msg.what === 'wh_chop') toast('🔧 Car stripped — the parts are in your IN dock');
+          if (msg.what === 'wh_chop') toast('🔧 Car stripped — the parts are on your IN pallet');
           if (msg.what === 'train_deliver' || msg.what === 'black_sell' || msg.what === 'under') { sfx('coin'); toast(`💰 Sold ${msg.qty} ${econ.goods[msg.good]?.name ?? msg.good} for ${money(msg.paid)}`); }
           if (msg.what === 'buygun') toast(`🔫 Bought a ${weapons[msg.type]?.name ?? msg.type}`);
           if (msg.what === 'buycar') toast(`🚗 Your new ${vehicleTypes[msg.type]?.name ?? 'vehicle'} is parked outside`);
@@ -750,7 +792,7 @@
           coins = msg.cash;
           if (nearestShopkeeper()?.building) send({ t: 'inspect', id: nearestShopkeeper().building }); // bread and prices moved
           sfx('coin');
-          toast(`⟦food:${msg.item}⟧ Bought ${shop.menu[msg.item]?.name ?? msg.item}`);
+          toast(`⟦food:${msg.item}⟧ ${shop.menu[msg.item]?.name ?? msg.item} is in your hotbar — select it and press E to eat`);
           renderShop();
           break;
         case 'error':
@@ -768,6 +810,7 @@
             play.disabled = false;
           }
           if (msg.code === 'too_far') toast('Get closer');
+          if (TEAM_ERRORS[msg.code]) toast(TEAM_ERRORS[msg.code]);
           if (msg.code === 'chat_too_fast') addChat(null, null, 'Slow down — you are chatting too fast.');
           if (msg.code === 'join_first') addChat(null, null, 'Click Start to join before chatting.');
           break;
@@ -792,6 +835,9 @@
       staminaBar.hidden = true;
       coinsEl.hidden = true;
       fuelEl.hidden = true;
+      teamBtn.hidden = true;
+      teamEl.hidden = true;
+      teamBtn.setAttribute('aria-expanded', 'false');
       closeShop();
       closeBank();
       closePlace();
@@ -952,7 +998,7 @@
           g.fillStyle = '#b8bec6'; g.beginPath(); g.moveTo(30, 8); g.quadraticCurveTo(52, 6, 60, 30); g.quadraticCurveTo(50, 14, 30, 14); g.fill();
         },
         // The kiosk / shop menu.
-        'food:apple': (g) => { C(g, 32, 36, 20, '#c0392b'); C(g, 25, 30, 6, '#e05a4a'); L(g, 32, 18, 34, 8, '#6b4a2b', 3); E(g, 41, 12, 8, 4, '#3a8a3a', -0.5); },
+        'food:bread': (g) => { E(g, 32, 38, 26, 15, '#b9752e'); E(g, 32, 34, 24, 13, '#d4924a'); for (const x of [20, 30, 40]) L(g, x - 3, 28, x + 3, 40, '#f0c98a', 3); }, // a round loaf (like the bakery's)
         'food:burger': (g) => { E(g, 32, 22, 24, 12, '#d4924a'); R(g, 8, 28, 48, 5, '#4a8a2a'); R(g, 9, 32, 46, 7, '#6b3a22'); R(g, 10, 38, 44, 4, '#f1c40f'); E(g, 32, 46, 24, 7, '#c8823a'); for (const x of [22, 32, 42]) C(g, x, 18, 1.5, '#f3e2b8'); },
         'food:drink': (g) => { P(g, [[18, 12], [46, 12], [42, 58], [22, 58]], '#2e86de', 'rgba(0,0,0,.3)'); R(g, 20, 26, 24, 14, '#f1c40f'); P(g, [[28, 28], [36, 28], [30, 38], [34, 38]], '#c0392b'); L(g, 36, 12, 42, 2, '#ecf0f1', 3); },
         'food:feast': (g) => { E(g, 32, 40, 26, 14, '#ecf0f1'); E(g, 30, 34, 16, 11, '#b9752e'); E(g, 30, 32, 12, 8, '#d4924a'); L(g, 42, 28, 54, 20, '#f3e2b8', 5); C(g, 55, 19, 3, '#f3e2b8'); },
@@ -1024,7 +1070,7 @@
         const b = document.createElement('button');
         b.className = 'item';
         b.disabled = coins < price || soldOut;
-        const effects = [food.heal >= 1000 ? 'full heal' : `+${food.heal} health`, food.mass && `+${food.mass} size`, food.stamina && 'full stamina'].filter(Boolean).join(' · ');
+        const effects = [food.heal >= 1000 ? `full heal over ${food.healSec}s` : `+${food.heal} health over ${food.healSec}s`, food.mass && `+${food.mass} size`, food.stamina && 'full stamina'].filter(Boolean).join(' · ');
         b.innerHTML = `<span class="icon"></span><span><span class="key">${i + 1}</span><b class="name"></b><span class="desc"></span></span><span class="price">${soldOut ? 'Sold out' : `${money(price)}`}</span>`;
         b.querySelector('.icon').innerHTML = iconHTML(`food:${id}`, 34);
         b.querySelector('.name').textContent = food.name;
@@ -1237,7 +1283,8 @@
       already_carrying: 'Your hands are full — put the body down first (E)',
       no_car_inside: 'Drive a car that isn’t yours inside first',
       shack_illegal_only: 'Shacks only take illegal machines (still, printing press, gunsmith)',
-      cant_drop_pistol: "You can't drop your starting pistol",
+      cant_drop_starter: "You can't drop your knife",
+      robbed_atm: "You just robbed this ATM — they'd notice. Use another ATM or a bank teller.",
       in_vehicle: 'Get out of the vehicle first',
     };
 
@@ -1322,6 +1369,8 @@
           sub.textContent = d.state === 'docked'
             ? `The train is in — it leaves in ${clock(d.leavesIn)}. The clerk pays contract prices (about 1.5× market) for what it needs.`
             : `Next train in ${clock(d.nextIn)}. It stays 3 minutes. These are its export contracts — get the goods here before it leaves.`;
+          const head = table.insertRow();
+          head.insertCell().outerHTML = '<th colspan="4" style="text-align:left">Export contracts (train must be in)</th>';
           for (const c of d.contracts) {
             const tr = table.insertRow();
             tr.insertCell().innerHTML = iconize(goodLabel(c.good));
@@ -1330,6 +1379,18 @@
             const act = tr.insertCell(); act.className = 'num';
             const qty = Math.min(c.have, c.qty - c.delivered);
             act.append(button(`Sell ${qty || ''}`, () => send({ t: 'train', action: 'deliver', good: c.good, qty }), { disabled: d.state !== 'docked' || !qty, cls: 'go' }));
+          }
+          // Freight: the clerk buys any legal good, any time, a bit under market. What you carry first.
+          const fh = table.insertRow();
+          fh.insertCell().outerHTML = '<th colspan="4" style="text-align:left;padding-top:.8rem">Freight — any legal goods, any time</th>';
+          for (const f of [...(d.freight ?? [])].sort((a, b) => (b.have > 0) - (a.have > 0))) {
+            const tr = table.insertRow();
+            if (!f.have) tr.style.opacity = '.45';
+            tr.insertCell().innerHTML = iconize(goodLabel(f.good));
+            const have = tr.insertCell(); have.className = 'num'; have.textContent = f.have ? `have ${f.have}` : '';
+            const price = tr.insertCell(); price.className = 'num'; price.textContent = `${money(f.price)} each`;
+            const act = tr.insertCell(); act.className = 'num';
+            act.append(button(`Sell all (${f.have})`, () => send({ t: 'train', action: 'deliver', good: f.good, qty: f.have }), { disabled: !f.have }));
           }
         } else {
           h.textContent = '🕶️ A man in a leather jacket';
@@ -1587,7 +1648,7 @@
 
     // Militsiya: grey-blue uniform; a fur ushanka in winter, the peaked furazhka the rest of the year.
     const POLICE_LOOK = { skin: '#e0ac69', shirt: '#4f5d6e', pants: '#2e3744', hat: 'furazhka' };
-    const CRIME_NAMES = { fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
+    const CRIME_NAMES = { fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
     const ROB_NAMES = { atm: 'Breaking into the ATM…', shop: 'Emptying the till…', bank: 'Robbing the bank…', lockpick: 'Picking the lock…' };
     let crimeState = { wanted: 0, jail: 0, rob: null, arrest: 0 };
     const wantedEl = document.getElementById('wanted');
@@ -1649,12 +1710,17 @@
       locked: '🔒 Locked — hold F at a door to pick the lock',
       go_inside: 'Go inside your warehouse to build',
       blocked: "There's something in the way",
-      cant_remove_dock: "Docks can't be moved",
+      cant_remove_dock: "The pallets can't be moved",
+      not_empty: 'Empty the container first',
+      not_carrying: "You're not carrying any of that",
       nothing_there: 'Nothing there',
       nothing_to_take: 'Nothing there to take',
       need_account: 'Guests cannot own warehouses',
     };
 
+    /** Pallets (the IN / OUT docks) and containers: goods you can take off or put on by hand. */
+    const isStore = (p) => p.kind === 'dockIn' || p.kind === 'dockOut' || p.kind === 'container';
+    const storeName = (p) => ({ dockIn: '📥 IN pallet', dockOut: '📤 OUT pallet', container: '📦 Container' })[p.kind];
     const whMine = (l) => Boolean(l?.owner && wh.account && l.owner === wh.account);
     const whBuilding = (l) => buildings[l.id - 1];
     const whRecipe = (key) => wh.cfg.recipes?.[key] ?? null;
@@ -1753,18 +1819,18 @@
       if (!l.owner) {
         sub.textContent = `For sale: ${money(size.price)} from your bank · property tax ${money(size.taxPerHour)}/hour`;
         const s = section();
-        s.append('Build your own factory: place machines and conveyor belts on the floor grid. Goods go in at the IN dock and come out at the OUT dock. Your warehouse is saved, and locked to everyone else.');
+        s.append('Build your own factory: place machines and conveyor belts on the floor grid. Goods go in on the IN pallet and come out on the OUT pallet. Your warehouse is saved, and locked to everyone else.');
         whEl.append(button(`Buy for ${money(size.price)}`, () => whSend('buy'), { disabled: bankBalance < size.price, cls: 'big go' }));
       } else if (!mine) {
         sub.textContent = `🔒 Owned by ${l.owner}`;
         const s = section();
-        s.append('Locked. Hold F at a door to pick the lock — if anyone sees you, the Militsiya will come. Once inside you can take what is waiting at the OUT dock.');
-        whEl.append(button('🫳 Steal from the OUT dock', () => whSend('take')));
+        s.append('Locked. Hold F at a door to pick the lock — if anyone sees you, the Militsiya will come. Once inside you can take what is waiting on the OUT pallet.');
+        whEl.append(button('🫳 Steal from the OUT pallet', () => whSend('take')));
       } else {
         sub.textContent = live?.unpaid
           ? `⚠️ Property tax unpaid — everything has stopped. Put money in the bank (${money(size.taxPerHour)}/hour).`
           : `★ Yours · property tax ${money(size.taxPerHour)}/hour from your bank${live?.heat ? ` · 🔥 Militsiya attention ${live.heat}%` : ''}`;
-        const docks = section('Loading docks');
+        const docks = section('Pallets (click one on the floor to take or put single goods)');
         const stock = (kind) => {
           const d = l.pieces.find((p) => p.kind === kind);
           return bagText(d && live?.machines.get(d.id)?.[2]);
@@ -1789,13 +1855,13 @@
           if (size.illegalOnly && !m.illegal) continue; // shacks: illegal machines only
           tool(k, `⟦m:${k}⟧ ${m.name}${m.illegal ? ' 🚫' : ''} ${money(m.price)}`, `${m.illegal ? 'ILLEGAL — makes contraband and draws the Militsiya.\n' : ''}${m.recipes.map((r) => recipeText(whRecipe(r))).join('\n')}`);
         }
-        const BELT_ICONS = { belt: '➡️', turnL: '↰', turnR: '↱', merger: '⤵', splitter: '⑂', filter: '⛛' };
+        const BELT_ICONS = { belt: '➡️', turnL: '↰', turnR: '↱', merger: '⤵', splitter: '⑂', filter: '⛛', container: '📦' };
         for (const [k, b] of Object.entries(wh.cfg.belts)) tool(k, `${BELT_ICONS[k] ?? ''} ${b.name} ${money(b.price)}`, '');
         build.append(tools, Object.assign(document.createElement('div'), { className: 'note', textContent: 'Click to place · R rotate · right-click removes (full refund) · machines take inputs from the back and put outputs out of the front (arrow). Load a machine by hand: drag goods from your hotbar onto it, or select it and use its Input / Output slots.' }));
 
         const sel = wh.selected && l.pieces.find((p) => p.id === wh.selected);
         if (sel) {
-          const s = section(`${wh.cfg.machines[sel.kind]?.name ?? wh.cfg.belts[sel.kind]?.name ?? 'Dock'}`);
+          const s = section(isStore(sel) ? storeName(sel) : `${wh.cfg.machines[sel.kind]?.name ?? wh.cfg.belts[sel.kind]?.name ?? ''}`);
           const m = live?.machines.get(sel.id);
           if (wh.cfg.machines[sel.kind]) {
             // Two slots: drag goods from the hotbar into Input; click or drag either back to the hotbar.
@@ -1823,17 +1889,43 @@
               s.append(button(`${sel.recipe === key ? '● ' : ''}${recipeText(whRecipe(key))}`, () => whSend('configure', { x: sel.x, y: sel.y, value: key }), { cls: sel.recipe === key ? 'on' : '' }), document.createElement('br'));
             }
           }
+          if (isStore(sel)) {
+            // What's on it (click: take all of that good · shift-click: take one), and what I could put on.
+            const on = Object.entries(m?.[2] ?? {}).filter(([, q]) => q >= 1);
+            const row = document.createElement('div');
+            row.className = 'mslots';
+            if (!on.length) row.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Empty.' }));
+            for (const [g, q] of on) {
+              const b = button('', (e) => whSend('ptake', { x: sel.x, y: sel.y, good: g, qty: e?.shiftKey ? 1 : Math.floor(q) }));
+              b.innerHTML = iconize(`${gi(g)} ${Math.floor(q)}`);
+              b.title = `Take the ${econ.goods[g]?.name ?? g} (shift-click: just one)`;
+              row.append(b);
+            }
+            s.append(row);
+            const mine = tally([...Object.entries(hotbarGoods()), ...Object.entries(trunkGoods())]);
+            const put = document.createElement('div');
+            put.append('Put on: ');
+            if (!Object.keys(mine).length) put.append('(you’re not carrying any goods)');
+            for (const [g, q] of Object.entries(mine)) {
+              const b = button('', (e) => whSend('pput', { x: sel.x, y: sel.y, good: g, qty: e?.shiftKey ? 1 : q }));
+              b.innerHTML = iconize(`${gi(g)} ${q}`);
+              b.title = `Put your ${econ.goods[g]?.name ?? g} on it (shift-click: just one)`;
+              put.append(b);
+            }
+            dropTarget(s, (from, i) => { const st = from === 'hot' && inv[i]; if (isGoods(st)) whSend('pput', { x: sel.x, y: sel.y, good: st[1], qty: st[2] }); });
+            s.append(put, Object.assign(document.createElement('div'), { className: 'note', textContent: sel.kind === 'container' ? 'Belts going in fill it; belts leading away take from it. Drag goods from your hotbar here too.' : 'Drag goods from your hotbar here too.' }));
+          }
           if (sel.kind === 'filter') {
             const select = document.createElement('select');
             for (const [g, def] of Object.entries(econ.goods)) select.add(new Option(def.name, g, false, g === sel.filter)); // (options can't hold pictures)
             select.onchange = () => whSend('configure', { x: sel.x, y: sel.y, value: select.value });
             s.append('Lets through: ', select, ' — everything else goes right', document.createElement('br'));
           }
-          if (!sel.kind.startsWith('dock')) s.append(button('↻ Rotate', () => whSend('rotate', { x: sel.x, y: sel.y })), button('🗑 Remove', () => whSend('remove', { x: sel.x, y: sel.y })));
+          if (!sel.kind.startsWith('dock')) s.append(sel.kind === 'container' ? '' : button('↻ Rotate', () => whSend('rotate', { x: sel.x, y: sel.y })), button('🗑 Remove', () => whSend('remove', { x: sel.x, y: sel.y })));
         }
         // Chop shop: strip a car that isn't yours, parked inside.
         const chop = section('🔧 Chop shop');
-        chop.append('Drive a car that isn’t yours in through the loading doors, then strip it: stolen parts (contraband) and whatever was in its trunk go to the IN dock.', document.createElement('br'),
+        chop.append('Drive a car that isn’t yours in through the loading doors, then strip it: stolen parts (contraband) and whatever was in its trunk go onto the IN pallet.', document.createElement('br'),
           button('Strip the car inside', () => whSend('chop'), { cls: 'go' }));
         if (size.illegalOnly) chop.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'A shack only takes the illegal machines: still (vodka), printing press (counterfeit rubles) and gunsmith bench (unregistered guns). Out here the Militsiya rarely notice.' }));
         const sell = section();
@@ -1847,14 +1939,212 @@
       const { x, y } = mouseTile(l);
       if (x < 0 || y < 0 || x >= l.cols || y >= l.rows) return;
       if (e.button === 2) return whSend('remove', { x, y });
-      if (wh.tool === 'select') {
-        wh.selected = pieceAt(l, x, y)?.id ?? null;
+      const there = pieceAt(l, x, y);
+      if (wh.tool === 'select' || (there && isStore(there))) { // pallets and containers: click to open, whatever the tool
+        wh.selected = there?.id ?? null;
         return renderWarehouse();
       }
       whSend('place', { kind: wh.tool, x, y, dir: wh.dir });
     }
 
     /** Floors, belts, machines and moving goods of every warehouse in view (drawn under the roofs). */
+    // ---- conveyor belts and machines ------------------------------------------------------
+    // A belt tile, seen from above: steel side rails, a dark rubber belt whose cross slats scroll the way
+    // goods travel, and rollers at any open end (joined belts run on seamlessly). Turns curve round the
+    // inside corner. Mergers, splitters and filters are belts with their housing on top.
+    const BELT_HALF = 13; // half the belt's width
+    function drawBelt(p, tiles, cx, cy, dx, dy, now) {
+      const T = WH_TILE, H = T / 2;
+      const shift = ((now / 1000) * wh.cfg.beltSpeed) % 1; // how far the belt has moved, in tiles
+      const at = (ox, oy) => tiles.get(`${p.x + ox},${p.y + oy}`);
+      const turn = p.kind === 'turnL' || p.kind === 'turnR';
+      const [mx, my] = turn ? DIRV[(p.dir + (p.kind === 'turnL' ? 1 : 3)) % 4] : [dx, dy]; // the way goods come in
+      const fed = Boolean(at(-mx, -my)); // something behind feeds it: no roller there
+      const feeds = Boolean(at(dx, dy)); // something in front takes from it
+      ctx.save();
+      ctx.translate(cx, cy);
+      if (!turn) {
+        ctx.rotate(Math.atan2(dy, dx)); // +x is the way goods travel
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(-H, -BELT_HALF - 3, T, 2 * BELT_HALF + 9); // shadow
+        ctx.fillStyle = '#232528'; ctx.fillRect(-H, -BELT_HALF, T, 2 * BELT_HALF); // rubber
+        ctx.strokeStyle = '#34373b'; ctx.lineWidth = 2.5; // slats, moving along
+        ctx.beginPath();
+        for (let k = 0; k < 5; k++) { const sx = -H + ((k / 5 + shift) % 1) * T; ctx.moveTo(sx, -BELT_HALF + 1); ctx.lineTo(sx, BELT_HALF - 1); }
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255, 255, 255, .05)'; ctx.fillRect(-H, -BELT_HALF, T, 4); // sheen
+        for (const side of [-1, 1]) { // side rails with bolts
+          ctx.fillStyle = '#7d848b'; ctx.fillRect(-H, side > 0 ? BELT_HALF : -BELT_HALF - 5, T, 5);
+          ctx.fillStyle = side > 0 ? '#5a6066' : '#a3aab0'; ctx.fillRect(-H, side > 0 ? BELT_HALF + 4 : -BELT_HALF - 5, T, 1);
+          ctx.fillStyle = '#4a4f55';
+          for (const bx of [-10, 10]) { ctx.beginPath(); ctx.arc(bx, side * (BELT_HALF + 2.5), 1.3, 0, Math.PI * 2); ctx.fill(); }
+        }
+        if (!fed) roller(-H + 2);
+        if (!feeds) roller(H - 2);
+        // Housings: mergers have intake chutes on both sides, splitters a divider at the front, filters a gate.
+        if (p.kind === 'merger') {
+          ctx.fillStyle = '#4a7a5a';
+          for (const side of [-1, 1]) { ctx.beginPath(); ctx.moveTo(-12, side * (BELT_HALF + 5)); ctx.lineTo(4, side * (BELT_HALF + 5)); ctx.lineTo(-2, side * (BELT_HALF - 3)); ctx.lineTo(-8, side * (BELT_HALF - 3)); ctx.fill(); }
+          ctx.strokeStyle = 'rgba(255, 255, 255, .5)'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(-5, -5); ctx.lineTo(-5, 5); ctx.moveTo(-10, 0); ctx.lineTo(0, 0); ctx.stroke(); // +
+        } else if (p.kind === 'splitter') {
+          ctx.fillStyle = '#4a6a7a';
+          ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(H, -6); ctx.lineTo(H, 6); ctx.fill(); // the divider
+          ctx.fillRect(-H, -BELT_HALF - 5, 10, 2 * BELT_HALF + 10); // the housing over the back
+          ctx.fillStyle = 'rgba(255, 255, 255, .25)'; ctx.fillRect(-H, -BELT_HALF - 5, 10, 2);
+        } else if (p.kind === 'filter') {
+          ctx.fillStyle = '#5b4a7a'; // a gate across the belt with the filtered good on its sign
+          ctx.fillRect(-4, -BELT_HALF - 6, 8, 2 * BELT_HALF + 12);
+          ctx.fillStyle = 'rgba(255, 255, 255, .25)'; ctx.fillRect(-4, -BELT_HALF - 6, 8, 2);
+        } else {
+          ctx.fillStyle = 'rgba(244, 196, 48, .55)'; // a painted arrow, so you can see which way it runs
+          ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-3, -6); ctx.lineTo(-3, 6); ctx.fill();
+        }
+        ctx.restore();
+        if (p.kind === 'filter' && p.filter) { circle(cx, cy, 10, 'rgba(30, 24, 40, .85)'); drawIcon(ctx, p.filter, cx, cy, 16); }
+        return;
+      }
+      // A turn: a quarter ring round the tile corner on the inside of the bend.
+      const kx = dx * H - mx * H, ky = dy * H - my * H; // that corner (centre-relative)
+      const a0 = Math.atan2(-dy, -dx), a1 = Math.atan2(my, mx); // from the way in, round to the way out
+      const sweep = Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0));
+      const ring = (r0, r1, fill) => {
+        ctx.fillStyle = fill;
+        ctx.beginPath(); ctx.arc(kx, ky, r1, a0, a1, sweep < 0); ctx.arc(kx, ky, r0, a1, a0, sweep > 0); ctx.closePath(); ctx.fill();
+      };
+      ring(H - BELT_HALF, H + BELT_HALF, '#232528');
+      ctx.strokeStyle = '#34373b'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      for (let k = 0; k < 4; k++) {
+        const a = a0 + sweep * ((k / 4 + shift * 1.27) % 1); // (the centre line of a turn is ~0.79 tiles long)
+        ctx.moveTo(kx + Math.cos(a) * (H - BELT_HALF + 1), ky + Math.sin(a) * (H - BELT_HALF + 1));
+        ctx.lineTo(kx + Math.cos(a) * (H + BELT_HALF - 1), ky + Math.sin(a) * (H + BELT_HALF - 1));
+      }
+      ctx.stroke();
+      ring(H + BELT_HALF, H + BELT_HALF + 5, '#7d848b'); // outer rail
+      ring(Math.max(0, H - BELT_HALF - 5), H - BELT_HALF, '#7d848b'); // inner rail
+      ctx.restore();
+      // Rollers at open ends (in tile space: the end facing the way in, and the way out).
+      ctx.save(); ctx.translate(cx, cy);
+      if (!fed) { ctx.save(); ctx.rotate(Math.atan2(my, mx)); roller(-H + 2); ctx.restore(); }
+      if (!feeds) { ctx.save(); ctx.rotate(Math.atan2(dy, dx)); roller(H - 2); ctx.restore(); }
+      ctx.restore();
+    }
+
+    // The IN / OUT docks: a wooden pallet (planks over three runners) with the goods on it stacked as crates,
+    // and IN / OUT stencilled on the boards.
+    function drawPallet(p, x, y, stock, now) {
+      const S = 2 * WH_TILE;
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(x + 6, y + 8, S - 8, S - 8);
+      ctx.fillStyle = '#6b4a2a'; for (const k of [0, 1, 2]) ctx.fillRect(x + 4, y + 6 + k * (S - 20) / 2, S - 8, 8); // runners
+      for (let k = 0; k < 7; k++) { // the deck boards, each a slightly different wood
+        const bx = x + 5 + k * ((S - 10) / 7);
+        ctx.fillStyle = ['#c49a6c', '#b88d5f', '#caa274', '#bf9466'][k % 4];
+        ctx.fillRect(bx, y + 4, (S - 10) / 7 - 2, S - 8);
+        ctx.fillStyle = 'rgba(90, 60, 30, .35)'; // grain
+        ctx.fillRect(bx + 3, y + 10 + (k * 13) % 30, 1, 18); ctx.fillRect(bx + 6, y + 40 + (k * 7) % 20, 1, 14);
+        ctx.fillStyle = '#4a4f55'; ctx.fillRect(bx + 4, y + 9, 2, 2); ctx.fillRect(bx + 4, y + S / 2 - 1, 2, 2); ctx.fillRect(bx + 4, y + S - 11, 2, 2); // nails
+      }
+      ctx.font = '800 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = p.kind === 'dockIn' ? 'rgba(40, 140, 60, .8)' : 'rgba(200, 100, 20, .85)';
+      ctx.fillText(p.kind === 'dockIn' ? 'IN' : 'OUT', x + S / 2, y + S - 11);
+      // Up to four kinds of goods stacked on it as crates, with how many.
+      const goods = Object.entries(stock ?? {}).filter(([, q]) => q >= 1).slice(0, 4);
+      goods.forEach(([g, q], k) => {
+        const gx = x + 23 + (k % 2) * 34, gy = y + 18 + Math.floor(k / 2) * 25; // (the bottom strip keeps the stencil clear)
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(gx - 12, gy - 9, 28, 22);
+        ctx.fillStyle = '#8a6a44'; ctx.fillRect(gx - 14, gy - 11, 28, 22);
+        ctx.strokeStyle = '#5a4128'; ctx.lineWidth = 1.5; ctx.strokeRect(gx - 14, gy - 11, 28, 22);
+        drawIcon(ctx, g, gx, gy - 3, 13);
+        ctx.font = '700 9px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+        ctx.fillText(`${Math.floor(q)}`, gx, gy + 6);
+      });
+    }
+
+    // A container: a ribbed steel box with a hinged lid, showing what's in it and how full it is.
+    function drawContainer(x, y, stock) {
+      const T = WH_TILE;
+      const goods = Object.entries(stock ?? {}).filter(([, q]) => q >= 1).sort((a, b) => b[1] - a[1]);
+      const n = goods.reduce((sum, [, q]) => sum + q, 0);
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(x + 5, y + 6, T - 6, T - 6);
+      ctx.fillStyle = '#4f6b5a'; ctx.beginPath(); ctx.roundRect(x + 3, y + 3, T - 6, T - 6, 3); ctx.fill();
+      ctx.fillStyle = 'rgba(0, 0, 0, .25)'; for (let k = 1; k < 5; k++) ctx.fillRect(x + 3 + k * ((T - 6) / 5), y + 4, 1.5, T - 8); // ribs
+      ctx.fillStyle = 'rgba(255, 255, 255, .15)'; ctx.fillRect(x + 4, y + 4, T - 8, 2);
+      ctx.fillStyle = '#2a2c30'; ctx.fillRect(x + 6, y + T / 2 - 1, T - 12, 2); // the lid's seam
+      if (goods.length) drawIcon(ctx, goods[0][0], x + T / 2, y + T / 2 - 2, 18);
+      ctx.fillStyle = '#111'; ctx.fillRect(x + 6, y + T - 9, T - 12, 4); // fill gauge
+      ctx.fillStyle = '#f4c430'; ctx.fillRect(x + 6, y + T - 9, (T - 12) * Math.min(1, n / (wh.cfg.containerCapacity ?? 100)), 4);
+    }
+
+    /** A roller across the belt at x (in the belt's own frame). */
+    function roller(x) {
+      ctx.fillStyle = '#5a6066'; ctx.fillRect(x - 2.5, -BELT_HALF - 3, 5, 2 * BELT_HALF + 6);
+      ctx.fillStyle = '#9aa1a8'; ctx.fillRect(x - 2.5, -BELT_HALF - 3, 1.5, 2 * BELT_HALF + 6);
+    }
+
+    // A 2×2 machine: a bevelled steel housing with rivets, a grated hopper at the back where goods go in,
+    // a chute with hazard stripes at the front where they come out, a status lamp, and (while it's running)
+    // something moving: the saw blade spins, the furnace glows, the rest turn a flywheel.
+    function drawMachine(p, x, y, cx, cy, dx, dy, live, age, now) {
+      const T = WH_TILE, S = 2 * T;
+      const base = MACHINE_COLORS[p.kind] ?? (wh.cfg.machines[p.kind]?.illegal ? '#4a3a3a' : '#4b525a');
+      const m = live?.machines.get(p.id);
+      const running = m?.[1] > 0;
+      const recipe = p.recipe && whRecipe(p.recipe);
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)';
+      ctx.beginPath(); ctx.roundRect(x + 6, y + 8, S - 8, S - 8, 8); ctx.fill(); // shadow
+      ctx.fillStyle = base;
+      ctx.beginPath(); ctx.roundRect(x + 3, y + 3, S - 6, S - 6, 8); ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 255, .14)'; ctx.fillRect(x + 7, y + 4, S - 14, 3); // lit top edge
+      ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(x + 7, y + S - 7, S - 14, 3); // shaded bottom edge
+      ctx.strokeStyle = 'rgba(0, 0, 0, .35)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(x + 11, y + 11, S - 22, S - 22, 5); ctx.stroke(); // the inspection panel
+      for (const [rx, ry] of [[x + 8, y + 8], [x + S - 8, y + 8], [x + 8, y + S - 8], [x + S - 8, y + S - 8]]) {
+        circle(rx, ry, 2, 'rgba(0, 0, 0, .4)'); circle(rx - 0.5, ry - 0.5, 1.2, 'rgba(255, 255, 255, .3)'); // rivets
+      }
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(Math.atan2(dy, dx)); // +x: the output side
+      // Hopper at the back: a dark grated mouth.
+      ctx.fillStyle = '#1c1e21'; ctx.fillRect(-S / 2 + 3, -18, 9, 36);
+      ctx.strokeStyle = '#4a4f55'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); for (let k = -14; k <= 14; k += 7) { ctx.moveTo(-S / 2 + 3, k); ctx.lineTo(-S / 2 + 12, k); } ctx.stroke();
+      // Chute at the front, striped.
+      ctx.fillStyle = '#2a2c30'; ctx.fillRect(S / 2 - 12, -14, 10, 28);
+      ctx.save(); ctx.beginPath(); ctx.rect(S / 2 - 12, -14, 10, 28); ctx.clip();
+      ctx.strokeStyle = '#f4c430'; ctx.lineWidth = 3;
+      ctx.beginPath(); for (let k = -24; k < 24; k += 8) { ctx.moveTo(S / 2 - 12, k); ctx.lineTo(S / 2 - 2, k + 10); } ctx.stroke();
+      ctx.restore();
+      ctx.restore();
+      // The moving part, in the top corner opposite the lamp.
+      const gx = x + S - 22, gy = y + 22, spin = now / (running ? 120 : 1e9);
+      if (p.kind === 'furnace') {
+        const flicker = running ? 0.55 + 0.25 * Math.sin(now / 90) + 0.1 * Math.sin(now / 37) : 0.08;
+        ctx.fillStyle = '#1c1e21'; ctx.beginPath(); ctx.roundRect(gx - 10, gy - 7, 20, 14, 3); ctx.fill();
+        ctx.fillStyle = `rgba(255, ${Math.round(120 + 60 * flicker)}, 40, ${flicker})`; ctx.beginPath(); ctx.roundRect(gx - 8, gy - 5, 16, 10, 2); ctx.fill();
+      } else {
+        const teeth = p.kind === 'saw' ? 12 : 6, r = p.kind === 'saw' ? 10 : 8;
+        ctx.save(); ctx.translate(gx, gy); ctx.rotate(spin);
+        ctx.fillStyle = p.kind === 'saw' ? '#c9cdd1' : '#6b7178';
+        ctx.beginPath();
+        for (let k = 0; k < teeth * 2; k++) { const a = (k / (teeth * 2)) * Math.PI * 2, rr = k % 2 ? r : r * (p.kind === 'saw' ? 0.82 : 0.72); ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+        ctx.fill();
+        circle(0, 0, r * 0.3, '#2a2c30');
+        ctx.restore();
+      }
+      // Status lamp: green and blinking while working, dull red when idle.
+      const blink = running && Math.floor(now / 400) % 2;
+      circle(x + 14, y + 14, 4.5, 'rgba(0, 0, 0, .5)');
+      circle(x + 14, y + 14, 3.2, running ? (blink ? '#7dff8a' : '#3cb44b') : '#6a2a2a');
+      if (blink) { ctx.fillStyle = 'rgba(125, 255, 138, .25)'; ctx.beginPath(); ctx.arc(x + 14, y + 14, 8, 0, Math.PI * 2); ctx.fill(); }
+      // What it is and what it makes.
+      drawIcon(ctx, `m:${p.kind}`, cx, cy - 4, 30);
+      if (recipe) Object.keys(recipe.out).forEach((g, i, all) => drawIcon(ctx, g, cx + (i - (all.length - 1) / 2) * 16, cy + 20, 14));
+      if (running) {
+        ctx.fillStyle = '#111'; ctx.fillRect(x + 14, y + S - 16, S - 28, 5);
+        ctx.fillStyle = '#3cb44b'; ctx.fillRect(x + 14, y + S - 16, (S - 28) * Math.min(1, m[1] + age / (recipe?.sec ?? 10)), 5);
+      }
+    }
+
     function drawWarehouses(now) {
       const T = WH_TILE;
       for (const l of wh.layouts.values()) {
@@ -1869,74 +2159,21 @@
         ctx.stroke();
         const live = wh.live.get(l.id);
         const age = live ? (now - live.at) / 1000 : 0;
+        const tiles = new Map(); // "x,y" -> piece, for belts to see their neighbours
+        for (const p of l.pieces) for (let a = 0; a < p.w; a++) for (let c = 0; c < p.h; c++) tiles.set(`${p.x + a},${p.y + c}`, p);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         for (const p of l.pieces) {
           const x = ox + p.x * T, y = oy + p.y * T, cx = x + (p.w * T) / 2, cy = y + (p.h * T) / 2;
           const [dx, dy] = DIRV[p.dir];
           if (p.kind === 'dockIn' || p.kind === 'dockOut') {
-            ctx.fillStyle = p.kind === 'dockIn' ? 'rgba(60, 180, 75, .35)' : 'rgba(230, 126, 34, .35)';
-            ctx.fillRect(x + 2, y + 2, p.w * T - 4, p.h * T - 4);
-            ctx.strokeStyle = p.kind === 'dockIn' ? '#3cb44b' : '#e67e22';
-            ctx.lineWidth = 3;
-            ctx.setLineDash([8, 6]);
-            ctx.strokeRect(x + 2, y + 2, p.w * T - 4, p.h * T - 4);
-            ctx.setLineDash([]);
-            ctx.fillStyle = '#fff';
-            ctx.font = '700 15px system-ui, sans-serif';
-            ctx.fillText(p.kind === 'dockIn' ? 'IN' : 'OUT', cx, cy - 18);
-            const stock = Object.entries(live?.machines.get(p.id)?.[2] ?? {}).filter(([, q]) => q >= 1).slice(0, 3);
-            ctx.font = '13px system-ui, sans-serif';
-            stock.forEach(([g, q], i) => { drawIcon(ctx, g, cx - 10, cy + 2 + i * 15, 13); ctx.fillText(`${Math.floor(q)}`, cx + 8, cy + 2 + i * 15); });
+            drawPallet(p, x, y, live?.machines.get(p.id)?.[2], now);
           } else if (p.w === 2) {
-            ctx.fillStyle = MACHINE_COLORS[p.kind] ?? '#4b525a';
-            ctx.beginPath(); ctx.roundRect(x + 3, y + 3, 2 * T - 6, 2 * T - 6, 8); ctx.fill();
-            // Intake stripe on the back, arrow out of the front.
-            ctx.fillStyle = 'rgba(0, 0, 0, .35)';
-            if (dx) ctx.fillRect(dx > 0 ? x + 3 : x + 2 * T - 11, y + 6, 8, 2 * T - 12);
-            else ctx.fillRect(x + 6, dy > 0 ? y + 3 : y + 2 * T - 11, 2 * T - 12, 8);
-            ctx.fillStyle = '#f4c430';
-            ctx.beginPath();
-            ctx.moveTo(cx + dx * 36, cy + dy * 36);
-            ctx.lineTo(cx + dx * 24 - dy * 9, cy + dy * 24 + dx * 9);
-            ctx.lineTo(cx + dx * 24 + dy * 9, cy + dy * 24 - dx * 9);
-            ctx.fill();
-            ctx.font = '26px system-ui, sans-serif';
-            drawIcon(ctx, `m:${p.kind}`, cx, cy - 6, 40);
-            const recipe = p.recipe && whRecipe(p.recipe);
-            if (recipe) Object.keys(recipe.out).forEach((g, i, all) => drawIcon(ctx, g, cx + (i - (all.length - 1) / 2) * 16, cy + 22, 15));
-            const m = live?.machines.get(p.id);
-            if (m?.[1] > 0) {
-              ctx.fillStyle = '#222'; ctx.fillRect(x + 10, y + 2 * T - 14, 2 * T - 20, 5);
-              ctx.fillStyle = '#3cb44b'; ctx.fillRect(x + 10, y + 2 * T - 14, (2 * T - 20) * Math.min(1, m[1] + age / (recipe?.sec ?? 10)), 5);
-            }
+            drawMachine(p, x, y, cx, cy, dx, dy, live, age, now);
+          } else if (p.kind === 'container') {
+            drawContainer(x, y, live?.machines.get(p.id)?.[2]);
           } else {
-            ctx.fillStyle = p.kind === 'filter' ? '#5b4a7a' : p.kind === 'splitter' ? '#4a6a7a' : p.kind === 'merger' ? '#4a7a5a' : '#2e3135';
-            ctx.fillRect(x + 2, y + 2, T - 4, T - 4);
-            ctx.strokeStyle = '#f4c430';
-            ctx.lineWidth = 3;
-            const shift = ((now / 1000) * wh.cfg.beltSpeed) % 1;
-            const chevron = (fx, fy, along) => {
-              const px = cx + fx * along, py = cy + fy * along;
-              ctx.beginPath();
-              ctx.moveTo(px - fx * 5 - fy * 7, py - fy * 5 + fx * 7);
-              ctx.lineTo(px + fx * 3, py + fy * 3);
-              ctx.lineTo(px - fx * 5 + fy * 7, py - fy * 5 - fx * 7);
-              ctx.stroke();
-            };
-            if (p.kind === 'turnL' || p.kind === 'turnR') {
-              const [mx, my] = DIRV[(p.dir + (p.kind === 'turnL' ? 1 : 3)) % 4]; // the way items come in
-              ctx.beginPath();
-              ctx.moveTo(cx - mx * 18, cy - my * 18);
-              ctx.quadraticCurveTo(cx, cy, cx + dx * 18, cy + dy * 18);
-              ctx.stroke();
-              chevron(dx, dy, 12);
-            } else {
-              for (const k of [-1, 0]) chevron(dx, dy, (k + shift) * 20 + 4);
-              if (p.kind === 'splitter') { ctx.fillStyle = '#fff'; ctx.font = '700 12px system-ui'; ctx.fillText('⑂', cx, cy); }
-              if (p.kind === 'merger') { ctx.fillStyle = '#fff'; ctx.font = '700 12px system-ui'; ctx.fillText('+', cx, cy); }
-              if (p.kind === 'filter') drawIcon(ctx, p.filter, cx, cy, 20);
-            }
+            drawBelt(p, tiles, cx, cy, dx, dy, now);
           }
           if (wh.open === l.id && wh.selected === p.id) {
             ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, p.w * T - 2, p.h * T - 2);
@@ -1955,6 +2192,7 @@
             const [mx, my] = DIRV[(piece.dir + (piece.kind === 'turnL' ? 1 : 3)) % 4];
             [ix, iy] = t < 0.5 ? [cx - mx * T * (0.5 - t), cy - my * T * (0.5 - t)] : [cx + dx * T * (t - 0.5), cy + dy * T * (t - 0.5)];
           } else [ix, iy] = [cx + dx * T * (t - 0.5), cy + dy * T * (t - 0.5)];
+          circle(ix + 2, iy + 3, 9, 'rgba(0, 0, 0, .35)'); // its shadow on the belt
           drawIcon(ctx, good, ix, iy, 22);
         }
         // What I'm about to place.
@@ -2008,6 +2246,7 @@
           if (n.hp < n.max) { ctx.fillStyle = '#e8c547'; ctx.fillRect(n.x - 12, n.y + n.r + 4, 24 * (n.hp / n.max), 3); } // being felled
         } else {
           // A stretch of a wheat row (they sit end to end): standing stalks, or cut stubble on the earth.
+          if (season.main === 'winter') continue; // nothing in the fields in winter
           const w = n.r * 2.7, h = n.r * 1.7;
           const ripe = snowAmount > 0.5 ? '#c9bf9c' : season.main === 'spring' ? '#7aa04a' : '#d4b24a';
           ctx.fillStyle = done ? 'rgba(160, 130, 80, .35)' : ripe;
@@ -2029,13 +2268,15 @@
 
     let carrying = 0; // the body I'm carrying (from the server)
     let hiddenSelf = false; // in a dumpster
+    let riding = 0; // the car I'm a passenger in (0: not)
+    let healLeft = 0; // health still to come from food I've eaten
     const bodyEl = document.getElementById('bodypanel');
     const BODY_REACH = 55;
     let bodyOpen = null; // { id, data }
     const latestBodies = () => snapshots.at(-1)?.bodies ?? new Map();
 
     function nearestBody() {
-      if (!me || me.car) return null;
+      if (!me || me.car || riding) return null;
       let best = null, bd = Infinity;
       for (const [id, b] of latestBodies()) {
         if (b.carrier) continue;
@@ -2084,7 +2325,9 @@
           c.className = 'cell';
           c.title = 'Take';
           c.onclick = () => take(i);
-          c.innerHTML = it[0] === 'goods' ? `<span class="icon">${iconHTML(it[1], 30)}</span><span class="qty">×${it[2]}</span>` : `<img src="${gunIcon(it[0])}" alt="${it[0]}">`;
+          c.innerHTML = it[0] === 'goods' ? `<span class="icon">${iconHTML(it[1], 30)}</span><span class="qty">×${it[2]}</span>`
+            : it[0] === 'food' ? `<span class="icon">${iconHTML(`food:${it[1]}`, 30)}</span><span class="qty">×${it[2]}</span>`
+            : `<img src="${gunIcon(it[0])}" alt="${it[0]}">`;
           grid.append(c);
         });
         bodyEl.append(grid);
@@ -2222,6 +2465,7 @@
         const wx = camera.x + e.clientX - innerWidth / 2, wy = camera.y + e.clientY - innerHeight / 2;
         const piece = pieceAt(l, Math.floor((wx - l.origin.x) / WH_TILE), Math.floor((wy - l.origin.y) / WH_TILE));
         if (piece && wh.cfg.machines[piece.kind]) return whSend('mload', { x: piece.x, y: piece.y, slot: i });
+        if (piece && isStore(piece) && isGoods(inv[i])) return whSend('pput', { x: piece.x, y: piece.y, good: inv[i][1], qty: inv[i][2] });
       }
       if (!me?.car) { send({ t: 'drop', slot: i }); sfx('drop'); } // onto the ground
     });
@@ -2406,7 +2650,7 @@
       }
       g.fillStyle = '#6a6c70';
       for (const r of terrain.lots ?? []) g.fillRect(r.x, r.y, r.w, r.h);
-      for (const b of buildings) { g.fillStyle = b.roof; g.fillRect(b.x, b.y, b.w, b.h); }
+      for (const b of buildings) { if (b.type === 'logging' || b.type === 'farm') continue; g.fillStyle = b.roof; g.fillRect(b.x, b.y, b.w, b.h); } // (the lumberyard is just ground and trees)
       // Warehouses (gold if mine, green if for sale), factories, raw sites and markets.
       for (const l of wh.layouts.values()) {
         const b = whBuilding(l);
@@ -2484,6 +2728,25 @@
         mctx.strokeStyle = '#f4c430';
         mctx.lineWidth = 3 * devicePixelRatio;
         mctx.beginPath(); mctx.arc(Math.min(Math.max(tx, 6), px - 6), Math.min(Math.max(ty, 6), px - 6), (7 + 3 * Math.sin(performance.now() / 200)) * devicePixelRatio, 0, Math.PI * 2); mctx.stroke();
+      }
+      // Teammates: green dots (pinned to the edge when off the small map), named on the full map.
+      for (const [id, t] of teamPos) {
+        const tx = (t.x - sx) * toMap, ty = (t.y - sy) * toMap;
+        const inside = tx >= 0 && tx <= px && ty >= 0 && ty <= px;
+        const cx = Math.min(Math.max(tx, 6), px - 6), cy = Math.min(Math.max(ty, 6), px - 6);
+        mctx.fillStyle = '#2ecc71';
+        mctx.strokeStyle = '#000';
+        mctx.lineWidth = 2;
+        mctx.beginPath(); mctx.arc(cx, cy, (inside ? 5 : 4) * devicePixelRatio, 0, Math.PI * 2); mctx.fill(); mctx.stroke();
+        if (expanded || inside) {
+          mctx.font = `700 ${11 * devicePixelRatio}px system-ui, sans-serif`;
+          mctx.textAlign = 'center';
+          mctx.lineWidth = 3;
+          const name = `${t.car ? '🚗 ' : ''}${info.get(id)?.name ?? ''}`;
+          mctx.strokeText(name, cx, cy - 9 * devicePixelRatio);
+          mctx.fillStyle = '#c8f7d6';
+          mctx.fillText(name, cx, cy - 9 * devicePixelRatio);
+        }
       }
       const mx = (me.x - sx) * toMap, my = (me.y - sy) * toMap;
       const heading = me.car ? me.car.angle : aimAngle();
@@ -2741,7 +3004,7 @@
       previewCtx.setTransform(1, 0, 0, 1, 0, 0);
       previewCtx.fillStyle = GROUND[season.main];
       previewCtx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
-      withContext(previewCtx, () => drawPerson({ x: 150, y: 155, r: 78, aim: -0.5, weapon: 'pistol' }, resolveLook(myLook)));
+      withContext(previewCtx, () => drawPerson({ x: 150, y: 155, r: 78, aim: -0.5, weapon: 'knife' }, resolveLook(myLook)));
     }
 
     for (const b of document.querySelectorAll('.hat-pick button')) {
@@ -3832,6 +4095,110 @@
     const leaderboard = document.getElementById('leaderboard');
     const leaderboardList = document.getElementById('leaderboard-list');
 
+    // ---- teams ---------------------------------------------------------------
+
+    const CASH_DROP = 500; // holding X drops this much (server: config.cargo.cashDrop)
+    const CASH_HOLD_MS = 3000; // how long X has to be held
+    let cashHoldStart = 0; // when X went down (0: not held)
+
+    /** Holding X: a ring fills over my head; at 3 s the cash goes down. */
+    function updateCashHold(now) {
+      if (!cashHoldStart) return;
+      if (!me || !playing || me.car || riding) { cashHoldStart = 0; return; }
+      const t = (now - cashHoldStart) / CASH_HOLD_MS;
+      if (t >= 1) {
+        cashHoldStart = 0;
+        send({ t: 'drop', cash: CASH_DROP });
+        return;
+      }
+      const x = me.x, y = me.y - 62;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0, 0, 0, .6)';
+      ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = '#2ecc71';
+      ctx.beginPath(); ctx.arc(x, y, 14, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2); ctx.stroke();
+      ctx.font = '700 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.fillText('💵', x, y + 1);
+    }
+    const teamBtn = document.getElementById('team-btn');
+    const teamEl = document.getElementById('team');
+    let team = { members: [], invites: [], max: 4 };
+    let teamPos = new Map(); // teammate player id -> { x, y, car }
+    const TEAM_ERRORS = {
+      team_self: "You can't invite yourself",
+      team_already: "They're already on your team",
+      team_full: 'That team is full',
+      team_no_invite: 'That invite has expired',
+      team_no_player: "They're not in the game right now",
+      no_cash: 'No cash to drop',
+      hotbar_full: 'Your hotbar is full — make room for the food',
+      cant_drop_food: 'Eat it instead: select it and press E',
+      nothing_to_eat: 'Select some food first',
+    };
+
+    function toggleTeam(open = teamEl.hidden) {
+      teamEl.hidden = !open;
+      teamBtn.setAttribute('aria-expanded', String(open));
+      if (open) { teamBtn.classList.remove('ping'); renderTeam(); }
+    }
+    teamBtn.onclick = () => toggleTeam();
+    teamEl.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') e.target.blur(); }); // so Space/Enter stay game keys
+
+    function renderTeam() {
+      const mates = team.members.filter((m) => !m.me).length;
+      teamBtn.textContent = mates ? `👥 Team ${mates + 1}` : '👥 Team';
+      if (teamEl.hidden) return;
+      const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+      const parts = [el('h2', {}, 'Team', el('span', { textContent: team.members.length ? `${team.members.length}/${team.max}` : '' }))];
+      for (const inv of team.invites) {
+        const yes = el('button', { className: 'go', textContent: 'Join' });
+        yes.onclick = () => send({ t: 'team', action: 'accept', id: inv.id });
+        const no = el('button', { textContent: 'No' });
+        no.onclick = () => send({ t: 'team', action: 'decline', id: inv.id });
+        parts.push(el('div', { className: 'invite' }, el('div', { textContent: `${inv.name} invited you` }), el('div', { className: 'row' }, yes, no)));
+      }
+      if (team.members.length) {
+        parts.push(el('ul', {}, ...team.members.map((m) => {
+          const li = el('li', { className: m.player || m.me ? '' : 'dead' }, el('span', { textContent: m.me ? `${m.name} (you)` : m.name }), el('span', { className: 'dist' }));
+          li.dataset.player = m.me ? '' : m.player;
+          return li;
+        })));
+      } else {
+        parts.push(el('p', { className: 'note', textContent: "You're not on a team. Invite someone and they'll show on your map." }));
+      }
+      const inTeam = new Set(team.members.map((m) => m.player));
+      const others = [...info.entries()].filter(([id]) => id !== myId && !inTeam.has(id));
+      if (team.members.length < team.max) {
+        const pick = el('select');
+        pick.add(new Option(others.length ? 'Invite a player…' : 'Nobody else online', ''));
+        for (const [id, p] of others) pick.add(new Option(p.name, id));
+        const go = el('button', { className: 'go', textContent: 'Invite' });
+        go.onclick = () => { if (pick.value) send({ t: 'team', action: 'invite', id: Number(pick.value) }); };
+        parts.push(el('div', { className: 'row' }, pick, go));
+      }
+      if (team.members.length) {
+        const leave = el('button', { textContent: 'Leave team' });
+        leave.style.marginTop = '.4rem';
+        leave.onclick = () => send({ t: 'team', action: 'leave' });
+        parts.push(leave);
+      }
+      teamEl.replaceChildren(...parts);
+      updateTeamDistances();
+    }
+
+    /** How far each teammate is (twice a second, from the snapshots). */
+    function updateTeamDistances() {
+      if (teamEl.hidden || !me) return;
+      for (const li of teamEl.querySelectorAll('li[data-player]')) {
+        const d = li.querySelector('.dist');
+        if (li.dataset.player === '') { d.textContent = ''; continue; }
+        const t = teamPos.get(Number(li.dataset.player));
+        d.textContent = t ? `${t.car ? '🚗 ' : ''}${Math.round(Math.hypot(t.x - me.x, t.y - me.y) / 10)} m` : 'dead';
+      }
+    }
+    setInterval(updateTeamDistances, 500);
+
     function renderLeaderboard(entries) {
       leaderboard.hidden = entries.length === 0;
       leaderboardList.replaceChildren(...entries.map(({ id, name, score }) => {
@@ -3891,10 +4258,10 @@
     // ---- inventory ---------------------------------------------------------
 
     // Filled from the server's welcome message; these defaults are only placeholders.
-    let weapons = { pistol: { name: 'Pistol', magazineSize: 5, reloadSec: 1.5, barrel: 1.6 } };
-    const RARITY = { pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
+    let weapons = { knife: { name: 'Knife', melee: true, magazineSize: 0, reloadSec: 0, barrel: 1.1 }, pistol: { name: 'Pistol', magazineSize: 5, reloadSec: 1.5, barrel: 1.6 } };
+    const RARITY = { knife: '#8a8f96', pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
 
-    let inv = [['pistol', 5, 0], null, null, null, null]; // from the server: [type, ammo, reload seconds] per slot
+    let inv = [['knife', 0, 0], null, null, null, null]; // from the server: [type, ammo, reload seconds] per slot
     let reloadEnds = []; // performance.now() time each slot's reload finishes
     let selectedSlot = 0;
     let reloadRequested = false;
@@ -3934,6 +4301,8 @@
     // What's in each slot (gun type, or which good), so the hotbar is only rebuilt when that changes.
     const slotKey = () => inv.map((w) => (!w ? '-' : w[0] === 'goods' ? `g:${w[1]}` : w[0])).join();
     const isGoods = (w) => w?.[0] === 'goods';
+    const isFood = (w) => w?.[0] === 'food'; // ['food', item, qty] — bought at a shop, E eats one
+    const edible = (w) => isFood(w) || (isGoods(w) && w[1] === 'bread'); // (bakery bread eats too)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
     const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧' }; // drawn icons (see ICON_DRAW)
     const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe' };
@@ -3951,6 +4320,10 @@
           slot.classList.add('goods');
           slot.title = `${good?.name ?? w[1]} — carried goods (lost if you die)`;
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(w[1], 40)}</span><span class="goods-qty"></span>`);
+        } else if (isFood(w)) {
+          slot.classList.add('goods');
+          slot.title = `${shop.menu[w[1]]?.name ?? w[1]} — select it and press E to eat`;
+          slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`food:${w[1]}`, 40)}</span><span class="goods-qty"></span>`);
         } else if (isTool(w)) {
           slot.classList.add('goods');
           slot.title = `${TOOL_NAMES[w[1]] ?? w[1]} — the foreman's; click to work, it goes back when you leave the site`;
@@ -3962,8 +4335,9 @@
           slot.insertAdjacentHTML('beforeend', `<span class="reload"></span><img src="${gunIcon(type)}" alt="">`);
           const ammo = document.createElement('span');
           ammo.className = 'ammo';
-          // Small magazines get one pip per shot; big ones a number.
-          if (weapons[type].magazineSize <= 6) {
+          // Small magazines get one pip per shot; big ones a number. (A knife has none.)
+          if (weapons[type]?.melee) ammo.hidden = true;
+          else if (weapons[type].magazineSize <= 6) {
             for (let n = 0; n < weapons[type].magazineSize; n++) ammo.append(document.createElement('i'));
           }
           slot.append(ammo);
@@ -3983,11 +4357,12 @@
       inv.forEach((w, i) => {
         const slot = hotbar.children[i];
         if (!w || !slot || isTool(w)) return;
-        if (isGoods(w)) {
+        if (isGoods(w) || isFood(w)) {
           slot.querySelector('.goods-qty').textContent = `×${w[2]}`;
           return;
         }
         const [type, ammo] = w;
+        if (weapons[type]?.melee) return; // a knife: nothing to count
         const { magazineSize, reloadSec } = weapons[type];
         const left = Math.max(0, reloadEnds[i] - now);
         const reloading = left > 0;
@@ -4045,6 +4420,8 @@
         else toast('Walk up to a warehouse to buy or manage it');
         return;
       }
+      if (playing && e.code === 'KeyX' && !me?.car && !e.repeat) { if (coins > 0) cashHoldStart = performance.now(); else toast('No cash to drop'); return; }
+      if (playing && e.code === 'KeyT' && !e.repeat) { toggleTeam(); return; }
       if (playing && e.code === 'KeyQ' && !me?.car) { send({ t: 'drop' }); if (inv[selectedSlot]) sfx('drop'); return; }
       if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; }
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
@@ -4062,6 +4439,7 @@
         else if (!shopEl.hidden) closeShop();
         else if (!bankEl.hidden) closeBank();
         else if (econ.open) closePlace();
+        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding) send({ t: 'eat' }); // food in hand (on foot): E eats it
         else {
           const t = eTarget(); // only the closest thing, the one with the prompt
           if (t?.kind === 'shop') openShop();
@@ -4087,15 +4465,18 @@
     addEventListener('keyup', (e) => {
       keys.delete(KEYMAP[e.code]);
       if (e.code === 'KeyF') robHeld = false;
+      if (e.code === 'KeyX') cashHoldStart = 0;
     });
-    addEventListener('blur', () => { keys.clear(); firing = false; robHeld = false; });
+    addEventListener('blur', () => { keys.clear(); firing = false; robHeld = false; cashHoldStart = 0; });
 
     const mouse = { x: 0, y: 0 };
+    let stabAt = -1e9; // when my last knife stab started (for the jab animation)
     let firing = false;
     addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
     canvas.addEventListener('mousedown', (e) => {
       if (whBuildMode()) return whClick(e); // building, not shooting
       if (e.button === 0) firing = true;
+      if (e.button === 0 && inv[selectedSlot]?.[0] === 'knife') stabAt = performance.now();
     });
     canvas.addEventListener('contextmenu', (e) => { if (whBuildMode()) e.preventDefault(); });
     addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; });
@@ -4113,7 +4494,7 @@
       const driving = Boolean(me?.car);
       return {
         angle: Math.atan2(dy, dx),
-        throttle: !driving && (dx || dy) ? 1 : 0,
+        throttle: !driving && !riding && (dx || dy) ? 1 : 0,
         boost: keys.has('sprint'),
         gas: driving ? -dy : 0,
         steer: driving ? dx : 0,
@@ -4373,12 +4754,13 @@
       for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights });
       soundsFromSnapshot(players, msg.bullets ?? []);
       const npcs = new Map();
-      for (const [id, x, y, angle] of msg.npcs ?? []) npcs.set(id, { x, y, angle });
+      for (const [id, x, y, angle, armed] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed });
       const cops = new Map();
       for (const [id, x, y, angle] of msg.cops ?? []) cops.set(id, { x, y, angle });
       const corpses = new Map();
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, bodies: corpses });
+      teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
       if (msg.you) reconcile(msg.you, msg.ack, players.get(msg.you.id), now);
@@ -4404,8 +4786,11 @@
       }
       if (car) { target.x = car.x; target.y = car.y; }
 
-      if (me && Boolean(car) !== Boolean(me.car)) sfx('carDoor');
-      if (!me || Math.hypot(target.x - me.x, target.y - me.y) > 150 || Boolean(car) !== Boolean(me.car)) {
+      const ride = you.ride ?? 0;
+      if (me && (Boolean(car) !== Boolean(me.car) || Boolean(ride) !== Boolean(riding))) sfx('carDoor');
+      if (ride && !riding) toast('🚗 Riding along — E to get out');
+      if (ride) pending.length = 0; // a passenger doesn't move themselves
+      if (!me || Math.hypot(target.x - me.x, target.y - me.y) > 150 || Boolean(car) !== Boolean(me.car) || Boolean(ride) !== Boolean(riding)) {
         me = { x: target.x, y: target.y, vx: target.vx, vy: target.vy, cx: 0, cy: 0 }; // first frame, a big jump, or getting in/out: snap
         me.car = car ? { ...car, ca: 0 } : null;
       } else {
@@ -4429,6 +4814,8 @@
       myJob = you.job ?? null;
       carrying = you.carry ?? 0;
       hiddenSelf = Boolean(you.hidden);
+      riding = ride;
+      healLeft = you.heal ?? 0;
       crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0 };
       const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null]);
       if (trunkKey !== lastTrunkKey) renderTrunk(); // only on change, or clicks get lost
@@ -4476,7 +4863,7 @@
       const npcs = new Map();
       for (const [id, nb] of b.npcs ?? []) {
         const na = a.npcs?.get(id);
-        npcs.set(id, na ? { x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t) } : nb);
+        npcs.set(id, na ? { x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t), armed: nb.armed } : nb);
       }
       const cops = new Map();
       for (const [id, cb] of b.cops ?? []) {
@@ -4605,6 +4992,22 @@
     function drawGun(g, type) {
       const rect = (x0, x1, y0, y1, fill) => { g.fillStyle = fill; g.fillRect(x0, y0, x1 - x0, y1 - y0); };
       switch (type) {
+        case 'knife': // a Soviet kitchen knife: dark wooden handle, steel guard, long blade
+          rect(0, 0.3, -0.07, 0.07, '#4a3020');
+          rect(0.05, 0.25, -0.03, -0.01, '#6b4a30');
+          rect(0.3, 0.36, -0.12, 0.12, '#8a8f96');
+          g.fillStyle = '#c9ced4';
+          g.beginPath(); g.moveTo(0.36, -0.08); g.lineTo(0.92, -0.05); g.lineTo(1.08, 0.03); g.lineTo(0.36, 0.08); g.closePath(); g.fill();
+          g.fillStyle = 'rgba(255, 255, 255, .45)'; g.fillRect(0.4, -0.06, 0.5, 0.025); // the edge catching the light
+          break;
+        case 'purse': // a babushka's leather handbag on its strap, swung at your head
+          g.strokeStyle = '#3a2418'; g.lineWidth = 0.06;
+          g.beginPath(); g.moveTo(0.1, 0); g.quadraticCurveTo(0.35, -0.25, 0.55, -0.12); g.moveTo(0.1, 0); g.quadraticCurveTo(0.35, 0.25, 0.55, 0.12); g.stroke();
+          g.fillStyle = '#6b2f2a';
+          g.beginPath(); g.ellipse(0.75, 0, 0.24, 0.32, 0, 0, Math.PI * 2); g.fill();
+          rect(0.55, 0.62, -0.26, 0.26, '#4a1f1b'); // the clasp side
+          rect(0.57, 0.61, -0.05, 0.05, '#d4a017'); // brass clasp
+          break;
         case 'pickaxe':
           rect(0.4, 1.7, -0.06, 0.06, '#7a5a3a'); // handle
           rect(1.55, 1.75, -0.55, 0.55, '#6b6f75'); // head
@@ -4656,32 +5059,44 @@
     // ---- ground, roads, paths, trees ---------------------------------------
 
     // Ground textures for each season, tileable and anchored to world coordinates so they scroll with the map.
+    // Seamless: anything crossing an edge is drawn again on the opposite side, so the tiles can't be told apart.
+    const TILE = 512;
+    const wrapped = (x, y, r, draw) => {
+      for (const dx of [-TILE, 0, TILE]) {
+        if (x + r + dx < 0 || x - r + dx > TILE) continue;
+        for (const dy of [-TILE, 0, TILE]) if (y + r + dy >= 0 && y - r + dy <= TILE) draw(x + dx, y + dy);
+      }
+    };
     function groundTexture(base, specks, blobs, extra, sparkle = false) {
       const c = document.createElement('canvas');
-      c.width = c.height = 256;
+      c.width = c.height = TILE;
       const g = c.getContext('2d');
       g.fillStyle = base;
-      g.fillRect(0, 0, 256, 256);
-      for (let i = 0; i < 26; i++) {
-        const x = Math.random() * 256, y = Math.random() * 256, r = 14 + Math.random() * 40;
-        const d = g.createRadialGradient(x, y, 0, x, y, r);
-        d.addColorStop(0, blobs[i % blobs.length]);
-        d.addColorStop(1, blobs[i % blobs.length].replace(/[\d.]+\)$/, '0)')); // same colour, faded out (no grey halo)
-        g.fillStyle = d;
-        g.fillRect(x - r, y - r, r * 2, r * 2);
+      g.fillRect(0, 0, TILE, TILE);
+      for (let i = 0; i < 104; i++) {
+        const x = Math.random() * TILE, y = Math.random() * TILE, r = 14 + Math.random() * 40;
+        wrapped(x, y, r, (x, y) => {
+          const d = g.createRadialGradient(x, y, 0, x, y, r);
+          d.addColorStop(0, blobs[i % blobs.length]);
+          d.addColorStop(1, blobs[i % blobs.length].replace(/[\d.]+\)$/, '0)')); // same colour, faded out (no grey halo)
+          g.fillStyle = d;
+          g.fillRect(x - r, y - r, r * 2, r * 2);
+        });
       }
-      for (let i = 0; i < 1400; i++) {
+      for (let i = 0; i < 5600; i++) {
         g.fillStyle = specks[i % specks.length];
-        if (sparkle) g.fillRect(Math.random() * 256, Math.random() * 256, 1.5, 1.5); // glints in the snow
-        else g.fillRect(Math.random() * 256, Math.random() * 256, 2, 3 + Math.random() * 4); // grass blades
+        const x = Math.random() * TILE, y = Math.random() * TILE, h = 3 + Math.random() * 4;
+        if (sparkle) wrapped(x, y, 2, (x, y) => g.fillRect(x, y, 1.5, 1.5)); // glints in the snow
+        else wrapped(x, y, h, (x, y) => g.fillRect(x, y, 2, h)); // grass blades
       }
       extra?.(g);
       return ctx.createPattern(c, 'repeat');
     }
     const dots = (colors, n, size) => (g) => {
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < n * 4; i++) {
         g.fillStyle = colors[i % colors.length];
-        g.beginPath(); g.arc(Math.random() * 256, Math.random() * 256, size * (0.6 + Math.random() * 0.8), 0, Math.PI * 2); g.fill();
+        const r = size * (0.6 + Math.random() * 0.8);
+        wrapped(Math.random() * TILE, Math.random() * TILE, r, (x, y) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); });
       }
     };
     const GROUND = {
@@ -5372,27 +5787,12 @@
       }
     }
 
-    // Ploughed earth for the farms: brown, with clods and stones.
-    const DIRT = (() => {
-      const c = document.createElement('canvas');
-      c.width = c.height = 128;
-      const g = c.getContext('2d');
-      g.fillStyle = '#3e2c1c'; // dark ploughed earth
-      g.fillRect(0, 0, 128, 128);
-      const shades = ['#342417', '#4a3523', '#2c1e13', '#523b27', '#3a2919'];
-      for (let i = 0; i < 260; i++) { // big clods, each with a lit top edge
-        const x = Math.random() * 128, y = Math.random() * 128, rx = 3 + Math.random() * 5, ry = 2.5 + Math.random() * 4, a = Math.random() * 3;
-        g.fillStyle = shades[i % shades.length];
-        g.beginPath(); g.ellipse(x, y, rx, ry, a, 0, Math.PI * 2); g.fill();
-        g.fillStyle = 'rgba(120, 90, 60, .25)';
-        g.beginPath(); g.ellipse(x - 1, y - 1, rx * 0.5, ry * 0.4, a, 0, Math.PI * 2); g.fill();
-      }
-      for (let i = 0; i < 25; i++) { g.fillStyle = '#6f6253'; g.fillRect(Math.random() * 128, Math.random() * 128, 2.5, 2); } // stones
-      return ctx.createPattern(c, 'repeat');
-    })();
-
     function drawFloor(b) {
-      ctx.fillStyle = b.type === 'farm' ? DIRT : b.floor;
+      if (b.type === 'logging' || b.type === 'farm') { // lumberyard and farm: on the ordinary ground, just their own bits drawn
+        for (const d of b.decor) drawDecor(d);
+        return;
+      }
+      ctx.fillStyle = b.floor;
       ctx.fillRect(b.x, b.y, b.w, b.h);
       // Faint floorboards / tiles.
       ctx.strokeStyle = 'rgba(0, 0, 0, .12)';
@@ -5402,16 +5802,132 @@
       for (let y = b.y + step; y < b.y + b.h; y += step) { ctx.moveTo(b.x, y); ctx.lineTo(b.x + b.w, y); }
       if (step === 40) for (let x = b.x + step; x < b.x + b.w; x += step) { ctx.moveTo(x, b.y); ctx.lineTo(x, b.y + b.h); }
       ctx.stroke();
-      for (const d of b.decor) shadeRect(ctx, d, d.c);
+      for (const d of b.decor) drawDecor(d);
       if (b.pattern === 'none' && snowAmount > 0.02) { // open-air yards: snow lies on them too
         ctx.fillStyle = `rgba(232, 238, 244, ${0.65 * snowAmount})`;
         ctx.fillRect(b.x, b.y, b.w, b.h);
       }
     }
 
+    const PUMP_SCALE = 2; // pumpjacks are drawn at twice their sketch size (matches the solid base on the server)
+
+    // Weathered concrete for the pump pads: a grey-beige base, blotches and grit. Seamless.
+    const CONCRETE = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const g = c.getContext('2d');
+      g.fillStyle = '#8a857a';
+      g.fillRect(0, 0, 128, 128);
+      const each = (x, y, f) => { for (const dx of [-128, 0, 128]) for (const dy of [-128, 0, 128]) f(x + dx, y + dy); };
+      for (let i = 0; i < 18; i++) { // stains and patches
+        const x = Math.random() * 128, y = Math.random() * 128, r = 8 + Math.random() * 22, dark = Math.random() < 0.6;
+        each(x, y, (x, y) => {
+          const d = g.createRadialGradient(x, y, 0, x, y, r);
+          d.addColorStop(0, dark ? 'rgba(60, 55, 45, .14)' : 'rgba(200, 195, 185, .12)');
+          d.addColorStop(1, dark ? 'rgba(60, 55, 45, 0)' : 'rgba(200, 195, 185, 0)');
+          g.fillStyle = d; g.fillRect(x - r, y - r, r * 2, r * 2);
+        });
+      }
+      for (let i = 0; i < 900; i++) { // grit
+        const x = Math.random() * 128, y = Math.random() * 128;
+        g.fillStyle = Math.random() < 0.5 ? 'rgba(50, 45, 38, .3)' : 'rgba(215, 210, 200, .3)';
+        each(x, y, (x, y) => g.fillRect(x, y, 1, 1));
+      }
+      return ctx.createPattern(c, 'repeat');
+    })();
+
+    /** A decor rect; concrete ones (pump pads) get the texture and a worn, darker edge. */
+    function drawDecor(d) {
+      if (!d.concrete) return shadeRect(ctx, d, d.c);
+      ctx.fillStyle = 'rgba(0, 0, 0, .25)';
+      ctx.fillRect(d.x + 3, d.y + 4, d.w, d.h); // the slab's edge
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(d.x, d.y, d.w, d.h);
+      ctx.strokeStyle = 'rgba(40, 36, 30, .35)'; ctx.lineWidth = 2;
+      ctx.strokeRect(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
+      ctx.strokeStyle = 'rgba(40, 36, 30, .2)'; ctx.lineWidth = 1; // an expansion joint across the middle
+      ctx.beginPath();
+      if (d.w >= d.h) { ctx.moveTo(d.x + d.w / 2, d.y + 2); ctx.lineTo(d.x + d.w / 2, d.y + d.h - 2); }
+      else { ctx.moveTo(d.x + 2, d.y + d.h / 2); ctx.lineTo(d.x + d.w - 2, d.y + d.h / 2); }
+      ctx.stroke();
+    }
+
+    /**
+     * Oil field pumpjacks ("nodding donkeys"): a skid with the motor and gearbox, cranks swinging heavy
+     * counterweights, an A-frame samson post, and the steel walking beam rocking the horsehead up and down
+     * over the wellhead. Seen from above, a higher horsehead casts its shadow further and looks a bit bigger.
+     */
+    function drawPumps(b, now) {
+      const night = 1 - daylight(clockNow(now));
+      for (const [i, p] of b.pumps.entries()) {
+        if (p.x < viewBox.l - 200 || p.x > viewBox.r + 200 || p.y < viewBox.t - 200 || p.y > viewBox.b + 200) continue;
+        const phase = now / 520 + i * 1.7 + b.id; // about one stroke every 3 s, each out of step with the next
+        const lift = Math.sin(phase); // −1 head down … 1 head up
+        const crank = Math.cos(phase);
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.angle);
+        ctx.scale(PUMP_SCALE, PUMP_SCALE);
+        // Shadows fall toward the bottom right of the screen, whichever way the pump faces.
+        const sh = (d) => [d * (Math.cos(p.angle) + Math.sin(p.angle)), d * (Math.cos(p.angle) - Math.sin(p.angle))]; // (in pump units, so they scale up with it)
+        // Skid and motor.
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)';
+        ctx.fillRect(-64 + sh(4)[0], -14 + sh(4)[1], 108, 28);
+        ctx.fillStyle = '#3a3d42'; ctx.fillRect(-66, -14, 108, 28);
+        ctx.fillStyle = '#2a2c30'; ctx.fillRect(-66, -14, 108, 4); ctx.fillRect(-66, 10, 108, 4); // the rails
+        ctx.fillStyle = '#5a6066'; ctx.fillRect(-64, -10, 18, 20); // electric motor
+        ctx.fillStyle = '#6b7178'; ctx.fillRect(-46, -12, 16, 24); // gearbox
+        // Cranks and counterweights either side of the gearbox, swinging back and forth.
+        const cx = -38 + crank * 13;
+        for (const side of [-1, 1]) {
+          ctx.strokeStyle = '#555b62'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(-38, side * 15); ctx.lineTo(cx, side * 17); ctx.stroke();
+          ctx.fillStyle = '#4a4e53'; ctx.beginPath(); ctx.roundRect(cx - 9, side * 17 - 4, 18, 8, 2); ctx.fill();
+          ctx.fillStyle = '#7c8288'; ctx.fillRect(cx - 2, side * 17 - 4, 4, 8); // a lighter band
+          // Pitman arms up to the back of the beam.
+          ctx.strokeStyle = '#7d838a'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(cx, side * 15); ctx.lineTo(-30, side * 5); ctx.stroke();
+        }
+        // Beam shadow (further out the higher the head), then the samson post.
+        const [sx, sy] = sh(10 + lift * 6);
+        ctx.strokeStyle = 'rgba(0, 0, 0, .3)'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-32 + sh(8)[0], sh(8)[1]); ctx.lineTo(46 + sx, sy); ctx.stroke();
+        ctx.fillStyle = '#6b7178';
+        ctx.beginPath(); ctx.moveTo(-10, -15); ctx.lineTo(6, 0); ctx.lineTo(-10, 15); ctx.lineTo(-4, 15); ctx.lineTo(8, 3); ctx.lineTo(8, -3); ctx.lineTo(-4, -15); ctx.fill();
+        // The walking beam: grey steel, rocking about the post.
+        const head = 46 - Math.abs(lift) * 2; // foreshortened when tilted
+        const scale = 1 + lift * 0.1;
+        ctx.strokeStyle = '#4a4f55'; ctx.lineWidth = 9 * scale; ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(-32, 0); ctx.lineTo(head, 0); ctx.stroke();
+        ctx.strokeStyle = '#959ba1'; ctx.lineWidth = 6 * scale;
+        ctx.beginPath(); ctx.moveTo(-32, 0); ctx.lineTo(head, 0); ctx.stroke();
+        if (snowAmount > 0.3) { ctx.strokeStyle = `rgba(245, 248, 252, ${0.8 * snowAmount})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-28, -1); ctx.lineTo(head - 4, -1); ctx.stroke(); }
+        circle(6, 0, 4, '#3a3d42'); // the saddle bearing
+        // Horsehead: a curved grey hood at the front, with the bridle down to the wellhead.
+        ctx.fillStyle = '#a9afb4';
+        ctx.beginPath();
+        ctx.moveTo(head - 4, -9 * scale); ctx.quadraticCurveTo(head + 14 * scale, -8 * scale, head + 12 * scale, 0);
+        ctx.quadraticCurveTo(head + 14 * scale, 8 * scale, head - 4, 9 * scale); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = '#5a5f65'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(head + 12 * scale, -3); ctx.lineTo(56, -2); ctx.moveTo(head + 12 * scale, 3); ctx.lineTo(56, 2); ctx.stroke();
+        // Wellhead: the stuffing box and a valve.
+        circle(56, 0, 7, '#2c2c2c');
+        circle(56, 0, 4, '#5d6d7e');
+        ctx.fillStyle = '#7d838a'; ctx.fillRect(52, 6, 8, 3);
+        // A red light on top of the post, blinking after dark.
+        if (night > 0.3 && Math.floor(now / 700 + i) % 2) {
+          const glow = ctx.createRadialGradient(6, 0, 0, 6, 0, 14);
+          glow.addColorStop(0, 'rgba(255, 60, 40, .8)'); glow.addColorStop(1, 'rgba(255, 60, 40, 0)');
+          ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(6, 0, 14, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
     function drawWalls(b) {
       for (const wall of b.walls) {
-        if (wall.npc) continue; // the shopkeeper's invisible blocker
+        if (wall.npc || wall.pump) continue; // the shopkeeper's invisible blocker; pumpjacks are drawn by drawPumps
         if (wall.picket) { // a white picket fence: a rail with pickets along it
           const horizontal = wall.w > wall.h;
           ctx.fillStyle = 'rgba(0, 0, 0, .25)';
@@ -5493,7 +6009,7 @@
      * place, body, or door/vehicle/dumpster. Only this one gets an E prompt.
      */
     function eTarget() {
-      if (!me || me.car || hiddenSelf) return null;
+      if (!me || me.car || riding || hiddenSelf || edible(inv[selectedSlot])) return null; // (with food in hand, E eats)
       const options = [];
       const d = (o) => Math.hypot(o.x - me.x, o.y - me.y);
       const keeper = nearestShopkeeper();
@@ -5760,7 +6276,9 @@
       // Arms reach forward to the gun (the front hand further out on long guns), or hang at the sides.
       const barrel = p.weapon ? weapons[p.weapon]?.barrel ?? 1.6 : 0;
       const front = Math.max(0.88, 0.6 + (barrel - 0.6) * 0.5);
-      const hands = p.weapon ? [[0.78, -0.2], [front, 0.14]] : [[0.25, -0.98], [0.25, 0.98]];
+      const knife = p.weapon === 'knife' || p.weapon === 'purse';
+      // A knife (or an angry townsperson's purse) is held in one hand, jabbing/swinging forward (p.thrust 0–1); the other arm hangs.
+      const hands = knife ? [[0.25, -0.98], [0.62 + (p.thrust ?? 0) * 0.5, 0.45]] : p.weapon ? [[0.78, -0.2], [front, 0.14]] : [[0.25, -0.98], [0.25, 0.98]];
       ctx.lineCap = 'round';
       for (const [sx, sy, hx, hy] of [[0.1, -0.78, ...hands[0]], [0.1, 0.78, ...hands[1]]]) {
         ctx.lineWidth = 0.3;
@@ -5771,7 +6289,8 @@
         ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(hx, hy); ctx.stroke();
       }
 
-      if (p.weapon) drawGun(ctx, p.weapon);
+      if (knife) { ctx.save(); ctx.translate(hands[1][0] - 0.15, hands[1][1]); drawGun(ctx, p.weapon); ctx.restore(); }
+      else if (p.weapon) drawGun(ctx, p.weapon);
       circle(...hands[0], 0.15, skin);
       circle(...hands[1], 0.15, skin);
 
@@ -5827,7 +6346,11 @@
       if (me && playing) {
         const { angle, throttle, boost, gas, steer, drift } = moveInput();
         const k = 1 - Math.exp(-dt * 10);
-        if (me.car) {
+        const ridingIn = riding ? view.vehicles.get(riding) : null;
+        if (riding) { // a passenger: sit in the car (drawn as the car), following it smoothly
+          if (ridingIn) { me.x = ridingIn.x; me.y = ridingIn.y; }
+          me.cx = me.cy = 0;
+        } else if (me.car) {
           stepVehicle(me.car, vehicleTypes[me.car.type], me.car.fuel > 0 ? gas : emptyTankGas(me.car, gas), steer, drift, dt);
           me.car.x += me.cx * k; me.car.y += me.cy * k; me.car.angle += me.car.ca * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k; me.car.ca -= me.car.ca * k;
@@ -5841,7 +6364,9 @@
           if (!hiddenSelf) stepMove(me, angle, throttle, boost, dt); // in a dumpster you stay put
           me.x += me.cx * k; me.y += me.cy * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k;
-          shown.set(myId, { x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null });
+          if (firing && inv[selectedSlot]?.[0] === 'knife' && frameTime - stabAt > 550) stabAt = frameTime; // held: keep stabbing
+          const stabT = (frameTime - stabAt) / 180;
+          shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null });
         }
         // The camera locks to my player, so there's nothing to smooth twice.
         camera.x = me.x;
@@ -5980,7 +6505,7 @@
       for (const v of cars.values()) drawVehicle(v);
       drawDumpsters();
 
-      for (const b of visibleBuildings) { drawWalls(b); drawDoors(b, dt); }
+      for (const b of visibleBuildings) { drawWalls(b); drawDoors(b, dt); if (b.pumps) drawPumps(b, frameTime); }
       drawPlaceKeepers();
       drawRoadblocks();
       drawTrain(performance.now());
@@ -5992,7 +6517,7 @@
       // Townsfolk out and about (each one's look comes from their id, so it never changes).
       for (const [id, n] of view.npcs ?? []) {
         if (n.x < viewBox.l || n.x > viewBox.r || n.y < viewBox.t || n.y > viewBox.b) continue;
-        drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: null }, resolveLook({ skin: id * 7, shirt: id * 3, pants: id * 5, hat: id * 11 }));
+        drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: n.armed ? 'purse' : null, thrust: n.armed ? Math.max(0, Math.sin(frameTime / 170 + id)) : 0 }, resolveLook({ skin: id * 7, shirt: id * 3, pants: id * 5, hat: id * 11 }));
       }
       for (const t of bankData.tellers) {
         if (t.x < viewBox.l || t.x > viewBox.r || t.y < viewBox.t || t.y > viewBox.b) continue;
@@ -6024,8 +6549,20 @@
       const place = me && playing && !me.car ? nearestPlace() : null;
       const eNow = playing ? eTarget() : null;
       if (eNow) drawKeyPrompt(eNow.x, eNow.y); // just the closest E
+      else if (me && playing && edible(inv[selectedSlot]) && !hiddenSelf && !me.car && !riding) { // food in hand: E eats
+        drawKeyPrompt(me.x - 22, me.y - 58);
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        ctx.strokeText('eat', me.x - 4, me.y - 57); ctx.fillText('eat', me.x - 4, me.y - 57);
+      }
+      if (me && playing && healLeft > 0) { // still healing from food
+        ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#5ad15a';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        const t = `+${healLeft} ❤`;
+        ctx.strokeText(t, me.x + 34, me.y + 30); ctx.fillText(t, me.x + 34, me.y + 30);
+      }
       const bodyNear = me && playing && !me.car && !carrying ? nearestBody() : null;
-      const robbable = me && playing && !me.car && !bodyNear ? robTarget() : null; // F picks up a body before robbing
+      const robbable = me && playing && !me.car && !riding && !bodyNear ? robTarget() : null; // F picks up a body before robbing
       if (robbable && !crimeState.rob) drawKeyPrompt(robbable.x + 32, robbable.y - (robbable.kind === 'atm' || robbable.kind === 'lockpick' ? 36 : 66), 'F', '#e6194b');
       if (me && playing && !me.car && carrying) {
         ctx.font = '700 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
@@ -6058,6 +6595,7 @@
       const nearWh = me && playing && !me.car ? nearWarehouse() : null;
       if (wh.open && (!nearWh || nearWh.id !== wh.open)) closeWarehouse(); // walked off
       else if (nearWh && !wh.open) { const b = whBuilding(nearWh); drawKeyPrompt(b.x + b.w / 2, b.y - 58, 'B'); }
+      updateCashHold(performance.now());
       if (!shopEl.hidden && !keeper) closeShop(); // walked away
       if (!bankEl.hidden && !banker) closeBank();
       if (econ.open && !place) closePlace();
@@ -6119,8 +6657,8 @@
         const pi = info.get(id);
         if (pi) {
           ctx.font = `600 ${Math.max(12, p.r * 0.45)}px system-ui, sans-serif`;
-          ctx.fillStyle = id === myId ? '#fff' : '#ccc';
-          ctx.fillText(pi.name, p.x, p.y - p.r - 12);
+          ctx.fillStyle = id === myId ? '#fff' : teamPos.has(id) ? '#2ecc71' : '#ccc';
+          ctx.fillText(teamPos.has(id) ? `👥 ${pi.name}` : pi.name, p.x, p.y - p.r - 12);
         }
         // Health bar under the player.
         const bw = Math.max(30, p.r * 1.6);

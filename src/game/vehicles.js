@@ -16,6 +16,7 @@ export class Vehicle {
     this.vx = 0; // velocity; can point a different way from `angle` while sliding
     this.vy = 0;
     this.driver = null;
+    this.passenger = null; // a second player along for the ride (only the driver steers)
     this.health = config.vehicles.types[type].health;
     this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
     this.fuel = 40 + Math.random() * 60; // percent of a tank

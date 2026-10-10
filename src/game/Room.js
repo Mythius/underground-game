@@ -3,7 +3,8 @@ import { ServerMsg, encode } from '../net/protocol.js';
 import { logger } from '../utils/logger.js';
 import { round1 } from '../utils/math.js';
 import { Environment } from './Environment.js';
-import { World } from './World.js';
+import { Teams } from './teams.js';
+import { createWorld } from './World.js';
 
 let nextRoomId = 1;
 
@@ -13,7 +14,7 @@ export class Room {
   constructor(map = null, store = null) {
     this.id = `room-${nextRoomId++}`;
     this.store = store;
-    this.world = new World(config.world, config.player, config.weapons, map);
+    this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
     this.env = new Environment();
     this.lastOwners = '';
@@ -21,6 +22,7 @@ export class Room {
     this.saveTimer = 0;
     this.lastEnvBroadcast = 0;
     this.clients = new Set();
+    this.teams = new Teams();
     this.timer = null;
     this.stepMs = 1000 / config.tickRate;
     // Snapshots go out every N simulation ticks so they're evenly spaced for client interpolation.
@@ -160,9 +162,11 @@ export class Room {
       if (client) {
         client.player = null;
         client.send({ t: ServerMsg.DIED, killedBy: killer.name, score: victim.score });
+        for (const c of [client, ...this.teams.mates(client)]) this.teams.changed.add(c);
       }
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: victim.id });
     }
+    if (this.teams.changed.size) this.#sendTeams();
   }
 
   /** Owned warehouses back from the database, each into a warehouse of the same size. */
@@ -234,6 +238,7 @@ export class Room {
         machines: config.machines,
         belts: config.belts,
         dockReach: config.warehouses.dockReach,
+        containerCapacity: config.warehouses.containerCapacity,
         beltSpeed: config.warehouses.beltSpeed,
         sellBack: config.warehouses.sellBack,
         layouts: [...this.world.warehouses.all.values()].map((w) => w.layout()),
@@ -265,7 +270,7 @@ export class Room {
         carrySpeed: config.bodies.carrySpeed, // walking with a body over your shoulder
       },
       weapons: Object.fromEntries(
-        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel }]),
+        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel, melee: w.melee ?? false }]),
       ),
     });
   }
@@ -274,7 +279,7 @@ export class Room {
   loadMap(map) {
     for (const c of this.clients) c.player = null;
     this.#saveWarehouses();
-    this.world = new World(config.world, config.player, config.weapons, map);
+    this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
     this.lastOwners = '';
     this.sentLayouts.clear();
@@ -287,6 +292,8 @@ export class Room {
 
   removeClient(client) {
     if (!this.clients.delete(client)) return;
+    this.teams.remove(client);
+    this.#sendTeams();
     if (client.player) {
       this.world.removePlayer(client.player.id);
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
@@ -310,6 +317,8 @@ export class Room {
       players: [...this.world.players.values()].map((p) => p.publicInfo),
     });
     this.broadcast({ t: ServerMsg.PLAYER_JOINED, ...player.publicInfo }, client);
+    for (const c of [client, ...this.teams.mates(client)]) this.teams.changed.add(c); // my new player id, for their maps
+    this.#sendTeams();
   }
 
   chat(client, text) {
@@ -325,6 +334,13 @@ export class Room {
     const error = this.world.buy(p, item);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
     else client.send({ t: ServerMsg.BOUGHT, item, cash: p.cash });
+  }
+
+  eat(client) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const error = this.world.eat(p);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
   /** Markets and factories: describe, trade, factory actions and refuelling. */
@@ -419,15 +435,48 @@ export class Room {
     }
     const result = this.world.pickpocket(p);
     if (typeof result === 'string') client.send({ t: ServerMsg.ERROR, code: result });
-    else if (result?.amount !== undefined) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: result.amount });
+    else if (result?.amount !== undefined) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: result.amount, unnoticed: result.unnoticed });
   }
 
   /** Q to drop, and trunk actions. */
   inventoryAction(client, msg) {
     const p = client.player;
     if (!p?.alive) return;
+    if (msg.t === 'drop' && msg.cash) {
+      const result = this.world.dropCash(p, msg.cash);
+      if (typeof result === 'string') client.send({ t: ServerMsg.ERROR, code: result });
+      else client.send({ t: ServerMsg.DONE, what: 'drop_cash', amount: result });
+      return;
+    }
     const error = msg.t === 'drop' ? this.world.drop(p, msg.slot) : msg.t === 'lights' ? this.world.toggleLights(p) : this.world.trunk(p, msg.id, msg.action, msg.slot);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
+  /** Invite, accept, decline, leave. */
+  teamAction(client, msg) {
+    let error = null;
+    if (msg.action === 'invite') {
+      if (!client.name) error = 'join_first';
+      else {
+        const target = [...this.clients].find((c) => c.player?.id === msg.id);
+        error = target ? this.teams.invite(client, target) : 'team_no_player';
+        if (!error) target.send({ t: ServerMsg.TEAM_INVITE, id: client.id, name: client.name });
+      }
+    } else if (msg.action === 'leave') this.teams.leave(client);
+    else {
+      const from = [...this.clients].find((c) => c.id === msg.id);
+      if (msg.action === 'decline') from && this.teams.decline(client, from);
+      else error = from ? this.teams.accept(client, from) : 'team_no_invite';
+    }
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
+    else if (msg.action === 'invite') client.send({ t: ServerMsg.DONE, what: 'team_invite' });
+    this.#sendTeams();
+  }
+
+  /** Resend the team panel to whoever's changed. */
+  #sendTeams() {
+    for (const c of this.teams.changed) if (this.clients.has(c)) c.send({ t: ServerMsg.TEAM, ...this.teams.describe(c) });
+    this.teams.changed.clear();
   }
 
   bank(client, action, amount) {
@@ -475,10 +524,12 @@ export class Room {
       })(),
       slot: me.selected,
       // While driving: the car's exact state, so the client can predict it.
-      car: me.vehicle ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10] : null,
+      ride: me.vehicle && me.vehicle.driver !== me ? me.vehicle.id : 0, // a passenger: the car you're riding in
+      car: me.vehicle?.driver === me ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10] : null,
       // [type, ammo, reload seconds left] per slot; reload rounds up so it never shows 0 while still reloading.
       // Guns: [type, ammo, reload seconds left]; goods: ['goods', good, qty].
-      inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10] : null)),
+      heal: Math.round((me.digesting ?? []).reduce((sum, d) => sum + d.perSec * d.left, 0)), // still to come from food
+      inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10] : null)),
     };
   }
 
@@ -534,6 +585,8 @@ export class Room {
           npcs: this.world.townsfolk.visible(cx, cy, config.world.viewDistance),
           bodies: this.world.bodies.near(cx, cy, config.world.viewDistance),
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
+          // Teammates wherever they are, for the map: [player id, x, y, driving].
+          team: this.teams.mates(client).filter((c) => c.player?.alive).map((c) => [c.player.id, Math.round(c.player.x), Math.round(c.player.y), c.player.vehicle ? 1 : 0]),
         },
         { droppable: true },
       );

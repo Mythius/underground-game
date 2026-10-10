@@ -91,6 +91,7 @@ export class Work {
     let bestD = Infinity;
     for (const n of this.nodes.values()) {
       if (n.hp <= 0 || !kinds.includes(n.kind)) continue;
+      if (n.kind === 'wheat' && this.world.frozen) continue; // no wheat in winter
       const dx = n.x - p.x, dy = n.y - p.y;
       if (Math.abs(dx) > reach + n.r || Math.abs(dy) > reach + n.r) continue;
       const d = Math.hypot(dx, dy) - n.r;

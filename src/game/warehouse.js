@@ -18,6 +18,8 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 //   machine  takes recipe inputs moving its way (into its back half); puts outputs out of its front
 //   IN dock  puts the goods unloaded into it out onto any belt leading away from it
 //   OUT dock takes anything, from any side
+//   container takes anything from any side (up to its capacity) and puts it out onto any belt leading away
+// The docks (drawn as wooden pallets) and containers can also be loaded and emptied by hand.
 
 export const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const turn = (d, by) => (((d + by) % 4) + 4) % 4;
@@ -138,6 +140,7 @@ export class Warehouse {
     const piece = { id: this.nextPieceId++, kind, x, y, dir: turn(dir, 0), w: 1, h: 1, item: null, alt: 0 };
     if (machine) Object.assign(piece, { w: 2, h: 2, recipe: machine.recipes[0], in: {}, out: {}, progress: 0, emitTimer: 0, next: 0 });
     if (kind === 'filter') piece.filter = Object.keys(config.goods)[0];
+    if (kind === 'container') Object.assign(piece, { stock: {}, emitTimer: 0, next: 0 });
     this.#put(piece);
     this.version++;
     return null;
@@ -148,6 +151,7 @@ export class Warehouse {
     const piece = this.at(x, y);
     if (!piece) return 'nothing_there';
     if (piece.kind === 'dockIn' || piece.kind === 'dockOut') return 'cant_remove_dock';
+    if (piece.kind === 'container' && total(piece.stock) >= 1) return 'not_empty'; // empty it first
     this.#remove(piece);
     this.version++;
     return piece;
@@ -183,7 +187,13 @@ export class Warehouse {
     if (!this.owner || this.unpaid) return;
     const { beltSpeed, emitEverySec } = config.warehouses;
     for (const piece of this.pieces.values()) {
-      if (piece.w === 1) {
+      if (piece.kind === 'container') {
+        piece.emitTimer += dt;
+        if (piece.emitTimer >= emitEverySec) {
+          piece.emitTimer = 0;
+          this.#emit(piece, piece.stock, this.#around(piece));
+        }
+      } else if (piece.w === 1) {
         if (!piece.item) continue;
         piece.item.p = Math.min(1, piece.item.p + beltSpeed * dt);
         if (piece.item.p >= 1) this.#forward(piece);
@@ -224,6 +234,11 @@ export class Warehouse {
   #handTo(x, y, m, good) {
     const target = this.at(x, y);
     if (!target) return false;
+    if (target.kind === 'container') {
+      if (total(target.stock) >= config.warehouses.containerCapacity) return false;
+      add(target.stock, good, 1);
+      return true;
+    }
     if (target.w === 1) {
       if (target.item) return false;
       const d = target.dir;
@@ -250,14 +265,14 @@ export class Warehouse {
     return true;
   }
 
-  /** The tiles just outside a 2×2 piece, with the direction an item would move to get there. */
+  /** The tiles just outside a piece, with the direction an item would move to get there. */
   #around(piece, sides = [0, 1, 2, 3]) {
     const out = [];
     for (const side of sides) {
       const [dx, dy] = DIRS[side];
-      for (let i = 0; i < 2; i++) {
-        const x = dx === 1 ? piece.x + 2 : dx === -1 ? piece.x - 1 : piece.x + i;
-        const y = dy === 1 ? piece.y + 2 : dy === -1 ? piece.y - 1 : piece.y + i;
+      for (let i = 0; i < piece.w; i++) {
+        const x = dx === 1 ? piece.x + piece.w : dx === -1 ? piece.x - 1 : piece.x + i;
+        const y = dy === 1 ? piece.y + piece.h : dy === -1 ? piece.y - 1 : piece.y + i;
         out.push({ x, y, m: side });
       }
     }
@@ -368,7 +383,9 @@ export class Warehouse {
     const items = [];
     const machines = [];
     for (const p of this.pieces.values()) {
-      if (p.w === 1) {
+      if (p.kind === 'container') {
+        machines.push([p.id, 0, p.stock]);
+      } else if (p.w === 1) {
         if (p.item) items.push([p.x, p.y, p.item.good, Math.round(p.item.p * 100) / 100]);
       } else if (p.kind.startsWith('dock')) {
         machines.push([p.id, 0, p.stock]);
@@ -408,6 +425,7 @@ export class Warehouse {
       if (piece.in && p.in) piece.in = { ...p.in };
       if (piece.out && p.out) piece.out = { ...p.out };
       if (piece.w === 1 && p.item && config.goods[p.item.good]) piece.item = { good: p.item.good, p: p.item.p };
+      if (piece.kind === 'container' && p.stock) piece.stock = { ...p.stock };
     }
     this.version++;
   }
@@ -526,6 +544,7 @@ export class Warehouses {
         if (stealing) this.world.police.crime(p, 'break_in');
         return null;
       }
+      if (msg.action === 'ptake' || msg.action === 'pput') return this.#byHand(p, w, mine, msg);
       if (!mine) return 'not_owner';
       if (msg.action === 'sell') {
         account.bank += Math.floor(w.spent * config.warehouses.sellBack);
@@ -588,7 +607,36 @@ export class Warehouses {
     for (const s of car.cargo) if (s?.good) add(dock, s.good, s.qty);
     this.world.vehicles.delete(car.id);
     this.world.vehicleRespawns.push(config.vehicles.respawnSec);
-    if (car.police) this.world.police.crime(p, 'steal_police_car', true);
+    if (car.police) this.world.police.crime(p, 'steal_police_car'); // only if someone sees
+    return null;
+  }
+
+  /**
+   * By hand at a pallet (dock) or container: 'ptake' moves up to `qty` of `good` into your cargo,
+   * 'pput' moves up to `qty` of it from your cargo onto it. Taking from someone else's (lock picked) is a break-in.
+   */
+  #byHand(p, w, mine, msg) {
+    const piece = w.at(msg.x | 0, msg.y | 0);
+    if (!piece || !(piece.kind === 'dockIn' || piece.kind === 'dockOut' || piece.kind === 'container')) return 'nothing_there';
+    if (!mine && (msg.action === 'pput' || !w.owner)) return 'not_owner';
+    if (!mine && w.unlockedUntil < this.time) return 'locked';
+    if (!(piece.kind === 'container' ? this.#nearPiece(p, w, piece) : this.#nearDock(p, w, piece))) return 'too_far';
+    const good = msg.good;
+    if (!config.goods[good]) return 'unknown';
+    const holder = this.world.economy.cargoOf(p);
+    if (msg.action === 'pput') {
+      const room = (piece.kind === 'container' ? config.warehouses.containerCapacity : config.warehouses.dockCapacity) - total(piece.stock);
+      const qty = Math.min(msg.qty, holder.count(good), Math.floor(room));
+      if (qty <= 0) return holder.count(good) ? 'no_room' : 'not_carrying';
+      holder.add(good, -qty);
+      add(piece.stock, good, qty);
+      return null;
+    }
+    const qty = Math.min(msg.qty, Math.floor(piece.stock[good] ?? 0), holder.room(good));
+    if (qty <= 0) return piece.stock[good] >= 1 ? 'no_room' : 'nothing_to_take';
+    add(piece.stock, good, -qty);
+    holder.add(good, qty);
+    if (!mine) this.world.police.crime(p, 'break_in');
     return null;
   }
 

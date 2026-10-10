@@ -301,3 +301,35 @@ test('delivery bays outside places and warehouse doors, parking lots by the road
   assert.ok(parked.length > 0, 'some cars start in lots');
   for (const l of big.lots) assert.ok(!big.buildings.some((b) => l.x < b.x + b.w && b.x < l.x + l.w && l.y < b.y + b.h && b.y < l.y + l.h));
 });
+
+test('containers store what belts bring and feed belts leading away; pallets and containers load and unload by hand', () => {
+  const { world, wh, player, act } = town();
+  act({ action: 'buy' });
+  // IN dock (0,6) -> belt (2,7) -> container (3,7) -> belt (4,7) leading away.
+  assert.equal(act({ action: 'place', kind: 'belt', x: 2, y: 7, dir: E }), null);
+  assert.equal(act({ action: 'place', kind: 'container', x: 3, y: 7, dir: E }), null);
+  const box = wh.at(3, 7);
+  // By hand onto the IN pallet: it goes out along the belt into the container.
+  hotbarOf(player).add('logs', 5);
+  Object.assign(player, wh.tileCenter(2, 5));
+  assert.equal(act({ action: 'pput', x: 0, y: 6, good: 'logs', qty: 3 }), null);
+  assert.equal(hotbarOf(player).count('logs'), 2);
+  for (let i = 0; i < 30 * 6; i++) world.step(1 / 30);
+  assert.equal(box.stock.logs, 3, 'stored in the container');
+  // Nothing leads away yet, so it stays. Take one off by hand, then put a belt on and it empties out.
+  assert.equal(act({ action: 'ptake', x: 3, y: 7, good: 'logs', qty: 1 }), null);
+  assert.equal(hotbarOf(player).count('logs'), 3);
+  assert.equal(act({ action: 'remove', x: 3, y: 7 }), 'not_empty');
+  for (const x of [4, 5, 6, 7]) assert.equal(act({ action: 'place', kind: 'belt', x, y: 7, dir: E }), null); // on to the OUT pallet
+  for (let i = 0; i < 30 * 5; i++) world.step(1 / 30);
+  assert.ok(!box.stock.logs, 'pulled out onto the belt leading away');
+  assert.equal(wh.dockOut.stock.logs, 2, 'and along to the OUT pallet');
+  // Off the OUT pallet by hand, one good at a time.
+  const out = wh.dockOut;
+  out.stock = { planks: 4, flour: 2 };
+  Object.assign(player, wh.tileCenter(8, 5));
+  assert.equal(act({ action: 'ptake', x: out.x, y: out.y, good: 'planks', qty: 10 }), null);
+  assert.equal(hotbarOf(player).count('planks'), 4);
+  assert.deepEqual(out.stock, { flour: 2 });
+  assert.equal(act({ action: 'ptake', x: out.x, y: out.y, good: 'planks', qty: 1 }), 'nothing_to_take');
+});

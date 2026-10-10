@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
 import { SpatialGrid } from '../src/game/SpatialGrid.js';
-import { World } from '../src/game/World.js';
+import { World, createWorld, missingSites } from '../src/game/World.js';
 import { makeWeapon } from '../src/game/entities.js';
 
 const smallWorld = () =>
@@ -84,6 +84,7 @@ test('similar-sized players do not eat each other', () => {
 test('bullets damage and eventually kill other players', () => {
   const world = smallWorld();
   const shooter = world.spawnPlayer('shooter');
+  shooter.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   const target = world.spawnPlayer('target');
   shooter.x = 300;
   shooter.y = target.y = 500;
@@ -106,6 +107,7 @@ const pistol = config.weapons.pistol;
 test('the gun holds 5 shots, then reloads before firing again', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
+  p.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   p.x = p.y = 500;
   p.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
 
@@ -129,6 +131,7 @@ test('the gun holds 5 shots, then reloads before firing again', () => {
 test('reload input refills a partly used magazine', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
+  p.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   p.weapon.ammo = 2;
   p.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, aim: 0, fire: false, reload: true });
   p.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, aim: 0, fire: false, reload: false });
@@ -188,6 +191,7 @@ test('walking over a gun picks it up into a free slot, but not a duplicate', () 
 test('the selected gun is the one that fires; the shotgun fires several pellets', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
+  p.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   p.x = p.y = 500;
   p.addWeapon(makeWeapon('shotgun'));
   p.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, aim: 0, fire: true, slot: 1 });
@@ -205,7 +209,7 @@ test('an empty slot cannot shoot', () => {
   assert.equal(world.bullets.size, 0);
 });
 
-test('found guns drop where a player dies; the pistol does not', () => {
+test('found guns drop where a player dies; the starting knife does not', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
   p.addWeapon(makeWeapon('rifle'));
@@ -268,6 +272,7 @@ test('walls stop players', () => {
 test('walls stop bullets', () => {
   const world = walledWorld();
   const shooter = world.spawnPlayer('shooter');
+  shooter.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   const target = world.spawnPlayer('target');
   shooter.x = 500;
   target.x = 700;
@@ -466,6 +471,7 @@ test('shooting a car damages it; destroying it ejects the driver and it respawns
   car.driver = driver;
   car.health = 1;
   const shooter = world.spawnPlayer('shooter');
+  shooter.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   shooter.x = 150;
   shooter.y = 500;
   shooter.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
@@ -575,19 +581,32 @@ function shopWorld() {
   return world;
 }
 
-test('buying food next to a shopkeeper costs cash and heals and grows you', () => {
+test('food you buy goes into the hotbar; E eats it and it heals over time, not all at once', () => {
   const world = shopWorld();
   const p = world.spawnPlayer('a');
   p.x = 560;
   p.y = 500;
   p.health = 50;
   p.cash = 100;
-  const { price, heal, mass } = config.economy.menu.burger;
+  const { price, heal, healSec, mass } = config.economy.menu.burger;
   const before = { cash: p.cash, mass: p.mass };
   assert.equal(world.buy(p, 'burger'), null);
-  assert.equal(p.cash, before.cash - price);
+  assert.equal(world.buy(p, 'burger'), null);
+  assert.equal(p.cash, before.cash - 2 * price);
+  assert.equal(p.health, 50, 'buying doesn\'t heal');
+  const slot = p.inventory.findIndex((s) => s?.food === 'burger');
+  assert.deepEqual(p.inventory[slot], { food: 'burger', qty: 2 }, 'stacked in one slot');
+  p.selected = slot;
+  assert.equal(world.eat(p), null);
+  assert.equal(p.inventory[slot].qty, 1);
   assert.equal(p.mass, before.mass + mass);
-  assert.ok(p.health >= 50 + heal - 0.01);
+  world.step(1 / 30);
+  assert.ok(p.health < 50 + heal / 2, 'not instantly');
+  for (let i = 0; i < 30 * (healSec + 1); i++) world.step(1 / 30);
+  assert.ok(Math.abs(p.health - (50 + heal)) < 1, `all of it in the end (${p.health})`);
+  assert.equal(world.drop(p, slot), 'cant_drop_food');
+  p.selected = (slot + 1) % p.inventory.length;
+  if (!p.inventory[p.selected]?.food) assert.equal(world.eat(p), 'nothing_to_eat');
 });
 
 test('you cannot buy from afar or without enough cash', () => {
@@ -596,11 +615,11 @@ test('you cannot buy from afar or without enough cash', () => {
   p.x = 900;
   p.y = 900;
   p.cash = 100;
-  assert.equal(world.buy(p, 'apple'), 'too_far');
+  assert.equal(world.buy(p, 'bread'), 'too_far');
   p.x = 560;
   p.y = 500;
   p.cash = 5;
-  assert.equal(world.buy(p, 'apple'), 'not_enough_cash');
+  assert.equal(world.buy(p, 'bread'), 'not_enough_cash');
   assert.equal(p.cash, 5);
 });
 
@@ -675,6 +694,7 @@ test('bridge rails line both road edges over the river only, and stop people but
   world.rails = generateRails(world.roads, world.water);
   for (const w of world.rails) world.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
   const p = world.spawnPlayer('walker');
+  p.inventory[0] = makeWeapon('pistol'); // (everyone starts with a knife)
   p.x = 500;
   p.y = 850;
   p.applyInput({ seq: 0, angle: -Math.PI / 2, throttle: 1, boost: false });
@@ -713,4 +733,44 @@ test('in winter lakes freeze: you walk on them instead of swimming, and slide', 
   p.applyInput({ seq: 3, angle: 0, throttle: 0 });
   world.step(1 / 30);
   assert.equal(p.vx, 0);
+});
+
+test('random maps have at least one of every resource site', () => {
+  const world = createWorld({ ...config.world, foodCount: 0, pickupStart: 0 });
+  assert.deepEqual(missingSites(world), []);
+});
+
+test('a second player hops in as the passenger: only the driver steers, both ride, either can get out', () => {
+  const { world, car } = carWorld();
+  const driver = world.spawnPlayer('driver');
+  const rider = world.spawnPlayer('rider');
+  Object.assign(driver, { x: 300, y: 450 });
+  driver.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, use: true });
+  world.step(1 / 30);
+  Object.assign(rider, { x: 300, y: 550 });
+  rider.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, use: true });
+  world.step(1 / 30);
+  assert.equal(car.driver, driver, 'the first one in drives');
+  assert.equal(car.passenger, rider);
+  assert.equal(rider.vehicle, car);
+
+  rider.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, steer: 1, gas: -1 }); // ignored
+  driver.applyInput({ seq: 1, angle: 0, throttle: 0, boost: false, gas: 1 });
+  for (let i = 0; i < 30; i++) world.step(1 / 30);
+  assert.ok(car.x > 450, 'the driver drove');
+  assert.deepEqual([rider.x, rider.y], [car.x, car.y], 'the passenger came along');
+  assert.equal(world.toggleLights(rider), 'not_driving');
+
+  // A third can't get in.
+  const third = world.spawnPlayer('third');
+  Object.assign(third, { x: car.x, y: car.y + 50 });
+  third.applyInput({ seq: 0, angle: 0, throttle: 0, boost: false, use: true });
+  world.step(1 / 30);
+  assert.equal(third.vehicle, null);
+
+  rider.applyInput({ seq: 2, angle: 0, throttle: 0, boost: false, use: true });
+  world.step(1 / 30);
+  assert.equal(rider.vehicle, null);
+  assert.equal(car.passenger, null);
+  assert.equal(car.driver, driver, 'the driver stays put');
 });

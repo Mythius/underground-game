@@ -125,6 +125,8 @@ export class Townsfolk {
     this.graph = new RoadGraph(world.roads);
     this.people = [];
     this.arrivals = []; // seconds until a replacement for each townsperson who died
+    this.kills = []; // players beaten to death by townsfolk fighting back (the World removes them)
+    this.time = 0;
     // Places to visit: buildings with a dirt path that reaches a road. The path (door → road) is the
     // last stretch of every trip there.
     this.spots = [];
@@ -212,7 +214,82 @@ export class Townsfolk {
     return true;
   }
 
+  /**
+   * Stabbed, shot or robbed by `player` (the `crime`): if they're still standing, they come at them
+   * swinging a purse. Already running away, they just keep running (and remember the worse crime).
+   */
+  provoke(person, player, crime = 'assault') {
+    if (!player?.alive || person.inside > 0 || !this.people.includes(person)) return;
+    if (person.flee) {
+      const stars = config.crime.stars;
+      if ((stars[crime] ?? 1) > (stars[person.flee.crime] ?? 1)) person.flee.crime = crime;
+      return;
+    }
+    person.fight = { target: player, crime, until: this.time + config.townsfolk.fightSec, cooldown: 0.4, hits: 0 };
+  }
+
+  /** The fight's over: run from them, and phone the Militsiya once clear (unless they're dead). */
+  #runFrom(person, f) {
+    person.fight = null;
+    if (f.target.alive) person.flee = { from: f.target, crime: f.crime, until: this.time + config.townsfolk.fleeSec };
+  }
+
+  /** One step of running away; at the end they call it in and go back to their day. */
+  #flee(person, dt) {
+    const f = person.flee;
+    if (this.time >= f.until) {
+      person.flee = null;
+      this.world.police?.crime(f.from, f.crime, true);
+      return;
+    }
+    const t = f.from;
+    person.angle = Math.atan2(person.y - t.y, person.x - t.x);
+    const step = config.townsfolk.fightSpeed * dt;
+    person.x += Math.cos(person.angle) * step;
+    person.y += Math.sin(person.angle) * step;
+    this.#unwall(person);
+  }
+
+  /** Push them out of any wall they've run into (round walls, not through them). */
+  #unwall(person) {
+    for (const w of this.world.wallsNear(person.x, person.y, 17)) {
+      const cx = Math.min(Math.max(person.x, w.x), w.x + w.w), cy = Math.min(Math.max(person.y, w.y), w.y + w.h);
+      const dx = person.x - cx, dy = person.y - cy, dd = Math.hypot(dx, dy);
+      if (dd > 0 && dd < 17) { person.x += (dx / dd) * (17 - dd); person.y += (dy / dd) * (17 - dd); }
+    }
+  }
+
+  /** One step of a fight: run at them, swing when close; after a couple of hits (or giving up) they run. */
+  #fight(person, dt) {
+    const f = person.fight;
+    const t = f.target;
+    const rule = config.townsfolk;
+    const d = Math.hypot(t.x - person.x, t.y - person.y);
+    if (!t.alive || t.vehicle || t.hidden || t.jailed || this.time > f.until || d > rule.fightGiveUpRange) {
+      this.#runFrom(person, f);
+      return;
+    }
+    person.angle = Math.atan2(t.y - person.y, t.x - person.x);
+    const reach = rule.purseReach + t.radius + 17;
+    if (d > reach - 6) {
+      const step = Math.min(d - (reach - 8), rule.fightSpeed * dt);
+      person.x += Math.cos(person.angle) * step;
+      person.y += Math.sin(person.angle) * step;
+      this.#unwall(person);
+    }
+    f.cooldown -= dt;
+    if (d <= reach && f.cooldown <= 0) {
+      f.cooldown = rule.fightCooldownSec;
+      t.health -= t.maxHealth * rule.purseShare;
+      if (t.health <= 0) {
+        this.kills.push(t);
+        person.fight = null;
+      } else if (++f.hits >= rule.purseHits) this.#runFrom(person, f);
+    }
+  }
+
   step(dt) {
+    this.time += dt;
     for (let i = this.arrivals.length - 1; i >= 0; i--) {
       this.arrivals[i] -= dt;
       if (this.arrivals[i] <= 0) {
@@ -224,6 +301,14 @@ export class Townsfolk {
       if (person.inside > 0) {
         person.inside -= dt;
         if (person.inside <= 0) this.#plan(person, this.#pick());
+        continue;
+      }
+      if (person.fight) {
+        this.#fight(person, dt);
+        continue;
+      }
+      if (person.flee) {
+        this.#flee(person, dt);
         continue;
       }
       let move = person.speed * dt;
@@ -278,12 +363,12 @@ export class Townsfolk {
     }
   }
 
-  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle]. */
+  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle, fighting (purse swinging)]. */
   visible(x, y, range) {
     const out = [];
     for (const p of this.people) {
       if (p.inside > 0 || Math.abs(p.x - x) > range || Math.abs(p.y - y) > range) continue;
-      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100]);
+      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? 1 : 0]);
     }
     return out;
   }
