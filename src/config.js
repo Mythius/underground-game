@@ -130,14 +130,14 @@ export const config = Object.freeze({
     crushMinSpeed: 120, // slower than this, cars just push people
     exitDamage: 35, // to the driver when their vehicle is destroyed
     lockpickSec: 5, // holding F at someone else's car to pick its lock (it stays open until they're back in it)
-    types: {
+    types: { // (top speeds ~15% lower than at first: cars felt a little fast)
       // grip: how fast sideways sliding dies away (higher = stickier). driftGrip applies while holding Space.
-      sedan: { name: 'Lada 2107', length: 90, width: 46, maxSpeed: 420, accel: 360, brake: 800, turnRate: 2.6, grip: 7, driftGrip: 0.9, health: 180, crush: 60, spawnWeight: 40 },
-      sports: { name: 'Mercedes 600', length: 88, width: 42, maxSpeed: 540, accel: 460, brake: 900, turnRate: 3.0, grip: 8, driftGrip: 0.8, health: 140, crush: 55, spawnWeight: 15 },
-      pickup: { name: 'UAZ-469', length: 106, width: 50, maxSpeed: 360, accel: 290, brake: 700, turnRate: 2.2, grip: 6, driftGrip: 1.0, health: 260, crush: 75, spawnWeight: 25 },
+      sedan: { name: 'Lada 2107', length: 90, width: 46, maxSpeed: 360, accel: 325, brake: 800, turnRate: 2.6, grip: 7, driftGrip: 0.9, health: 180, crush: 60, spawnWeight: 40 },
+      sports: { name: 'Mercedes 600', length: 88, width: 42, maxSpeed: 460, accel: 415, brake: 900, turnRate: 3.0, grip: 8, driftGrip: 0.8, health: 140, crush: 55, spawnWeight: 15 },
+      pickup: { name: 'UAZ-469', length: 106, width: 50, maxSpeed: 305, accel: 260, brake: 700, turnRate: 2.2, grip: 6, driftGrip: 1.0, health: 260, crush: 75, spawnWeight: 25 },
       // Militsiya cars: driven by police AI only (never parked at random or sold).
-      police: { name: 'Militsiya Lada', length: 92, width: 46, maxSpeed: 470, accel: 420, brake: 900, turnRate: 2.8, grip: 8, driftGrip: 1, health: 320, crush: 50, spawnWeight: 0 },
-      truck: { name: 'KAMAZ', length: 150, width: 58, maxSpeed: 290, accel: 190, brake: 550, turnRate: 1.6, grip: 5, driftGrip: 1.2, health: 400, crush: 100, spawnWeight: 20 },
+      police: { name: 'Militsiya Lada', length: 92, width: 46, maxSpeed: 400, accel: 380, brake: 900, turnRate: 2.8, grip: 8, driftGrip: 1, health: 320, crush: 50, spawnWeight: 0 },
+      truck: { name: 'KAMAZ', length: 150, width: 58, maxSpeed: 245, accel: 170, brake: 550, turnRate: 1.6, grip: 5, driftGrip: 1.2, health: 400, crush: 100, spawnWeight: 20 },
     },
   },
 

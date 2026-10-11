@@ -3458,6 +3458,7 @@
           const fx = Math.cos(v.angle), fy = Math.sin(v.angle);
           if (cx < -400 || cx > w + 400 || cy < -400 || cy > h + 400) continue;
           lightHole(cx, cy, 10, stats.length * 0.8, 0.7); // dashboard glow
+          if (v.boosting) { const pipe = exhaustOf(v, stats); lightHole(pipe.x + ox - fx * 25, pipe.y + oy - fy * 25, 0, 90, 0.9); } // the exhaust fire lights the road
           if (v.lights) for (const d of [stats.length * 0.9, stats.length * 0.9 + 110, stats.length * 0.9 + 230]) {
             lightHole(cx + fx * d, cy + fy * d, 0, 70 + d * 0.35, 0.85); // headlight beam
           }
@@ -6898,16 +6899,6 @@
       ctx.translate(v.x, v.y);
       ctx.rotate(v.angle);
 
-      if (v.boosting) { // burning vodka: blue-orange flames licking out of the exhaust
-        const t = performance.now() / 1000;
-        for (const s of [-0.22, 0.22]) {
-          const len = 26 + 10 * Math.sin(t * 40 + s * 9) + 6 * Math.random();
-          const g = ctx.createLinearGradient(-L / 2, 0, -L / 2 - len, 0);
-          g.addColorStop(0, 'rgba(120, 190, 255, .95)'); g.addColorStop(0.35, 'rgba(255, 170, 60, .9)'); g.addColorStop(1, 'rgba(255, 80, 20, 0)');
-          ctx.fillStyle = g;
-          ctx.beginPath(); ctx.moveTo(-L / 2 + 2, s * W - 5); ctx.lineTo(-L / 2 - len, s * W); ctx.lineTo(-L / 2 + 2, s * W + 5); ctx.fill();
-        }
-      }
       ctx.fillStyle = 'rgba(0, 0, 0, .35)';
       ctx.beginPath(); ctx.roundRect(-L / 2 + 6, -W / 2 + 8, L, W, 10); ctx.fill(); // shadow
       ctx.fillStyle = '#141414'; // wheels
@@ -6990,6 +6981,66 @@
       if (v.lights) { // headlight beams (C toggles them)
         ctx.fillStyle = 'rgba(255, 246, 176, .12)';
         ctx.beginPath(); ctx.moveTo(L / 2, -W / 2 + 4); ctx.lineTo(L / 2 + 120, -W); ctx.lineTo(L / 2 + 120, W); ctx.lineTo(L / 2, W / 2 - 4); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // ---- vodka boost: fire out of the exhaust ------------------------------------------------------
+    const embers = []; // { x, y, vx, vy, born, life }: sparks thrown back by a boosting car
+    let lastEmberAt = 0;
+
+    /** Where the exhaust pipe is: the back of the car, a little to one side. */
+    const exhaustOf = (v, stats) => ({ x: v.x - Math.cos(v.angle) * (stats.length / 2 + 2) - Math.sin(v.angle) * stats.width * 0.22, y: v.y - Math.sin(v.angle) * (stats.length / 2 + 2) + Math.cos(v.angle) * stats.width * 0.22 });
+
+    /** A flickering jet of fire out of a boosting car's exhaust: white-blue at the pipe, orange, then red smoke. */
+    function drawExhaustFire(v, now) {
+      const stats = vehicleTypes[v.type];
+      if (!v.boosting || !stats) return;
+      const t = now / 1000;
+      const pipe = exhaustOf(v, stats);
+      ctx.save();
+      ctx.translate(pipe.x, pipe.y);
+      ctx.rotate(v.angle + Math.PI); // +x points out of the back
+      ctx.globalCompositeOperation = 'lighter'; // fire adds light
+      const glow = ctx.createRadialGradient(10, 0, 0, 10, 0, 46);
+      glow.addColorStop(0, 'rgba(255, 150, 50, .45)'); glow.addColorStop(1, 'rgba(255, 90, 20, 0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(10, 0, 46, 0, Math.PI * 2); ctx.fill();
+      for (const [len, wide, inner, outer] of [[62, 11, 'rgba(255, 120, 30, .9)', 'rgba(200, 40, 10, 0)'], [40, 7, 'rgba(255, 210, 90, .95)', 'rgba(255, 120, 30, 0)'], [20, 4, 'rgba(210, 235, 255, 1)', 'rgba(120, 180, 255, 0)']]) {
+        const l = len * (0.8 + 0.25 * Math.sin(t * 37 + len) + 0.15 * Math.random());
+        const g = ctx.createLinearGradient(0, 0, l, 0);
+        g.addColorStop(0, inner); g.addColorStop(1, outer);
+        ctx.fillStyle = g;
+        const wob = Math.sin(t * 53 + len) * wide * 0.35;
+        ctx.beginPath();
+        ctx.moveTo(0, -wide);
+        ctx.quadraticCurveTo(l * 0.5, -wide * 1.1 + wob, l, wob);
+        ctx.quadraticCurveTo(l * 0.5, wide * 1.1 + wob, 0, wide);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+      // Throw a few sparks back (they drift off and fade on their own).
+      if (now - lastEmberAt > 16 && embers.length < 160) {
+        lastEmberAt = now;
+        for (let i = 0; i < 2; i++) {
+          const a = v.angle + Math.PI + (Math.random() - 0.5) * 0.7, sp = 120 + Math.random() * 160;
+          embers.push({ x: pipe.x, y: pipe.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, born: now, life: 250 + Math.random() * 300 });
+        }
+      }
+    }
+
+    function drawEmbers(now, dt) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = embers.length - 1; i >= 0; i--) {
+        const e = embers[i];
+        const age = (now - e.born) / e.life;
+        if (age >= 1) { embers.splice(i, 1); continue; }
+        e.x += e.vx * dt; e.y += e.vy * dt;
+        e.vx *= 1 - 3 * dt; e.vy *= 1 - 3 * dt;
+        ctx.fillStyle = `rgba(255, ${Math.round(200 - 140 * age)}, 60, ${1 - age})`;
+        ctx.beginPath(); ctx.arc(e.x, e.y, 2.6 * (1 - age) + 0.6, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
     }
@@ -7480,6 +7531,8 @@
       }
       drawDust(frameTime);
       for (const v of cars.values()) drawVehicle(v);
+      for (const v of cars.values()) drawExhaustFire(v, frameTime); // (over the cars, so the jet shows)
+      drawEmbers(frameTime, dt);
       drawDumpsters();
 
       for (const b of visibleBuildings) { drawWalls(b); drawDoors(b, dt); if (b.pumps) drawPumps(b, frameTime); }
@@ -7561,18 +7614,18 @@
       const place = me && playing && !me.car ? nearestPlace() : null;
       const eNow = playing ? eTarget() : null;
       if (eNow) drawKeyPrompt(eNow.x, eNow.y); // just the closest E
-      else if (me && playing && edible(inv[selectedSlot]) && !hiddenSelf && !me.car && !riding) { // food in hand: E eats
+      else if (me && playing && fuelCar()) { // fuel or vodka in hand beside a car: E pours it in (before drinking it)
+        drawKeyPrompt(me.x - 22, me.y - 58);
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        const what = inv[selectedSlot]?.[1] === 'vodka' ? 'pour into car (boost)' : 'fill tank';
+        ctx.strokeText(what, me.x - 4, me.y - 57); ctx.fillText(what, me.x - 4, me.y - 57);
+      } else if (me && playing && edible(inv[selectedSlot]) && !hiddenSelf && !me.car && !riding) { // food in hand: E eats
         drawKeyPrompt(me.x - 22, me.y - 58);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
         const verb = isGoods(inv[selectedSlot]) && inv[selectedSlot][1] === 'vodka' ? 'drink' : 'eat';
         ctx.strokeText(verb, me.x - 4, me.y - 57); ctx.fillText(verb, me.x - 4, me.y - 57);
-      } else if (me && playing && fuelCar()) { // fuel in hand beside a car: E pours it in
-        drawKeyPrompt(me.x - 22, me.y - 58);
-        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
-        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const what = inv[selectedSlot]?.[1] === 'vodka' ? 'fill boost' : 'fill tank';
-        ctx.strokeText(what, me.x - 4, me.y - 57); ctx.fillText(what, me.x - 4, me.y - 57);
       }
       if (me && playing && healLeft > 0) { // still healing from food
         ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#5ad15a';
