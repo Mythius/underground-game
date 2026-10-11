@@ -72,7 +72,7 @@ export class Work {
     }
     for (const p of w.players.values()) {
       p.inventory.forEach((slot, i) => {
-        if (!slot?.tool) return;
+        if (!slot?.tool || !slot.site) return; // (a fishing rod is yours to keep)
         const b = this.siteOf(slot.site);
         const m = config.work.leaveRange;
         if (b && p.x > b.x - m && p.x < b.x + b.w + m && p.y > b.y - m && p.y < b.y + b.h + m && p.alive) return;
@@ -143,7 +143,7 @@ export class Work {
       p.inventory[held] = null;
       return { returned: type };
     }
-    if (p.inventory.some((s) => s?.tool)) return 'one_tool';
+    if (p.inventory.some((s) => s?.tool && s.site)) return 'one_tool';
     const free = p.inventory.indexOf(null);
     if (free < 0) return 'no_room';
     p.inventory[free] = { type, tool: true, site: siteId };

@@ -3,6 +3,10 @@ import { bezierPoint } from './terrain.js';
 import { WAREHOUSE_SIZES } from './buildings.js';
 import { SIDEWALK, inBox } from './placement.js';
 
+const STUCK_SEC = 2; // how often a walker's progress is checked
+const STUCK_MOVE = 25; // moving less than this in STUCK_SEC counts as stuck
+const STUCK_CLEAR = 200; // this far from where they got stuck, they're on their way again
+
 // NPC townsfolk: they walk out of a building, along its dirt path to the road, along the roads to
 // another building's path, and go in for a while. Where they go, they spend: food at shops (bread),
 // fuel at gas stations, goods at markets. That spending is the town's demand.
@@ -138,7 +142,7 @@ export class Townsfolk {
       this.spots.push({ building: b.id, kind, walk });
     }
     this.nextId = 1;
-    const count = this.spots.length ? Math.round(config.townsfolk.perBuilding * world.buildings.length) : 0;
+    const count = this.spots.length ? Math.min(config.townsfolk.maxPopulation, Math.round(config.townsfolk.perBuilding * world.buildings.length)) : 0;
     for (let i = 0; i < count; i++) this.#spawn();
   }
 
@@ -183,6 +187,59 @@ export class Townsfolk {
     const back = [...dest.walk].reverse(); // road → door
     const roads = this.graph.route(out.at(-1), back[0]).map((p, i, list) => this.#pavement(p, list[i - 1] ?? p, list[i + 1] ?? p, person.side));
     person.route = [...out, ...roads, ...back];
+    person.dest = dest;
+  }
+
+  /**
+   * Barely moved for a couple of seconds while out walking (a car or a crowd in the way, or lost after
+   * running off)? First they step aside in another direction, then they head somewhere else from where
+   * they stand, and as a last resort they slip into the building they were making for.
+   */
+  #stuckCheck(person, dt) {
+    const c = (person.stuck ??= { x: person.x, y: person.y, left: person.route.length, t: 0, tries: 0 });
+    if ((c.t += dt) < STUCK_SEC) return;
+    const moved = Math.hypot(person.x - c.x, person.y - c.y);
+    const passed = person.route.length < c.left; // got past a waypoint (some routes double back on themselves)
+    Object.assign(c, { x: person.x, y: person.y, t: 0 });
+    if (moved >= STUCK_MOVE || passed || !person.route.length) {
+      c.left = person.route.length;
+      // Well clear of where they got stuck: it worked. (Reaching their own sidestep doesn't count.)
+      if (c.where && Math.hypot(person.x - c.where.x, person.y - c.where.y) > STUCK_CLEAR) Object.assign(c, { tries: 0, where: null });
+      return;
+    }
+    c.where ??= { x: person.x, y: person.y };
+    c.tries++;
+    if (c.tries <= 2) this.#sidestep(person, c.tries);
+    else if (c.tries <= 4) this.#replan(person, this.#pick());
+    c.left = person.route.length;
+    if (c.tries <= 4) return;
+    // Nothing works: they go indoors at their destination and set off again later.
+    const at = person.dest ?? person.at;
+    Object.assign(person, { at, dest: null, route: [], x: at.walk[0].x, y: at.walk[0].y, inside: config.townsfolk.minStaySec });
+    Object.assign(c, { tries: 0, where: null });
+  }
+
+  /** A few steps off to one side (or back the way they came), somewhere clear, before carrying on. */
+  #sidestep(person, tries) {
+    const next = person.route[0];
+    const ahead = Math.atan2(next.y - person.y, next.x - person.x);
+    const side = (tries % 2 ? 1 : -1) * (Math.random() < 0.5 ? 1 : -1);
+    for (const turn of [Math.PI / 2, (2 * Math.PI) / 3, Math.PI, Math.PI / 3]) {
+      for (const s of [side, -side]) {
+        const a = ahead + s * turn;
+        const x = person.x + Math.cos(a) * 90, y = person.y + Math.sin(a) * 90;
+        if (this.world.isBlocked?.(x, y, 20) || this.world.steerAroundCars?.(x, y, a) !== a) continue;
+        person.route.unshift({ x, y });
+        return;
+      }
+    }
+  }
+
+  /** Off to `dest` from wherever they are now (not from the door they left by). */
+  #replan(person, dest) {
+    const back = [...dest.walk].reverse(); // road → door
+    const roads = this.graph.route({ x: person.x, y: person.y }, back[0]).map((p, i, list) => this.#pavement(p, list[i - 1] ?? p, list[i + 1] ?? p, person.side));
+    person.route = [...roads, ...back];
     person.dest = dest;
   }
 
@@ -308,7 +365,10 @@ export class Townsfolk {
     for (const person of this.people) {
       if (person.inside > 0) {
         person.inside -= dt;
-        if (person.inside <= 0) this.#plan(person, this.#pick());
+        if (person.inside <= 0) {
+          this.#plan(person, this.#pick());
+          person.stuck = null; // a fresh start for the stuck check
+        }
         continue;
       }
       if (person.fight) {
@@ -319,6 +379,7 @@ export class Townsfolk {
         this.#flee(person, dt);
         continue;
       }
+      this.#stuckCheck(person, dt);
       let move = person.speed * dt;
       while (move > 0 && person.route.length) {
         const next = person.route[0];
@@ -383,7 +444,7 @@ export class Townsfolk {
     const out = [];
     for (const p of this.people) {
       if (p.inside > 0 || Math.abs(p.x - x) > range || Math.abs(p.y - y) > range) continue;
-      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? 1 : p.flee ? 2 : 0]);
+      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? (p.fight.crime === 'pickpocket' ? 3 : 1) : p.flee ? 2 : 0]); // 1 fighting, 2 fleeing, 3 fighting a pickpocket
     }
     return out;
   }

@@ -20,6 +20,8 @@ import { Railway, planRailway, railCorridor } from './railway.js';
 import { Roadblocks } from './roadblocks.js';
 import { Bodies, generateDumpsters } from './bodies.js';
 import { Hires } from './hires.js';
+import { Fishing } from './fishing.js';
+import { Furnishings } from './furnishing.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -48,6 +50,14 @@ export function createWorld(opts = config.world, playerOpts = config.player, wea
   }
   logger.warn('random map is missing resource sites', { missing: missingSites(best.world) });
   return best.world;
+}
+
+/** A saved trunk slot back as it goes in a car: goods, a gun (with its ammo), or nothing. */
+export function trunkSlot(s) {
+  if (s?.good && config.goods[s.good] && s.qty > 0) return { good: s.good, qty: s.qty };
+  if (s?.type === 'rod') return { type: 'rod' };
+  if (s?.type && config.weapons[s.type]) return { type: s.type, ammo: Math.max(0, Math.min(Number(s.ammo) || 0, config.weapons[s.type].magazineSize)) };
+  return null;
 }
 
 export class World {
@@ -169,6 +179,8 @@ export class World {
     this.onCarLost = null; // (vehicle) a saved car blown up: what was in its trunk is gone
     this.roadblocks = new Roadblocks(this, railStrip); // after vehicle ids start: their Militsiya cars are vehicles
     this.hires = new Hires(this); // goons, guards and hitmen from the БАР
+    this.fishing = new Fishing(this);
+    this.furnishings = new Furnishings(this); // cabinets, beds and sofas placed in homes and warehouses
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.rebuildGrid();
@@ -352,6 +364,7 @@ export class World {
 
   /** Buys food from a shopkeeper in reach. Returns an error code, or null on success. */
   buy(p, item) {
+    if (item === 'rod') return this.#buyRod(p);
     const food = config.economy.menu[item];
     if (!food) return 'unknown_item';
     const reach = config.economy.shopReach + p.radius;
@@ -368,6 +381,21 @@ export class World {
     p.cash -= price;
     if (bread) bread.stock -= food.bread;
     this.addFood(p, item, 1);
+    return null;
+  }
+
+  /** A fishing rod from a shopkeeper in reach (cash). One's enough: it never wears out. */
+  #buyRod(p) {
+    const reach = config.economy.shopReach + p.radius;
+    const keeper = this.shopkeepers.find((s) => Math.hypot(s.x - p.x, s.y - p.y) < reach);
+    if (p.vehicle || !keeper) return 'too_far';
+    if (this.economy.isClosed(this.economy.markets.get(keeper.building))) return 'closed_raid';
+    if (p.inventory.some((s) => s?.type === 'rod')) return 'have_rod';
+    if (p.cash < config.fishing.rodPrice) return 'not_enough_cash';
+    const free = p.inventory.indexOf(null);
+    if (free < 0) return 'hotbar_full';
+    p.cash -= config.fishing.rodPrice;
+    p.inventory[free] = { type: 'rod', tool: true };
     return null;
   }
 
@@ -398,7 +426,7 @@ export class World {
   eat(p) {
     const slot = p.inventory[p.selected];
     // Shop food, a stack of bread from the bakery (it eats like a shop loaf), or a bottle of vodka.
-    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : slot?.good === 'vodka' ? config.economy.vodka : null;
+    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : slot?.good === 'vodka' ? config.economy.vodka : slot?.good === 'fish' ? config.economy.fish : null;
     if (!food) return 'nothing_to_eat';
     if (p.jailed || p.hidden) return 'busy';
     slot.qty -= 1;
@@ -414,10 +442,13 @@ export class World {
     return null;
   }
 
-  /** E with fuel in hand beside a car: pour it in. One fuel fills 10% of a tank, as at the pumps. */
+  /**
+   * E with fuel in hand beside a car: pour it in. One fuel fills fuelCanShare (20%) of a tank.
+   * Vodka goes in the boost tank instead: perVodka (25%) a bottle.
+   */
   pourFuel(p) {
     const slot = p.inventory[p.selected];
-    if (slot?.good !== 'fuel') return 'no_fuel';
+    if (slot?.good !== 'fuel' && slot?.good !== 'vodka') return 'no_fuel';
     if (p.vehicle || p.jailed || p.hidden) return 'busy';
     let car = null;
     let best = config.vehicles.reach;
@@ -426,11 +457,13 @@ export class World {
       if (d < best) [car, best] = [v, d];
     }
     if (!car) return 'no_car_near';
-    const units = Math.min(Math.ceil((100 - car.fuel) / 10), slot.qty);
-    if (car.fuel >= 99 || units <= 0) return 'tank_full';
+    const key = slot.good === 'vodka' ? 'boost' : 'fuel';
+    const share = slot.good === 'vodka' ? config.vehicles.boost.perVodka : config.vehicles.fuelCanShare;
+    const units = Math.min(Math.ceil((100 - car[key]) / share), slot.qty);
+    if (car[key] >= 99 || units <= 0) return key === 'boost' ? 'boost_full' : 'tank_full';
     slot.qty -= units;
     if (slot.qty <= 0) p.inventory[p.selected] = null;
-    car.fuel = Math.min(100, car.fuel + units * 10);
+    car[key] = Math.min(100, car[key] + units * share);
     return null;
   }
 
@@ -539,7 +572,7 @@ export class World {
       return 'no_parking';
     }
     Object.assign(v, { carId: saved.id, color: saved.color, fuel: saved.fuel });
-    saved.cargo.forEach((s, i) => { if (i < v.cargo.length) v.cargo[i] = s && { good: s.good, qty: s.qty }; });
+    saved.cargo.forEach((s, i) => { if (i < v.cargo.length) v.cargo[i] = trunkSlot(s); });
     p.lastVehicle = v;
     return null;
   }
@@ -580,7 +613,7 @@ export class World {
     if (!slot) return 'nothing_to_drop';
     if (slot.type === STARTER_WEAPON) return 'cant_drop_starter';
     if (slot.food) return 'cant_drop_food'; // eat it (E)
-    if (slot.tool) return 'cant_drop_tool'; // it's the foreman's
+    if (slot.tool && slot.type !== 'rod') return 'cant_drop_tool'; // it's the foreman's (a fishing rod drops like a gun)
     p.inventory[index] = null;
     const pickup = slot.good
       ? new Pickup(this.nextEntityId++, p.x, p.y, null, 0, { good: slot.good, qty: slot.qty })
@@ -608,7 +641,8 @@ export class World {
 
   /**
    * Trunks, only from the driver's seat: 'take' moves trunk slot `slot` into your hotbar, 'put' moves
-   * hotbar slot `slot` into the trunk — as much as fits. (Markets still use a nearby car's trunk.)
+   * hotbar slot `slot` into the trunk — as much as fits. A gun takes a whole slot either way (it keeps
+   * its ammo). (Markets still use a nearby car's trunk.)
    */
   trunk(p, id, action, slot) {
     const v = this.vehicles.get(id);
@@ -616,6 +650,17 @@ export class World {
     if (action !== 'take' && action !== 'put') return 'unknown';
     const [from, to, list] = action === 'take' ? [trunkOf(v), hotbarOf(p), v.cargo] : [hotbarOf(p), trunkOf(v), p.inventory];
     const stack = list[slot];
+    const rod = stack?.type === 'rod';
+    if (rod || (stack?.type && config.weapons[stack.type] && !stack.tool)) {
+      const into = action === 'take' ? p.inventory : v.cargo;
+      if (action === 'take' && p.hasWeapon(stack.type)) return 'already_have';
+      const free = into.indexOf(null);
+      if (free < 0) return 'no_room';
+      if (rod) into[free] = action === 'take' ? { type: 'rod', tool: true } : { type: 'rod' };
+      else into[free] = action === 'take' ? { ...makeWeapon(stack.type), ammo: stack.ammo } : { type: stack.type, ammo: stack.ammo };
+      list[slot] = null;
+      return null;
+    }
     if (!stack?.good) return 'nothing_there';
     const moved = Math.min(stack.qty, to.room(stack.good));
     if (moved <= 0) return 'no_room';
@@ -705,7 +750,7 @@ export class World {
       this.bodies.add({
         x: p.x, y: p.y, angle: p.input.aim ?? 0, kind: 'player', name: p.name, victimId: p.id,
         look: [p.look.skin, p.look.shirt, p.look.pants, p.look.hat],
-        items: p.inventory.map((s) => (s && s.type !== STARTER_WEAPON && !s.tool ? (s.good || s.food ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
+        items: p.inventory.map((s) => (s && s.type !== STARTER_WEAPON && (!s.tool || s.type === 'rod') ? (s.good || s.food ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
         cash: p.cash,
       });
       p.cash = 0;
@@ -782,6 +827,7 @@ export class World {
       }
     }
     this.#digest(dt);
+    this.fishing.step(dt);
     this.townsfolk.step(dt);
     for (const p of this.townsfolk.kills.splice(0)) { // beaten by a townsperson who fought back
       if (!p.alive) continue;
@@ -794,15 +840,6 @@ export class World {
     for (const { victim, killer } of deaths) this.bodies.setKiller(victim.id, killer);
     this.bodies.step(dt);
     doorChanges.push(...this.pendingDoors.splice(0));
-
-    const { streetIncome, streetIncomeSec } = config.economy;
-    for (const p of this.players.values()) {
-      p.cashTimer += dt;
-      if (p.cashTimer >= streetIncomeSec) {
-        p.cashTimer -= streetIncomeSec;
-        p.cash += streetIncome;
-      }
-    }
 
     for (let i = this.vehicleRespawns.length - 1; i >= 0; i--) {
       this.vehicleRespawns[i] -= dt;
@@ -1069,7 +1106,10 @@ export class World {
       const fromY = v.y;
       // Out of town (gravel, grass, snow) cars grip less than on city asphalt. Keep in sync with the client.
       const surface = !this.city || inBox(this.city, v.x, v.y) ? 1 : config.vehicles.gravelGrip;
-      stepVehicle(v, v.stats, gas, input?.steer ?? 0, input?.drift ?? false, dt, this, collide, this.gripScale * surface);
+      // Space with vodka in the boost tank (players only): burn it.
+      v.boosting = Boolean(d && !v.police && input.boost && v.boost > 0 && gas > 0);
+      if (v.boosting) v.boost = Math.max(0, v.boost - config.vehicles.boost.burnPerSec * dt);
+      stepVehicle(v, v.stats, gas, input?.steer ?? 0, input?.drift ?? false, dt, this, collide, this.gripScale * surface, v.boosting);
       if (d && !v.police) v.fuel = Math.max(0, v.fuel - Math.hypot(v.x - fromX, v.y - fromY) * config.fuel.perUnit);
       v.slipping = Math.abs(vehicleMotion(v).lateral) > 90;
       if (d) {

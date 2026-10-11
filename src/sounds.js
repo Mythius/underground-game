@@ -46,6 +46,9 @@ export const SOUND_SLOTS = [
     { id: 'pick', name: 'Pickaxe on rock' },
     { id: 'chop', name: 'Axe on a tree' },
     { id: 'harvest', name: 'Scything wheat' },
+    { id: 'cast', name: 'Casting a fishing line' },
+    { id: 'splash', name: 'A fish splashing on the line' },
+    { id: 'reel', name: 'Reeling in' },
   ] },
   { group: 'Town & money', slots: [
     { id: 'doorOpen', name: 'Door opens' },

@@ -46,3 +46,12 @@ test('clamps input throttle and coerces boost', () => {
   const { msg } = decodeClientMessage('{"t":"input","seq":3,"angle":1.5,"throttle":9,"boost":"yes"}');
   assert.deepEqual(msg, { t: 'input', seq: 3, angle: 1.5, throttle: 1, boost: false, aim: 1.5, fire: false, reload: false, use: false, slot: null, gas: 0, steer: 0, drift: false, rob: false });
 });
+
+test('fishing messages: cast with an angle, pull with what you saw; rods are on the shop list', () => {
+  assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'cast', angle: 1.5 })).msg, { t: 'fish', action: 'cast', angle: 1.5 });
+  assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'pull', seen: 0.8 })).msg, { t: 'fish', action: 'pull', seen: 0.8 });
+  assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'pull' })).msg, { t: 'fish', action: 'pull', seen: null });
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'cast' })).ok, false, 'a cast needs a direction');
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'dynamite' })).ok, false);
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'buy', item: 'rod' })).ok, true);
+});

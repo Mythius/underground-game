@@ -627,11 +627,12 @@ test('you cannot buy from afar or without enough cash', () => {
   assert.equal(p.cash, 5);
 });
 
-test('cash trickles in, and a dead player drops their cash for others to pick up', () => {
+test('no free money over time, and a dead player drops their cash for others to pick up', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
-  for (let i = 0; i < 4; i++) world.step(config.economy.streetIncomeSec);
-  assert.equal(p.cash, 4 * config.economy.streetIncome);
+  const start = p.cash;
+  for (let i = 0; i < 4; i++) world.step(3);
+  assert.equal(p.cash, start, 'cash only comes from work, trade and crime');
 
   p.cash = 300;
   p.x = p.y = 500;

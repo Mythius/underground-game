@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
-import { World } from '../src/game/World.js';
+import { World, trunkSlot } from '../src/game/World.js';
 import { Vehicle } from '../src/game/vehicles.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { Slots, hotbarOf, trunkOf } from '../src/game/cargo.js';
@@ -254,17 +254,78 @@ test('dragging: drop any hotbar slot', () => {
   assert.equal(world.drop(player, 0), 'cant_drop_starter');
 });
 
-test('fuel in hand pours into the car beside you, 10% of a tank each', () => {
+test('fuel in hand pours into the car beside you, 20% of a tank each', () => {
   const { world, player } = town();
   Object.assign(player, { x: 2000, y: 2000 });
   carry(player, { fuel: 3 });
   player.selected = player.inventory.findIndex((s) => s?.good === 'fuel');
   assert.equal(world.pourFuel(player), 'no_car_near');
   const car = new Vehicle(9002, 'sedan', 2000, 2070, 0);
-  car.fuel = 85; // needs two
+  car.fuel = 65; // needs two
   world.vehicles.set(car.id, car);
   assert.equal(world.pourFuel(player), null);
   assert.equal(car.fuel, 100);
   assert.equal(carried(player).fuel, 1, 'only what the tank needed');
   assert.equal(world.pourFuel(player), 'tank_full');
+});
+
+test('guns go in the trunk too: a whole slot each, ammo and all, and they keep in a saved car', () => {
+  const { world, player } = town();
+  const car = new Vehicle(9201, 'sedan', 2000, 2000, 0);
+  world.vehicles.set(car.id, car);
+  Object.assign(player, { vehicle: car, x: car.x, y: car.y });
+  car.driver = player;
+  const gun = world.makeWeapon('rifle');
+  gun.ammo = 7;
+  player.inventory[2] = gun;
+  assert.equal(world.trunk(player, car.id, 'put', 2), null);
+  assert.equal(player.inventory[2], null);
+  assert.deepEqual(car.cargo.find(Boolean), { type: 'rifle', ammo: 7 });
+  trunkOf(car).add('planks', 1); // goods still fit round it
+  assert.equal(trunkOf(car).count('planks'), 1);
+  // A saved car brings it back.
+  const saved = JSON.parse(JSON.stringify(car.cargo)).map(trunkSlot);
+  assert.deepEqual(saved.find((s) => s?.type), { type: 'rifle', ammo: 7 });
+  // And out again, a gun you can shoot.
+  const at = car.cargo.findIndex((s) => s?.type === 'rifle');
+  assert.equal(world.trunk(player, car.id, 'take', at), null);
+  const back = player.inventory.find((s) => s?.type === 'rifle');
+  assert.equal(back.ammo, 7);
+  assert.equal(car.cargo[at], null);
+  assert.ok(player.inventory.filter((s) => s?.type === 'rifle').length === 1);
+  // A full trunk: no room.
+  car.cargo.fill({ good: 'planks', qty: 1 });
+  player.selected = player.inventory.indexOf(back);
+  assert.equal(world.trunk(player, car.id, 'put', player.selected), 'no_room');
+});
+
+test('vodka poured into a car fills its boost tank; Space burns it for more speed, then it eases back', () => {
+  const { world, player } = town();
+  Object.assign(player, { x: 2000, y: 2000 });
+  carry(player, { vodka: 5 });
+  player.selected = player.inventory.findIndex((s) => s?.good === 'vodka');
+  const car = new Vehicle(9010, 'sedan', 2000, 2070, 0);
+  car.fuel = 100;
+  world.vehicles.set(car.id, car);
+  assert.equal(world.pourFuel(player), null);
+  assert.equal(car.boost, 100, 'four bottles fill it');
+  assert.equal(carried(player).vodka, 1);
+  assert.equal(car.fuel, 100, 'not the fuel tank');
+  assert.equal(world.pourFuel(player), 'boost_full');
+  // Drive flat out along an open stretch, without and then with the boost.
+  const top = car.stats.maxSpeed;
+  Object.assign(player, { vehicle: car, x: car.x, y: car.y });
+  car.driver = player;
+  Object.assign(car, { x: 300, y: 3700, angle: 0, vx: 0, vy: 0 });
+  const drive = (sec, boost) => { for (let i = 0; i < sec * 30; i++) { player.input.gas = 1; player.input.boost = boost; world.step(1 / 30); } };
+  drive(4, false);
+  const plain = Math.hypot(car.vx, car.vy);
+  assert.ok(plain <= top + 1, `no faster than its top speed (${plain})`);
+  assert.equal(car.boost, 100, 'nothing burnt without Space');
+  drive(1.5, true);
+  assert.ok(Math.hypot(car.vx, car.vy) > top * 1.15, 'boosting: faster than its normal top speed');
+  assert.ok(car.boost < 100 && car.boost > 50, 'burning');
+  car.boost = 0;
+  drive(4, true);
+  assert.ok(Math.hypot(car.vx, car.vy) <= top + 1, 'out of vodka: back down to normal');
 });

@@ -25,7 +25,7 @@ export class Police {
     this.robCooldown = new Map(); // target key -> economy time it can be robbed again
     this.nextOfficerId = 1;
     if (!this.stations.length) return;
-    const cars = Math.max(1, Math.round(world.buildings.length * config.police.carsPerBuildings));
+    const cars = Math.min(config.police.maxUnits, Math.max(1, Math.round(world.buildings.length * config.police.carsPerBuildings)));
     for (let i = 0; i < cars; i++) this.#replace(this.stations[i % this.stations.length]);
   }
 

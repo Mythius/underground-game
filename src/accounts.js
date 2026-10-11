@@ -67,8 +67,10 @@ export class AccountStore {
     if (!has('accounts', 'cash')) this.db.exec('ALTER TABLE accounts ADD COLUMN cash INTEGER NOT NULL DEFAULT 0');
     if (!has('accounts', 'carried')) this.db.exec('ALTER TABLE accounts ADD COLUMN carried TEXT'); // JSON hotbar slots when they left
     if (!has('identities', 'email')) this.db.exec('ALTER TABLE identities ADD COLUMN email TEXT');
+    if (!has('accounts', 'home_items')) this.db.exec('ALTER TABLE accounts ADD COLUMN home_items TEXT'); // JSON: furniture placed at home
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank, cash, carried FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items FROM accounts WHERE id = ?'),
+      setHomeItems: this.db.prepare('UPDATE accounts SET home_items = ? WHERE id = ?'),
       accountByName: this.db.prepare('SELECT id FROM accounts WHERE name = ?'),
       insertAccount: this.db.prepare('INSERT INTO accounts (name, bank, created_at) VALUES (?, ?, ?)'),
       identity: this.db.prepare('SELECT account_id, secret FROM identities WHERE provider = ? AND subject = ?'),
@@ -163,9 +165,15 @@ export class AccountStore {
   account(id) {
     const row = this.q.accountById.get(id);
     if (!row) return null;
-    let carried = null;
-    try { carried = row.carried ? JSON.parse(row.carried) : null; } catch {}
-    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried };
+    const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items) };
+  }
+
+  /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
+  setHomeItems(id, items) {
+    this.q.setHomeItems.run(items?.length ? JSON.stringify(items) : null, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.homeItems = items;
   }
 
   /** What they're carrying (cash and hotbar slots) — saved when they leave, cleared when they die. */

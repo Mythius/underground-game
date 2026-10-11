@@ -1,0 +1,99 @@
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// What NPCs say, in speech bubbles over their heads. Every kind of line has built-in defaults (here);
+// the dialogue editor (next to the sound editor, admin password) replaces any of them, and the
+// replacements are kept in data/dialogue.json. Clients fetch GET /dialogue and pick a line at random.
+
+export const DIALOGUE_FILE = fileURLToPath(new URL('../data/dialogue.json', import.meta.url));
+const MAX_LINES = 40;
+const MAX_CHARS = 90;
+
+/** The catalogue: groups of line kinds, each with when it's said and its built-in lines. */
+export const DIALOGUE = [
+  { group: 'Townsfolk', kinds: [
+    { id: 'greet', name: 'Greeting', note: 'Sometimes, as you walk past.', lines: ['Privet.', 'Good day.', 'Zdravstvuyte.', 'Cold one today.', 'Watch where you walk.', 'Got a light?', 'Spare a few roubles?', 'Hm.'] },
+    { id: 'chatter', name: 'Chatter', note: 'Now and then, to nobody in particular.', lines: ['Bread went up again…', 'They still haven\'t paid my pension.', 'My cousin\'s selling jeans, cheap.', 'Where is that bus?', 'Everything costs dollars now.', 'Did you see the match?', 'Such times, such times.'] },
+    { id: 'fight', name: 'Attacked — fighting back', note: 'You hit or shot them and they swing their purse at you.', lines: ['Hooligan!', 'Get away from me!', 'Take that!', 'Shame on you!', 'I\'ll show you!'] },
+    { id: 'robbed', name: 'Robbed — caught you', note: 'They felt you lift their wallet (pickpocketing from the front) and come at you.', lines: ['Thief! Give it back!', 'My wallet! You!', 'I saw that, you crook!', 'Pickpocket! Hey!'] },
+    { id: 'flee', name: 'Running away', note: 'Running for the Militsiya after a fight or a crime.', lines: ['Militsiya! Help!', 'Help! Robbery!', 'Somebody call the police!', 'Murderer!'] },
+  ] },
+  { group: 'Shopkeepers & traders', kinds: [
+    { id: 'shop', name: 'Shopkeeper — hello', note: 'You walk up to a shop counter.', lines: ['Welcome! Bread is fresh today.', 'What will it be?', 'Hello, come in.', 'Cash only.'] },
+    { id: 'teller', name: 'Bank teller — hello', lines: ['Next, please.', 'Passbook?', 'The bank is open.'] },
+    { id: 'market', name: 'Market trader — hello', lines: ['Buying and selling, come look.', 'Good prices today.', 'What have you got for me?'] },
+    { id: 'factory', name: 'Factory clerk — hello', lines: ['You want something made? Bring the materials.', 'Talk business.'] },
+    { id: 'gunshop', name: 'Gun store — hello', lines: ['Looking for protection?', 'No questions asked.'] },
+    { id: 'barman', name: 'Barman — hello', lines: ['What\'ll it be?', 'Need a problem solved?', 'I know some people.', 'Vodka? Or business?'] },
+    { id: 'dealer', name: 'Car dealer — hello', lines: ['Fine cars, almost new!', 'Come, take a look.'] },
+    { id: 'station', name: 'Freight clerk — hello', lines: ['The train is late. As always.', 'Freight? I can arrange it.'] },
+    { id: 'smuggler', name: 'Smuggler — hello', lines: ['…You didn\'t see me.', 'Psst. Got something special.'] },
+    { id: 'bye', name: 'Goodbye (any of them)', note: 'You walk away from a counter.', lines: ['Come again.', 'All the best.', 'Poka.', 'Goodbye.'] },
+    { id: 'robShop', name: 'Shopkeeper — being robbed', note: 'While you empty their till (hold F).', lines: ['Take it, take it! Just don\'t shoot!', 'Please, I have a family!', 'The Militsiya will hear of this!', 'Here — it\'s all there is!'] },
+    { id: 'robBank', name: 'Bank teller — being robbed', note: 'While you rob the bank (hold F).', lines: ['Don\'t hurt anyone!', 'The alarm is already ringing!', 'Take the money and go!', 'You won\'t get far.'] },
+  ] },
+  { group: 'Militsiya', kinds: [
+    { id: 'copIdle', name: 'On patrol', note: 'You walk past a cop while you\'re not wanted.', lines: ['Documents, please.', 'Move along.', 'Keep it quiet.'] },
+    { id: 'copWanted', name: 'Chasing you', note: 'While you\'re wanted and they can see you.', lines: ['Stop! Militsiya!', 'Hands where I can see them!', 'Halt!', 'You\'re under arrest!'] },
+    { id: 'copArrest', name: 'Arresting you', note: 'While the arrest bar fills (get away to stop it).', lines: ['Don\'t move!', 'Hands behind your back!', 'You\'re coming with us.', 'Stop resisting!', 'Got you now.'] },
+  ] },
+  { group: 'Hired muscle', kinds: [
+    { id: 'goon', name: 'Your goon', note: 'Now and then, while following you.', lines: ['Right behind you, boss.', 'Anyone gives you trouble…', 'Quiet today.', 'Say the word, boss.'] },
+    { id: 'guard', name: 'Building guard', note: 'Someone walks up to the building they guard.', lines: ['Private property.', 'Keep walking.', 'Nobody gets in.', 'Not one step closer.'] },
+    { id: 'hitman', name: 'Hitman taking aim', note: 'A hitman lining up his shot (the red laser).', lines: ['Nothing personal.', 'Hold still…', 'Contract\'s a contract.'] },
+  ] },
+];
+const KINDS = new Map(DIALOGUE.flatMap((g) => g.kinds).map((k) => [k.id, k]));
+
+/** Cleans what the editor sends: one line per entry, no control characters, trimmed, not too long or too many. */
+function clean(lines) {
+  if (!Array.isArray(lines)) return null;
+  const out = lines
+    .filter((l) => typeof l === 'string')
+    .map((l) => l.replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_CHARS))
+    .filter(Boolean)
+    .slice(0, MAX_LINES);
+  return out.length ? out : null;
+}
+
+export class DialogueStore {
+  constructor(file = DIALOGUE_FILE) {
+    this.file = file;
+    try {
+      this.custom = JSON.parse(readFileSync(file, 'utf8'));
+    } catch {
+      this.custom = {}; // kind -> [lines]
+    }
+  }
+
+  #save() {
+    mkdirSync(dirname(this.file), { recursive: true });
+    writeFileSync(`${this.file}.tmp`, JSON.stringify(this.custom, null, 2));
+    renameSync(`${this.file}.tmp`, this.file);
+  }
+
+  /** What the client needs: the catalogue (with defaults) and the replacements. */
+  list() {
+    const custom = Object.fromEntries(Object.entries(this.custom).filter(([k]) => KINDS.has(k)));
+    return { groups: DIALOGUE, custom };
+  }
+
+  /** Replace `kind`'s lines. Returns an error string, or null. */
+  set(kind, lines) {
+    if (!KINDS.has(kind)) return 'unknown kind of line';
+    const ok = clean(lines);
+    if (!ok) return 'give it at least one line';
+    this.custom[kind] = ok;
+    this.#save();
+    return null;
+  }
+
+  /** Back to the built-in lines. */
+  reset(kind) {
+    if (!KINDS.has(kind)) return 'unknown kind of line';
+    delete this.custom[kind];
+    this.#save();
+    return null;
+  }
+}

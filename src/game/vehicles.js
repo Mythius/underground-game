@@ -20,6 +20,8 @@ export class Vehicle {
     this.health = config.vehicles.types[type].health;
     this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
     this.fuel = 40 + Math.random() * 60; // percent of a tank
+    this.boost = 0; // percent of the boost tank (vodka); burnt with Space for a burst of speed
+    this.boosting = false;
     this.owner = null; // the account that bought it at a dealership (anyone can still drive it)
     this.cargo = Array.from({ length: config.cargo.vehicles[type] ?? 1 }, () => null); // trunk slots: { good, qty } or null
   }
@@ -69,19 +71,23 @@ export function emptyTankGas(v, gas) {
 }
 
 /**
- * One physics step. gas: -1..1 (W/S), steer: -1..1 (A/D), drift: handbrake (Space); gripScale < 1 in rain.
+ * One physics step. gas: -1..1 (W/S), steer: -1..1 (A/D), drift: handbrake (Shift); gripScale < 1 in rain;
+ * boosting: burning vodka (Space) — harder acceleration and a higher top speed.
  * Velocity is kept separately from heading, so when the car turns its momentum carries on and it
  * slides; tyre grip bleeds that sideways slide away — slowly while drifting.
  * `collide(circle)` pushes a circle out of walls and returns true if it moved.
  * Keep in sync with stepVehicle() in public/index.html, which predicts the car you drive.
  */
-export function stepVehicle(v, stats, gas, steer, drift, dt, bounds, collide, gripScale = 1) {
+export function stepVehicle(v, stats, gas, steer, drift, dt, bounds, collide, gripScale = 1, boosting = false) {
   const cos = Math.cos(v.angle);
   const sin = Math.sin(v.angle);
   let { forward, lateral } = vehicleMotion(v);
+  const before = forward;
+  const boost = config.vehicles.boost;
+  const accel = stats.accel * (boosting ? boost.accel : 1), maxSpeed = stats.maxSpeed * (boosting ? boost.topSpeed : 1);
 
   if (gas > 0) {
-    forward += stats.accel * gas * dt * (forward < 0 ? 2.5 : 1); // braking out of reverse is quicker
+    forward += accel * gas * dt * (forward < 0 ? 2.5 : 1); // braking out of reverse is quicker
   } else if (gas < 0) {
     forward += (forward > 0 ? -stats.brake : -stats.accel * 0.6) * -gas * dt;
   } else {
@@ -89,7 +95,8 @@ export function stepVehicle(v, stats, gas, steer, drift, dt, bounds, collide, gr
     forward = Math.abs(forward) < roll ? 0 : forward - Math.sign(forward) * roll;
   }
   forward -= forward * (drift ? 0.6 : 0.25) * dt; // drag, more with the handbrake on
-  forward = clamp(forward, -stats.maxSpeed * 0.35, stats.maxSpeed);
+  // Already over the top speed (a boost just ran out): ease back down rather than snapping. Otherwise capped.
+  forward = before > maxSpeed ? Math.max(maxSpeed, Math.min(forward, before) - stats.brake * 0.5 * dt) : clamp(forward, -stats.maxSpeed * 0.35, maxSpeed);
   lateral *= Math.exp(-(drift ? stats.driftGrip : stats.grip) * gripScale * dt); // wet roads grip less
 
   // Rebuild the velocity on the old heading, then turn: the car rotates under its momentum.

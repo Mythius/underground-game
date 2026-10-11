@@ -41,7 +41,6 @@ export class Player {
     this.jailed = null; // { until, station } while in a cell
     this.arrest = 0; // 0–1: how close an officer is to arresting them (this tick)
     this.shotPolice = false;
-    this.cashTimer = 0;
     this.account = null; // { id, name, bank, guest } — set when spawned
     this.hitCooldown = 0; // after being hit by a car
     this.alive = true;

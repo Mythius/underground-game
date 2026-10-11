@@ -10,11 +10,16 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 // Items ride belts one per tile. When an item reaches the end of its tile it's handed to the tile it
 // points at, which may refuse (full, wrong side, not wanted) — then it waits. "Moving in direction m"
 // means entering the next tile from its side opposite m.
-//   belt     takes items moving its way;           passes them forward
+//   belt     takes items from behind or either side; passes them forward
 //   turnL/R  takes items arriving from its left/right side (they turn left/right) and passes them forward
 //   merger   takes from behind and both sides;     passes forward
-//   splitter takes from behind;                    deals items out left, forward and right in turn (skipping a blocked way)
+//   splitter takes from behind;                    deals items out left, forward and right in turn (only ways
+//            something can take them; a way that's full at the time is skipped)
 //   filter   takes from behind;                    everything else goes forward, its chosen good left and right in turn
+//   invfilter takes from behind;                   the opposite: its chosen good goes forward, everything else left and right
+// Each item remembers the way it came in (`from`) and, on a splitter or filter, the way it's going out
+// (`to`, picked as it comes in) — so the client can draw it flowing from that side, through the middle,
+// and out the other.
 //   machine  takes recipe inputs moving its way (into its back half); puts outputs out of its front
 //   IN dock  puts the goods unloaded into it out onto any belt leading away from it
 //   OUT dock takes anything, from any side
@@ -128,7 +133,8 @@ export class Warehouse {
   canPlace(kind, x, y) {
     const n = config.machines[kind] ? 2 : 1;
     for (let dy = 0; dy < n; dy++) for (let dx = 0; dx < n; dx++) if (this.at(x + dx, y + dy) !== null) return false;
-    return true;
+    const T = WAREHOUSE_TILE;
+    return !this.covered?.({ x: this.origin.x + x * T, y: this.origin.y + y * T, w: n * T, h: n * T }); // (a cabinet or bed in the way)
   }
 
   /** Puts a new piece down (already paid for). */
@@ -139,7 +145,7 @@ export class Warehouse {
     if (!this.canPlace(kind, x, y)) return 'blocked';
     const piece = { id: this.nextPieceId++, kind, x, y, dir: turn(dir, 0), w: 1, h: 1, item: null, alt: 0 };
     if (machine) Object.assign(piece, { w: 2, h: 2, recipe: machine.recipes[0], in: {}, out: {}, progress: 0, emitTimer: 0, next: 0 });
-    if (kind === 'filter') piece.filter = Object.keys(config.goods)[0];
+    if (kind === 'filter' || kind === 'invfilter') piece.filter = Object.keys(config.goods)[0];
     if (kind === 'container') Object.assign(piece, { stock: {}, emitTimer: 0, next: 0 });
     this.#put(piece);
     this.version++;
@@ -172,7 +178,7 @@ export class Warehouse {
     if (config.machines[piece.kind]) {
       if (!config.machines[piece.kind].recipes.includes(value)) return 'unknown';
       if (piece.recipe !== value) Object.assign(piece, { recipe: value, in: {}, progress: 0 }); // unused inputs are lost
-    } else if (piece.kind === 'filter') {
+    } else if (piece.kind === 'filter' || piece.kind === 'invfilter') {
       if (!config.goods[value]) return 'unknown';
       piece.filter = value;
     } else return 'unknown';
@@ -214,28 +220,74 @@ export class Warehouse {
     }
   }
 
+  /** The ways an item can leave `piece`, in the order to try them (its planned way first). */
+  #exits(piece, item) {
+    const left = turn(piece.dir, -1), right = turn(piece.dir, 1);
+    const planned = item.to ?? piece.dir;
+    if (piece.kind === 'splitter') return [planned, ...[left, piece.dir, right].filter((m) => m !== planned)];
+    if (piece.kind === 'filter' || piece.kind === 'invfilter') {
+      const sideways = (item.good === piece.filter) === (piece.kind === 'filter');
+      return sideways ? (planned === right ? [right, left] : [left, right]) : [piece.dir];
+    }
+    return [piece.dir];
+  }
+
+  /**
+   * An item coming onto a splitter or filter: which way it'll go out. A splitter deals left, forward,
+   * right in turn — skipping ways with nothing there to take it; a filter sends what goes sideways to
+   * each side in turn.
+   */
+  #plan(piece, good) {
+    const left = turn(piece.dir, -1), right = turn(piece.dir, 1);
+    const open = (m) => this.#couldTake(piece.x + DIRS[m][0], piece.y + DIRS[m][1], m, good);
+    if (piece.kind === 'splitter') {
+      const ways = [left, piece.dir, right];
+      for (let k = 0; k < 3; k++) {
+        const i = ((piece.alt ?? 0) + k) % 3;
+        if (!open(ways[i])) continue;
+        piece.alt = (i + 1) % 3;
+        return ways[i];
+      }
+      return piece.dir;
+    }
+    if (piece.kind === 'filter' || piece.kind === 'invfilter') {
+      if ((good === piece.filter) !== (piece.kind === 'filter')) return piece.dir;
+      const sides = piece.alt ? [right, left] : [left, right];
+      const m = sides.find(open) ?? sides[0];
+      piece.alt = m === left ? 1 : 0; // the other side next
+      return m;
+    }
+    return piece.dir;
+  }
+
   /** A belt item at the end of its tile tries to move on. */
   #forward(piece) {
-    const good = piece.item.good;
-    let exits;
-    if (piece.kind === 'splitter') {
-      const ways = [turn(piece.dir, -1), piece.dir, turn(piece.dir, 1)]; // left, forward, right
-      const next = (piece.alt ?? 0) % 3;
-      exits = [...ways.slice(next), ...ways.slice(0, next)];
-    }
-    else if (piece.kind === 'filter') {
-      const sides = piece.alt ? [turn(piece.dir, 1), turn(piece.dir, -1)] : [turn(piece.dir, -1), turn(piece.dir, 1)];
-      exits = good === piece.filter ? sides : [piece.dir];
-    }
-    else exits = [piece.dir];
-    for (const m of exits) {
-      if (this.#handTo(piece.x + DIRS[m][0], piece.y + DIRS[m][1], m, good)) {
+    const item = piece.item;
+    for (const m of this.#exits(piece, item)) {
+      if (this.#handTo(piece.x + DIRS[m][0], piece.y + DIRS[m][1], m, item.good)) {
         piece.item = null;
-        if (piece.kind === 'splitter') piece.alt = ([turn(piece.dir, -1), piece.dir, turn(piece.dir, 1)].indexOf(m) + 1) % 3; // the next way along
-        if (piece.kind === 'filter' && m !== piece.dir) piece.alt = m === turn(piece.dir, -1) ? 1 : 0; // the other side next
         return;
       }
     }
+  }
+
+  /** Would whatever's at (x, y) ever take `good` moving in direction m? (Ignoring whether it's busy right now.) */
+  #couldTake(x, y, m, good) {
+    const target = this.at(x, y);
+    if (!target) return false;
+    if (target.kind === 'container' || target.kind === 'dockOut') return true;
+    if (target.w === 1) return this.#entersFrom(target, m);
+    if (target.kind === 'dockIn') return false;
+    return m === target.dir && Boolean(recipeOf(target.recipe)?.in[good]);
+  }
+
+  /** Does belt piece `target` take items moving in direction m (into it)? */
+  #entersFrom(target, m) {
+    const d = target.dir;
+    if (target.kind === 'turnL') return m === turn(d, 1);
+    if (target.kind === 'turnR') return m === turn(d, -1);
+    if (target.kind === 'merger' || target.kind === 'belt') return m !== turn(d, 2); // from behind or either side
+    return m === d; // splitters and filters: from behind only
   }
 
   /** Offer `good`, moving in direction m, to whatever is at tile (x, y). True if it was taken. */
@@ -248,15 +300,9 @@ export class Warehouse {
       return true;
     }
     if (target.w === 1) {
-      if (target.item) return false;
-      const d = target.dir;
-      const ok =
-        target.kind === 'turnL' ? m === turn(d, 1)
-        : target.kind === 'turnR' ? m === turn(d, -1)
-        : target.kind === 'merger' ? m !== turn(d, 2)
-        : m === d;
-      if (!ok) return false;
-      target.item = { good, p: 0 };
+      if (target.item || !this.#entersFrom(target, m)) return false;
+      target.item = { good, p: 0, from: m };
+      target.item.to = this.#plan(target, good);
       return true;
     }
     if (target.kind === 'dockOut') {
@@ -394,7 +440,7 @@ export class Warehouse {
       if (p.kind === 'container') {
         machines.push([p.id, 0, p.stock]);
       } else if (p.w === 1) {
-        if (p.item) items.push([p.x, p.y, p.item.good, Math.round(p.item.p * 100) / 100]);
+        if (p.item) items.push([p.x, p.y, p.item.good, Math.round(p.item.p * 100) / 100, p.item.from ?? p.dir, p.item.to ?? p.dir]); // [x, y, good, progress, came in moving, goes out]
       } else if (p.kind.startsWith('dock')) {
         machines.push([p.id, 0, p.stock]);
       } else {
@@ -434,7 +480,7 @@ export class Warehouse {
       if (p.filter && config.goods[p.filter]) piece.filter = p.filter;
       if (piece.in && p.in && piece.recipe === p.recipe) piece.in = { ...p.in }; // (a recipe no longer allowed resets, inputs and all)
       if (piece.out && p.out) piece.out = { ...p.out };
-      if (piece.w === 1 && p.item && config.goods[p.item.good]) piece.item = { good: p.item.good, p: p.item.p };
+      if (piece.w === 1 && p.item && config.goods[p.item.good]) piece.item = { good: p.item.good, p: p.item.p, from: piece.dir, to: piece.dir }; // (it carries on straight)
       if (piece.kind === 'container' && p.stock) piece.stock = { ...p.stock };
     }
     this.version++;
@@ -472,6 +518,7 @@ export class Warehouses {
     this.world = world;
     this.all = new Map(); // building id -> Warehouse
     for (const b of world.buildings) if (WAREHOUSE_SIZES[b.type] && b.grid) this.all.set(b.id, new Warehouse(b));
+    for (const w of this.all.values()) w.covered = (r) => world.furnishings?.covers(r) ?? false;
     this.taxTimer = 0;
     this.changed = false; // something worth saving happened
     this.events = []; // raids, for the room to tell the owner about
@@ -514,6 +561,11 @@ export class Warehouses {
     if (w) w.unlockedUntil = this.time + config.warehouses.unlockedSec;
   }
 
+  /** Does `account` already own a warehouse of this size? (One of each size per player.) */
+  #ownsSize(account, size) {
+    return [...this.all.values()].some((x) => x.owner && x.ownerId === account.id && x.size === size);
+  }
+
   #nearDock(p, w, dock) {
     const r = w.rectOf(dock);
     const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.w));
@@ -537,6 +589,8 @@ export class Warehouses {
         if (w.owner) return 'already_owned';
         if (!w.contains(p.x, p.y) && Math.hypot(w.building.x + w.building.w / 2 - p.x, w.building.y + w.building.h / 2 - p.y) > Math.max(w.building.w, w.building.h)) return 'too_far';
         if (!account || account.guest) return 'need_account';
+        if (this.#ownsSize(account, w.size)) return 'one_per_size';
+        if (this.stored.some((r) => r.accountId === account.id && r.data.size === w.size)) return 'load_saved_instead'; // (you've a saved one of this size: load it)
         if (account.bank < size.price) return 'not_enough_bank';
         account.bank -= size.price;
         w.reset();
@@ -550,9 +604,11 @@ export class Warehouses {
         if (!w.contains(p.x, p.y) && Math.hypot(w.building.x + w.building.w / 2 - p.x, w.building.y + w.building.h / 2 - p.y) > Math.max(w.building.w, w.building.h)) return 'too_far';
         const row = account?.id ? this.stored.find((r) => r.accountId === account.id && r.data.size === w.size) : null;
         if (!row) return 'nothing_stored';
+        if (this.#ownsSize(account, w.size)) return 'one_per_size';
         this.stored.splice(this.stored.indexOf(row), 1);
         w.load(row.data);
         Object.assign(w, { owner: account, ownerId: account.id, unpaid: false });
+        this.world.furnishings.loadIn(w.building, row.data.furnishings, account); // its cabinets and all
         return null;
       }
       if (msg.action === 'load' || msg.action === 'take') {
@@ -587,6 +643,7 @@ export class Warehouses {
       if (msg.action === 'ptake' || msg.action === 'pput') return this.#byHand(p, w, mine, msg);
       if (!mine) return 'not_owner';
       if (msg.action === 'sell') {
+        if (this.world.furnishings.anyIn(w.building)) return 'remove_furniture_first';
         account.bank += Math.floor(w.spent * config.warehouses.sellBack);
         w.reset();
         Object.assign(w, { owner: null, ownerId: null, spent: 0, taxOwed: 0, unpaid: false });
@@ -596,6 +653,15 @@ export class Warehouses {
       if (!w.contains(p.x, p.y)) return 'go_inside';
       const x = msg.x | 0;
       const y = msg.y | 0;
+      if (msg.action === 'grab') { // the item riding a belt, into your cargo
+        const piece = w.at(x, y);
+        if (!piece?.item) return 'nothing_there';
+        const holder = this.world.economy.cargoOf(p);
+        if (holder.room(piece.item.good) < 1) return 'no_room';
+        holder.add(piece.item.good, 1);
+        piece.item = null;
+        return null;
+      }
       if (msg.action === 'place') {
         const price = Warehouse.price(msg.kind);
         if (price === null) return 'unknown';
@@ -745,6 +811,6 @@ export class Warehouses {
 
   /** Rows to save: one per owned warehouse, and the ones still waiting to be loaded. */
   toSave() {
-    return [...[...this.slots()].filter(([, w]) => w.owner).map(([slot, w]) => ({ slot, accountId: w.ownerId, data: w.save() })), ...this.stored];
+    return [...[...this.slots()].filter(([, w]) => w.owner).map(([slot, w]) => ({ slot, accountId: w.ownerId, data: { ...w.save(), furnishings: this.world.furnishings.saveIn(w.building) } })), ...this.stored];
   }
 }

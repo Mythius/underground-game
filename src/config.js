@@ -117,8 +117,12 @@ export const config = Object.freeze({
     sniper: { name: 'Sniper', damage: 75, cooldownSec: 1.1, magazineSize: 3, reloadSec: 2.5, bulletSpeed: 1900, bulletLifetimeSec: 1.3, pellets: 1, spread: 0, barrel: 2.6, spawnWeight: 15 },
   },
 
-  // Drivable cars and trucks, parked on the roads. E to get in/out, W/S gas/brake, A/D steer, Space to drift.
+  // Drivable cars and trucks, parked on the roads. E to get in/out, W/S gas/brake, A/D steer, Shift to drift, Space to boost (vodka).
   vehicles: {
+    fuelCanShare: 20, // one fuel poured in by hand fills this % of a tank
+    // Vodka poured into a car fills its boost tank (a second gauge); Space burns it while you drive for
+    // harder acceleration and a higher top speed.
+    boost: { perVodka: 25, burnPerSec: 12, accel: 1.9, topSpeed: 1.35 },
     count: 260,
     gravelGrip: 0.8, // grip outside the city (gravel roads, grass, snow) compared with city asphalt
     respawnSec: 20, // after one is destroyed
@@ -148,8 +152,6 @@ export const config = Object.freeze({
 
   // Dollars: carried cash buys food; deposit at banks and ATMs to keep it.
   economy: {
-    streetIncome: 1, // $ added to carried cash every streetIncomeSec while alive (until jobs exist)
-    streetIncomeSec: 3,
     shopReach: 120, // from the shopkeeper's centre to your edge
     bankReach: 120, // from a bank teller's centre to your edge
     atmReach: 60, // from an ATM's centre to your edge
@@ -163,6 +165,8 @@ export const config = Object.freeze({
       feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, healSec: 20, mass: 15, bread: 4 },
     },
     foodStack: 5,
+    // A fish (the good) eats like food too.
+    fish: { name: 'Fish', icon: '🐟', heal: 20, healSec: 6, mass: 2 },
     // Vodka (the illegal good) drinks like food: middling healing, and while the buzz lasts you take
     // only `damageTaken` of any damage.
     vodka: { name: 'Vodka', icon: '🍾', heal: 25, healSec: 8, mass: 0, buzzSec: 60, damageTaken: 0.7 },
@@ -205,6 +209,7 @@ export const config = Object.freeze({
     crude: { name: 'Crude oil', icon: '🛢️', base: 10, weight: 1, tier: 'raw' },
     scrap: { name: 'Scrap metal', icon: '🔩', base: 7, weight: 1, tier: 'raw' },
     sand: { name: 'Sand', icon: '🏖️', base: 4, weight: 1, tier: 'raw' },
+    fish: { name: 'Fish', icon: '🐟', base: 18, weight: 1, tier: 'raw' }, // caught with a rod (see config.fishing); it eats too
     planks: { name: 'Planks', icon: '🪚', base: 20, weight: 1, tier: 'processed' },
     flour: { name: 'Flour', icon: '🥡', base: 15, weight: 1, tier: 'processed' },
     steel: { name: 'Steel', icon: '🔗', base: 40, weight: 1, tier: 'processed' },
@@ -212,7 +217,9 @@ export const config = Object.freeze({
     plastic: { name: 'Plastic', icon: '🧴', base: 22, weight: 1, tier: 'processed' },
     glass: { name: 'Glass', icon: '🪟', base: 18, weight: 1, tier: 'processed' },
     parts: { name: 'Parts', icon: '⚙️', base: 130, weight: 1, tier: 'processed' },
-    furniture: { name: 'Furniture', icon: '🛋️', base: 140, weight: 3, tier: 'finished' },
+    furniture: { name: 'Furniture', icon: '🛋️', base: 140, weight: 3, tier: 'finished' }, // a sofa: place it in your home or warehouse
+    cabinet: { name: 'Cabinet', icon: '🗄️', base: 200, weight: 3, tier: 'finished' }, // storage: place it, then keep 10 slots of anything in it
+    bed: { name: 'Bed', icon: '🛏️', base: 180, weight: 3, tier: 'finished' },
     bread: { name: 'Bread', icon: '🍞', base: 30, weight: 1, tier: 'finished' },
     car: { name: 'New car', icon: '🚗', base: 2500, weight: 10, tier: 'finished', vehicles: ['pickup', 'truck'] }, // only fits a pickup or truck
     guns: { name: 'Licensed guns', icon: '🔫', base: 600, weight: 2, tier: 'finished' },
@@ -234,7 +241,7 @@ export const config = Object.freeze({
   // `recipes` are tried in order (the foundry takes ore or scrap). Warehouse machines run these recipes too.
   factories: {
     sawmill: { name: 'Sawmill', recipes: [{ in: { logs: 1 }, out: { planks: 1 } }], sec: 8 },
-    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }], sec: 20 },
+    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }, { in: { planks: 3, steel: 1 }, out: { cabinet: 1 } }, { in: { planks: 3, plastic: 2 }, out: { bed: 1 } }], sec: 20 },
     flourmill: { name: 'Flour mill', recipes: [{ in: { wheat: 2 }, out: { flour: 1 } }], sec: 8 },
     bakery: { name: 'Bakery', recipes: [{ in: { flour: 1 }, out: { bread: 1 } }], sec: 6 },
     foundry: { name: 'Foundry', recipes: [{ in: { ore: 1 }, out: { steel: 1 } }, { in: { scrap: 2 }, out: { steel: 1 } }], sec: 12 },
@@ -289,7 +296,7 @@ export const config = Object.freeze({
     mill: { name: 'Mill', icon: '🌾', price: 700, recipes: ['flourmill:0'] },
     furnace: { name: 'Furnace', icon: '🔥', price: 3000, recipes: ['foundry:0', 'foundry:1', 'glassworks:0', 'bakery:0'] },
     press: { name: 'Press', icon: '🛢️', price: 4000, recipes: ['refinery:0', 'machineshop:0'] },
-    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'carfactory:0'] },
+    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'furniture:1', 'furniture:2', 'carfactory:0'] },
     // Illegal: their output is contraband, and running them draws the Militsiya (see `heat`).
     still: { name: 'Still', icon: '🍾', price: 1500, recipes: ['illegal:vodka'], illegal: true },
     printer: { name: 'Printing press', icon: '💸', price: 5000, recipes: ['illegal:counterfeit'], illegal: true },
@@ -303,6 +310,7 @@ export const config = Object.freeze({
     merger: { name: 'Merger', price: 60 },
     splitter: { name: 'Splitter', price: 80 },
     filter: { name: 'Filter', price: 120 },
+    invfilter: { name: 'Inverse filter', price: 120 }, // the opposite of a filter: its good goes straight on, everything else to the sides
     container: { name: 'Container', price: 300 }, // stores goods: belts feed it from any side, belts leading away pull them out
   },
 
@@ -371,7 +379,8 @@ export const config = Object.freeze({
 
   // NPC townsfolk walking between buildings and spending money: the town's demand.
   townsfolk: {
-    perBuilding: 1.1, // how many live in town, per building
+    perBuilding: 1.1, // how many live in town, per building…
+    maxPopulation: 300, // …but never more than this on a map (anyone killed is replaced, see replaceSec)
     walkSpeed: 80,
     minStaySec: 8, // time spent inside each place they visit
     maxStaySec: 45,
@@ -427,6 +436,29 @@ export const config = Object.freeze({
   blackMarket: { share: 0.7 },
   // Militsiya checkpoints on the roads. Stop in one and they search you; a bribe (cash) waves you through.
   roadblocks: { count: 10, searchSec: 1.5, slowSpeed: 90, range: 500, checkWithinSec: 10, bribe: 500, bribeSec: 120, againSec: 45 },
+  // Placing furniture (cabinets, beds, sofas) in your home or warehouse; see src/game/furnishing.js.
+  furnishing: {
+    cabinetSlots: 10,
+    reach: 50, // from the thing's edge to yours
+  },
+  // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while a fish bites and
+  // fights the line; every `cycleSec` (± a little) it tires for `tiredShare` of the cycle, and that's when
+  // you pull (click). Pull while it's fighting and it breaks free. `pulls` good pulls land it.
+  fishing: {
+    rodPrice: 150,
+    cast: [70, 240], // how far out the float lands (from you, toward the mouse), if there's water there
+    biteSec: [4, 12], // waiting for a bite
+    cycleSec: 1.8,
+    tiredShare: 0.28,
+    pulls: 3,
+    giveUpSec: 9, // no pull for this long and it swims off
+    slackSec: 0.35, // allowance for lag when judging a pull (what the player saw vs. the server's clock)
+    lineReach: 40, // walk further than this from where you cast and the line comes in
+    fishChance: 0.8, // otherwise something else is on the hook:
+    junk: { food: 0.65, gun: 0.35 },
+    junkGuns: { pistol: 5, smg: 2, shotgun: 2, rifle: 1, sniper: 0.5 }, // relative odds; it has a few rounds in it
+    junkAmmo: [1, 4],
+  },
   // The freight train: every `everySec` it stops at the station for `dockSec` with export contracts.
   railway: {
     everySec: 8 * 60,
@@ -468,7 +500,8 @@ export const config = Object.freeze({
   bodies: { reach: 55, waterReach: 40, lifeSec: 600, max: 60, carrySpeed: 0.65, nearRange: 120 }, // nearRange: seen this close to a body (in the open) and you're wanted
   pickpocket: { reach: 45, npcMin: 10, npcMax: 60, playerShare: 0.15, cooldownSec: 3 },
   police: {
-    carsPerBuildings: 1 / 18, // patrol cars on duty, per building
+    carsPerBuildings: 1 / 12, // patrol cars on duty, per building…
+    maxUnits: 20, // …but never more than this on a map (anyone killed is replaced, see respawnSec)
     footSpeed: 230,
     responseSec: 8, // a reported crime takes this long before cars are sent
     chaseThrottle: 0.85, // how hard they drive after you

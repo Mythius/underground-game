@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { PLACEABLE } from './furnishing.js';
 import { ServerMsg, encode } from '../net/protocol.js';
 import { logger } from '../utils/logger.js';
 import { round1 } from '../utils/math.js';
@@ -9,7 +10,7 @@ import { makeWeapon } from './entities.js';
 
 /** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). */
 export function carriedSlots(p) {
-  return p.inventory.map((s) => (!s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo }));
+  return p.inventory.map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo }));
 }
 
 /** Saved hotbar slots back into a player's hotbar (anything no longer in the game is dropped). */
@@ -20,6 +21,7 @@ export function restoreSlots(p, slots) {
     const s = slots[i];
     if (s?.good && config.goods[s.good] && qty(s.qty)) return { good: s.good, qty: s.qty };
     if (s?.food && config.economy.menu[s.food] && qty(s.qty)) return { food: s.food, qty: s.qty };
+    if (s?.type === 'rod') return { type: 'rod', tool: true };
     if (s?.type && config.weapons[s.type]) return { ...makeWeapon(s.type), ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize) };
     return null;
   });
@@ -79,6 +81,7 @@ export class Room {
 
   stop() {
     for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player);
+    this.#saveHomes();
     this.#saveWarehouses();
     this.#saveCars();
     clearInterval(this.timer);
@@ -129,6 +132,10 @@ export class Room {
       const c = this.#clientForPlayer(player);
       if (e.kind === 'error') c?.send({ t: ServerMsg.ERROR, code: e.code });
       else c?.send({ t: ServerMsg.POLICE, ...rest });
+    }
+    for (const e of this.world.fishing.events.splice(0)) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
     for (const e of this.world.bodies.events.splice(0)) {
       const { player, ...rest } = e;
@@ -192,6 +199,13 @@ export class Room {
     }
     this.saveTimer += dt;
     if (this.saveTimer >= config.warehouses.saveEverySec || (warehouses.changed && this.saveTimer >= 2)) this.#saveWarehouses();
+    // Furniture: everyone redraws when it moves; homes are saved with their accounts.
+    const furnish = this.world.furnishings;
+    if (furnish.changed) {
+      furnish.changed = false;
+      this.broadcast({ t: ServerMsg.FURNISH, list: furnish.list() });
+    }
+    if (furnish.homesChanged.size && this.world.tick % 30 === 0) this.#saveHomes();
     for (const d of doorChanges) this.broadcast({ t: ServerMsg.DOOR, id: d.id, open: d.open });
     for (const e of explosions) this.broadcast({ t: ServerMsg.BOOM, x: e.x, y: e.y });
     for (const { victim, killer } of deaths) {
@@ -235,6 +249,16 @@ export class Room {
   }
 
   /** Cash and hotbar onto the account. */
+  /** Save the furniture in the homes that changed. */
+  #saveHomes() {
+    const furnish = this.world.furnishings;
+    for (const id of furnish.homesChanged) {
+      const account = this.store?.live(id);
+      if (account) this.#store('setHomeItems', id, furnish.saveHome(account));
+    }
+    furnish.homesChanged.clear();
+  }
+
   #saveCarried(p) {
     if (p.account?.id && !p.account.guest) this.#store('setCarried', p.account.id, p.cash, carriedSlots(p));
   }
@@ -311,8 +335,10 @@ export class Room {
       snapshotRate: this.snapshotRate,
       buildings: this.world.buildings,
       doorReach: config.world.doorReach,
-      vehicles: { reach: config.vehicles.reach, types: config.vehicles.types },
+      vehicles: { reach: config.vehicles.reach, types: config.vehicles.types, boost: config.vehicles.boost },
       homes: { lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach },
+      furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
+      fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
       rainGrip: config.environment.rainGrip,
       gravelGrip: config.vehicles.gravelGrip,
@@ -420,7 +446,10 @@ export class Room {
   spawn(client, name, look) {
     if (client.player?.alive) return;
     const account = client.account;
-    if (account?.id && !account.guest) this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
+    if (account?.id && !account.guest) {
+      this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
+      this.world.furnishings.restoreHome(account, account.homeItems); // (once a session)
+    }
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
     // Back with what they had on them when they last left.
@@ -520,6 +549,33 @@ export class Room {
   }
 
   /** At the bar: hire a goon, a guard (id: building to guard) or a hitman (id: target player), or let one go (id: hire). */
+  /** Furniture: put it down, pick it up, and use a cabinet. */
+  furnish(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const f = this.world.furnishings;
+    let error = null;
+    if (msg.action === 'place') error = f.place(p, msg.angle);
+    else if (msg.action === 'pickup') error = f.pickUp(p, msg.id);
+    else if (msg.action === 'open') {
+      const it = f.items.get(msg.id);
+      error = !it?.slots || !f.near(p, it) ? 'too_far' : !f.mayOpen(p, it) ? 'locked' : null;
+      if (!error) p.openCabinet = it.id;
+    } else if (msg.action === 'close') p.openCabinet = null;
+    else if (msg.action === 'put') error = f.put(p, msg.id, msg.slot);
+    else if (msg.action === 'take') error = f.take(p, msg.id, msg.slot);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
+  /** Fishing: cast the line, or pull. */
+  fish(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const fishing = this.world.fishing;
+    const error = msg.action === 'cast' ? fishing.cast(p, msg.angle) : fishing.pull(p, msg.seen);
+    if (error && error !== 'no_line') client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
   hireAction(client, msg) {
     const p = client.player;
     if (!p?.alive) return;
@@ -651,10 +707,10 @@ export class Room {
       hidden: me.hidden ? 1 : 0, // in a dumpster
       rob: me.robbing ? [me.robbing.kind, Math.round((me.robbing.elapsed / me.robbing.sec) * 1000) / 1000, me.robbing.sec] : null, // [kind, progress, seconds]
       arrest: Math.round(me.arrest * 100) / 100,
-      // The vehicle whose trunk counts as yours: [id, type, slots as [good, qty] | null].
+      // The vehicle whose trunk counts as yours: [id, type, slots as [good, qty] | [gunType, ammo, 'gun'] | ['rod', 1, 'rod'] | null].
       trunk: (() => {
         const v = this.world.economy.vehicleOf(me);
-        return v ? [v.id, v.type, v.cargo.map((s) => (s ? [s.good, s.qty] : null))] : null;
+        return v ? [v.id, v.type, v.cargo.map((s) => (s?.good ? [s.good, s.qty] : s?.type === 'rod' ? ['rod', 1, 'rod'] : s?.type ? [s.type, s.ammo, 'gun'] : null))] : null;
       })(),
       slot: me.selected,
       stored: this.world.warehouses.storedFor(me.account), // sizes of my saved factories waiting to be loaded
@@ -666,11 +722,13 @@ export class Room {
       })(),
       // While driving: the car's exact state, so the client can predict it.
       ride: me.vehicle && me.vehicle.driver !== me ? me.vehicle.id : 0, // a passenger: the car you're riding in
-      car: me.vehicle?.driver === me ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10] : null,
+      car: me.vehicle?.driver === me ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10, Math.round(me.vehicle.boost * 10) / 10] : null,
       // [type, ammo, reload seconds left] per slot; reload rounds up so it never shows 0 while still reloading.
       // Guns: [type, ammo, reload seconds left]; goods: ['goods', good, qty].
       heal: Math.round((me.digesting ?? []).reduce((sum, d) => sum + d.perSec * d.left, 0)), // still to come from food
       buzz: Math.ceil(me.buzz ?? 0), // seconds of vodka buzz left (less damage taken)
+      cabinet: me.openCabinet ? this.world.furnishings.contents(me, me.openCabinet) : null, // [id, slots] while I have one open
+      fish: this.world.fishing.view(me), // my line: [x, y] waiting, or [x, y, t, cycle, from, to, pulls] while a fish fights
       inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10] : null)),
     };
   }
@@ -694,17 +752,19 @@ export class Room {
       const cy = me ? me.y : this.world.height / 2;
 
       const players = [];
+      const lines = []; // other people's fishing lines: [player id, float x, float y, fighting]
       const food = [];
       const pickups = [];
       const vehicles = [];
       for (const e of this.world.queryView(cx, cy)) {
         if (e.kind === 'vehicle') {
-          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0, me && this.world.carLockedFor(e, me) ? 1 : 0]);
+          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0, me && this.world.carLockedFor(e, me) ? 1 : 0, e.boosting ? 1 : 0]);
         } else if (e.kind === 'player') {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
           players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth]);
+          if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.phase === 'bite' ? 1 : 0]);
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];
           pickups.push(e.goods ? [...at, 'goods', e.goods.good, e.goods.qty] : e.cash ? [...at, 'cash', e.cash] : [...at, e.weapon.type]);
@@ -720,6 +780,7 @@ export class Room {
           ack: me ? me.lastInputSeq : -1,
           you: me ? this.#privateState(me) : null,
           players,
+          lines,
           food,
           pickups,
           vehicles,

@@ -13,7 +13,7 @@ export const ClientMsg = Object.freeze({
   INSPECT: 'inspect', // { t, id } -> PLACE: what a market or factory (by building id) has
   TRADE: 'trade', // { t, id, good, qty, side: 'buy' | 'sell' | 'under' (contraband over a shop counter) } at a market
   FACTORY: 'factory', // { t, id, action: 'process' } toll processing at a city factory
-  WAREHOUSE: 'wh', // { t, id, action: 'buy' | 'bring' (load your saved factory into this free one) | 'sell' | 'place' | 'remove' | 'rotate' | 'configure' | 'load' | 'take' | 'mload' (hotbar slot -> machine at x,y) | 'mtake' (machine's 'in'/'out' slot -> cargo, via dock) | 'ptake' / 'pput' (qty of good off / onto the pallet or container at x,y, by hand), kind?, x?, y?, dir?, value?, slot?, dock?, good?, qty? }
+  WAREHOUSE: 'wh', // { t, id, action: 'buy' | 'bring' (load your saved factory into this free one) | 'sell' | 'place' | 'remove' | 'rotate' | 'configure' | 'load' | 'take' | 'mload' (hotbar slot -> machine at x,y) | 'mtake' (machine's 'in'/'out' slot -> cargo, via dock) | 'ptake' / 'pput' (qty of good off / onto the pallet or container at x,y, by hand) | 'grab' (the item riding the belt at x,y -> cargo), kind?, x?, y?, dir?, value?, slot?, dock?, good?, qty? }
   REFUEL: 'refuel', // { t, can? } fill your car at a gas station, or (can) pour the fuel in your hand into the car beside you
   DROP: 'drop', // { t, slot? } Q (the selected hotbar slot) or dragging a slot out of the hotbar; { t, cash } X: drop cash on the ground
   TEAM: 'team', // { t, action: 'invite' (id = player id) | 'accept' | 'decline' (id = inviter's client id) | 'leave', id? }
@@ -28,6 +28,8 @@ export const ClientMsg = Object.freeze({
   GARAGE: 'garage', // { t, action: 'list' | 'take', id? } your saved cars, at the spot inside your home
   BODY: 'body', // { t, action: 'open' | 'loot' | 'carry' | 'drop', id?, slot? } (drop: the body you carry — into a dumpster, water, under a tree, or down)
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
+  FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
+  FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
 });
 
@@ -42,6 +44,7 @@ export const ServerMsg = Object.freeze({
   PONG: 'pong', // { t, ts, serverTime }
   CHAT: 'chat', // { t, id, name, color, text }
   DOOR: 'door', // { t, id, open }
+  FURNISH: 'furnish', // { t, list: [[id, kind, x, y, w, h, rot, building, ownerName]] } placed cabinets, beds and sofas (on any change)
   BOOM: 'boom', // { t, x, y } a vehicle exploded
   BOUGHT: 'bought', // { t, item, cash }
   BANKED: 'banked', // { t, action, amount, cash, bank }
@@ -58,6 +61,7 @@ export const ServerMsg = Object.freeze({
   BODY: 'body', // { t, id, kind, name, cash, items } what's on a body you're looking at
   NEWS: 'news', // { t, kind: 'raid', building } something everyone hears about
   SOUNDS_CHANGED: 'sounds_changed', // { t } the sound editor changed a sound; fetch GET /sounds again
+  DIALOGUE_CHANGED: 'dialogue_changed', // { t } the dialogue editor changed what NPCs say; fetch GET /dialogue again
   MAP_CHANGED: 'map_changed', // { t } the admin saved a new map; back to the menu (a new welcome follows)
   TEAM: 'team', // { t, members: [{id (client), name, player (player id, 0 if dead), me}], invites: [{id (client), name}], max } your team panel
   TEAM_INVITE: 'team_invite', // { t, id (client), name } someone invited you
@@ -106,7 +110,7 @@ const validators = {
     return text ? { t: m.t, text } : null;
   },
 
-  [ClientMsg.BUY]: (m) => (typeof m.item === 'string' && Object.hasOwn(config.economy.menu, m.item) ? { t: m.t, item: m.item } : null),
+  [ClientMsg.BUY]: (m) => (typeof m.item === 'string' && (Object.hasOwn(config.economy.menu, m.item) || m.item === 'rod') ? { t: m.t, item: m.item } : null),
 
   [ClientMsg.BANK]: (m) =>
     (m.action === 'deposit' || m.action === 'withdraw') && Number.isInteger(m.amount) && m.amount > 0 && m.amount <= 1e9
@@ -123,9 +127,9 @@ const validators = {
   [ClientMsg.FACTORY]: (m) => (Number.isInteger(m.id) && m.action === 'process' ? { t: m.t, id: m.id, action: m.action } : null),
 
   [ClientMsg.WAREHOUSE]: (m) => {
-    if (!Number.isInteger(m.id) || !['buy', 'bring', 'sell', 'place', 'remove', 'rotate', 'configure', 'load', 'take', 'mload', 'mtake', 'chop', 'ptake', 'pput'].includes(m.action)) return null;
+    if (!Number.isInteger(m.id) || !['buy', 'bring', 'sell', 'place', 'remove', 'rotate', 'configure', 'load', 'take', 'mload', 'mtake', 'chop', 'ptake', 'pput', 'grab'].includes(m.action)) return null;
     const tile = (v) => Number.isInteger(v) && v >= 0 && v < 64;
-    if (['place', 'remove', 'rotate', 'configure', 'mload', 'mtake', 'ptake', 'pput'].includes(m.action) && !(tile(m.x) && tile(m.y))) return null;
+    if (['place', 'remove', 'rotate', 'configure', 'mload', 'mtake', 'ptake', 'pput', 'grab'].includes(m.action) && !(tile(m.x) && tile(m.y))) return null;
     if (['ptake', 'pput'].includes(m.action) && !(typeof m.good === 'string' && Object.hasOwn(config.goods, m.good) && Number.isInteger(m.qty) && m.qty > 0 && m.qty <= 10000)) return null;
     if (m.action === 'mload' && !(Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 64)) return null;
     if (m.action === 'place' && !(typeof m.kind === 'string' && (Object.hasOwn(config.machines, m.kind) || Object.hasOwn(config.belts, m.kind)) && [0, 1, 2, 3].includes(m.dir))) return null;
@@ -181,6 +185,19 @@ const validators = {
 
   [ClientMsg.HIRE]: (m) =>
     ['goon', 'guard', 'hitman', 'dismiss'].includes(m.action) && (m.action === 'goon' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+
+  [ClientMsg.FURNISH]: (m) => {
+    if (m.action === 'place') return isFiniteNumber(m.angle) ? { t: m.t, action: 'place', angle: m.angle } : null;
+    if (m.action === 'close') return { t: m.t, action: 'close' };
+    if (!['pickup', 'open', 'put', 'take'].includes(m.action) || !Number.isInteger(m.id)) return null;
+    if ((m.action === 'put' || m.action === 'take') && !(Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 20)) return null;
+    return { t: m.t, action: m.action, id: m.id, slot: m.slot ?? 0 };
+  },
+
+  [ClientMsg.FISH]: (m) =>
+    m.action === 'cast' && isFiniteNumber(m.angle) ? { t: m.t, action: 'cast', angle: m.angle }
+      : m.action === 'pull' ? { t: m.t, action: 'pull', seen: isFiniteNumber(m.seen) ? m.seen : null }
+        : null,
 
   [ClientMsg.PING]: (m) => (isFiniteNumber(m.ts) ? { t: m.t, ts: m.ts } : null),
 };

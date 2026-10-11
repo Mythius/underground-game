@@ -4,6 +4,7 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { AccountStore } from './accounts.js';
 import { SoundStore } from './sounds.js';
+import { DialogueStore } from './dialogue.js';
 import { config } from './config.js';
 import { RoomManager } from './game/RoomManager.js';
 import { createWorld } from './game/World.js';
@@ -31,6 +32,7 @@ const SHARED_MODULES = new Set(['/src/game/buildings.js', '/src/game/terrain.js'
 const MAX_MAP_BYTES = 4 * 1024 * 1024;
 const MAX_SOUND_BYTES = 30 * 1024 * 1024; // a few minutes of music
 const sounds = new SoundStore();
+const dialogue = new DialogueStore();
 
 function passwordMatches(given) {
   if (!config.adminPassword || typeof given !== 'string') return false;
@@ -187,6 +189,26 @@ const server = http.createServer(async (req, res) => {
     rooms.broadcastAll({ t: ServerMsg.SOUNDS_CHANGED }); // everyone playing picks it up right away
     return json(200, { ok: true, ...sounds.list() });
   }
+  // ---- dialogue editor: what NPCs say (GET for everyone; change or reset a kind of line: admin) ----
+  if (req.method === 'GET' && req.url === '/dialogue') return json(200, { ...dialogue.list(), canSave: Boolean(config.adminPassword) });
+  const lineRoute = req.url.match(/^\/dialogue\/([A-Za-z]+)$/);
+  if (lineRoute && (req.method === 'POST' || req.method === 'DELETE')) {
+    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
+    if (!passwordMatches(req.headers['x-admin-password'])) {
+      logger.warn('dialogue edit with wrong password', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'wrong password' });
+    }
+    let error;
+    try {
+      error = req.method === 'DELETE' ? dialogue.reset(lineRoute[1]) : dialogue.set(lineRoute[1], JSON.parse(await readBody(req, 20000)).lines);
+    } catch {
+      error = 'bad request';
+    }
+    if (error) return json(400, { error });
+    logger.info('dialogue changed', { kind: lineRoute[1], action: req.method === 'DELETE' ? 'reset' : 'edit' });
+    rooms.broadcastAll({ t: ServerMsg.DIALOGUE_CHANGED }); // everyone playing hears the new lines right away
+    return json(200, { ok: true, ...dialogue.list() });
+  }
   if (req.method === 'POST' && req.url === '/auth/device') {
     // A first-time browser asks for its own account; limited per IP so nobody can mint thousands.
     if (tooManyAuthAttempts(req.socket.remoteAddress)) return json(429, { error: 'Too many tries — wait a minute' });
@@ -333,6 +355,12 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.HIRE:
       client.room?.hireAction(client, msg);
+      break;
+    case ClientMsg.FISH:
+      client.room?.fish(client, msg);
+      break;
+    case ClientMsg.FURNISH:
+      client.room?.furnish(client, msg);
       break;
     case ClientMsg.INPUT:
       client.room?.handleInput(client, msg);

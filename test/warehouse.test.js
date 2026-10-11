@@ -105,8 +105,17 @@ test('splitters deal left, forward and right in turn, filters sort, mergers join
   const { wh, act } = town();
   act({ action: 'buy' });
   wh.owner.bank = 1e6;
-  // Splitter at (4,2) facing east: items go north (4,1), east (5,2) and south (4,3) in turn.
+  /** One item fed onto `piece` from the belt behind it (as in play: it picks its way out as it comes on), then sent on. */
+  const feedThrough = (feeder, piece, good) => {
+    feeder.item = { good, p: 1, from: feeder.dir, to: feeder.dir };
+    wh.step(0.01);
+    assert.ok(piece.item, 'came on');
+    piece.item.p = 1;
+    wh.step(0.01);
+  };
+  // Splitter at (4,2) facing east, fed from (3,2): items go north (4,1), east (5,2) and south (4,3) in turn.
   act({ action: 'place', kind: 'splitter', x: 4, y: 2, dir: E });
+  act({ action: 'place', kind: 'belt', x: 3, y: 2, dir: E });
   act({ action: 'place', kind: 'belt', x: 4, y: 1, dir: N });
   act({ action: 'place', kind: 'belt', x: 5, y: 2, dir: E });
   act({ action: 'place', kind: 'belt', x: 4, y: 3, dir: S });
@@ -115,9 +124,8 @@ test('splitters deal left, forward and right in turn, filters sort, mergers join
   const deal = (n) => {
     const seen = [];
     for (let i = 0; i < n; i++) {
-      split.item = { good: 'logs', p: 1 };
       for (const o of Object.values(outs)) o.item = null;
-      wh.step(0.01);
+      feedThrough(wh.at(3, 2), split, 'logs');
       seen.push(Object.keys(outs).find((k) => outs[k].item) ?? 'stuck');
     }
     return seen;
@@ -131,6 +139,7 @@ test('splitters deal left, forward and right in turn, filters sort, mergers join
   // Filter at (7,2) facing east, set to plastic: everything else goes straight on (east), plastic
   // north and south (its left and right) in turn.
   act({ action: 'place', kind: 'filter', x: 7, y: 2, dir: E });
+  act({ action: 'place', kind: 'belt', x: 6, y: 2, dir: E });
   act({ action: 'configure', x: 7, y: 2, value: 'plastic' });
   act({ action: 'place', kind: 'belt', x: 8, y: 2, dir: E });
   act({ action: 'place', kind: 'belt', x: 7, y: 1, dir: N });
@@ -138,25 +147,66 @@ test('splitters deal left, forward and right in turn, filters sort, mergers join
   const filter = wh.at(7, 2);
   const sort = (good) => {
     for (const [x, y] of [[8, 2], [7, 1], [7, 3]]) wh.at(x, y).item = null;
-    filter.item = { good, p: 1 };
-    wh.step(0.01);
+    feedThrough(wh.at(6, 2), filter, good);
     return wh.at(8, 2).item ? 'east' : wh.at(7, 1).item ? 'north' : wh.at(7, 3).item ? 'south' : 'stuck';
   };
   assert.equal(sort('fuel'), 'east', 'not the chosen good: straight on');
   assert.deepEqual([sort('plastic'), sort('plastic')].sort(), ['north', 'south'], 'the chosen good: left and right in turn');
   assert.equal(sort('fuel'), 'east');
 
-  // A plain belt refuses items from the side; a merger takes them.
+  // Belts and mergers take items from the side too (not head-on, from the front).
   act({ action: 'place', kind: 'belt', x: 1, y: 1, dir: E });
   act({ action: 'place', kind: 'belt', x: 2, y: 0, dir: S }); // points down into (2,1)
   act({ action: 'place', kind: 'belt', x: 2, y: 1, dir: E });
   wh.at(2, 0).item = { good: 'logs', p: 1 };
   wh.step(0.01);
-  assert.equal(wh.at(2, 1).item, null, 'belts only take from behind');
+  assert.equal(wh.at(2, 1).item?.good, 'logs', 'side-loaded onto a belt');
+  assert.equal(wh.at(2, 1).item.from, S, 'it remembers it came in from the side');
+  wh.at(2, 1).item = null;
+  act({ action: 'rotate', x: 2, y: 1 }); act({ action: 'rotate', x: 2, y: 1 }); act({ action: 'rotate', x: 2, y: 1 }); // now facing north, up into (2,0)
+  wh.at(2, 0).item = { good: 'logs', p: 1 };
+  wh.step(0.01);
+  assert.equal(wh.at(2, 1).item, null, 'never head-on');
   act({ action: 'remove', x: 2, y: 1 });
   act({ action: 'place', kind: 'merger', x: 2, y: 1, dir: E });
   wh.step(0.01);
   assert.equal(wh.at(2, 1).item?.good, 'logs');
+});
+
+test('the inverse filter sends its good straight on and everything else to the sides; items come off belts by hand', () => {
+  const { world, wh, player, act } = town();
+  act({ action: 'buy' });
+  wh.owner.bank = 1e6;
+  act({ action: 'place', kind: 'belt', x: 3, y: 2, dir: E });
+  act({ action: 'place', kind: 'invfilter', x: 4, y: 2, dir: E });
+  act({ action: 'configure', x: 4, y: 2, value: 'plastic' });
+  for (const [x, y, d] of [[5, 2, E], [4, 1, N], [4, 3, S]]) act({ action: 'place', kind: 'belt', x, y, dir: d });
+  const inv = wh.at(4, 2);
+  const sort = (good) => {
+    for (const [x, y] of [[5, 2], [4, 1], [4, 3]]) wh.at(x, y).item = null;
+    wh.at(3, 2).item = { good, p: 1, from: E, to: E };
+    wh.step(0.01);
+    inv.item.p = 1;
+    wh.step(0.01);
+    return wh.at(5, 2).item ? 'east' : wh.at(4, 1).item ? 'north' : wh.at(4, 3).item ? 'south' : 'stuck';
+  };
+  assert.equal(sort('plastic'), 'east', 'its good: straight on');
+  assert.deepEqual([sort('fuel'), sort('logs')].sort(), ['north', 'south'], 'the rest: left and right in turn');
+  // Grab what's riding a belt.
+  wh.at(5, 2).item = { good: 'plastic', p: 0.4 };
+  assert.equal(act({ action: 'grab', x: 5, y: 2 }), null);
+  assert.equal(wh.at(5, 2).item, null);
+  assert.equal(hotbarOf(player).count('plastic'), 1);
+  assert.equal(act({ action: 'grab', x: 5, y: 2 }), 'nothing_there');
+  void world;
+});
+
+test('one warehouse of each size per player', () => {
+  const { wh, other, player, act, inside } = town();
+  assert.equal(act({ action: 'buy' }), null);
+  inside(player, other);
+  assert.equal(other.size, wh.size);
+  assert.equal(act({ action: 'buy', id: other.id }), 'one_per_size');
 });
 
 test('locked to everyone but the owner; picking the lock opens it and stealing from the OUT dock is a crime', () => {

@@ -114,3 +114,37 @@ test('the town keeps its numbers: someone who dies is replaced by a newcomer at 
   const home = world.buildings.find((b) => b.type === 'house');
   assert.equal(newcomer.at.building, home.id, 'moved into the house');
 });
+
+test('a walker who is stuck tries another way: a sidestep, then somewhere else, then indoors', () => {
+  const world = town();
+  const folk = world.townsfolk;
+  folk.people.length = 1;
+  const person = folk.people[0];
+  person.inside = 0.01;
+  world.step(1 / 30); // out the door with somewhere to go
+  assert.ok(person.route.length > 0 && person.inside <= 0);
+  const pin = { x: person.x, y: person.y };
+  const firstDest = person.dest;
+  const hold = (sec) => { for (let i = 0; i < 30 * sec; i++) { world.step(1 / 30); if (person.inside <= 0) Object.assign(person, pin); } };
+  for (let i = 0; i < 4 && !(person.stuck?.tries >= 1); i++) hold(1);
+  assert.equal(person.stuck.tries, 1);
+  const step = person.route[0];
+  assert.ok(Math.abs(Math.hypot(step.x - pin.x, step.y - pin.y) - 90) < 1, 'a sidestep off in another direction first');
+  assert.equal(person.dest, firstDest, 'same destination for now');
+  hold(4);
+  assert.ok(person.stuck.tries >= 3, 'still stuck');
+  assert.ok(person.dest !== firstDest || person.route[0] !== step, 'a new plan from where they stand');
+  hold(6);
+  assert.ok(person.inside > 0, 'gave up and went indoors');
+  for (let i = 0; i < 30 * (config.townsfolk.minStaySec + 1); i++) world.step(1 / 30);
+  assert.ok(person.inside <= 0 && person.route.length > 0, 'and out again later');
+});
+
+test('a full-size map is capped at maxPopulation townsfolk and maxUnits police', () => {
+  const world = new World();
+  assert.ok(world.buildings.length * config.townsfolk.perBuilding > config.townsfolk.maxPopulation, 'a big enough town to hit the cap');
+  assert.equal(world.townsfolk.people.length, config.townsfolk.maxPopulation);
+  assert.equal(world.police.units.length + world.police.waiting.length, config.police.maxUnits);
+  assert.equal(config.townsfolk.maxPopulation, 300);
+  assert.equal(config.police.maxUnits, 20);
+});
