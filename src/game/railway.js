@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { isCop } from './police.js';
 
 // The railway: one straight track right across the map (west → east), the freight station beside it,
 // and a freight train that calls every few minutes.
@@ -201,6 +202,7 @@ export class Railway {
   sellBlack(p, good, qty) {
     if (!this.#near(p, this.smuggler)) return 'too_far';
     if (!config.goods[good]?.illegal) return 'not_wanted';
+    if (isCop(p)) return 'cop_no_illegal';
     const holder = this.world.economy.cargoOf(p);
     const guns = good === 'blackguns' ? this.#unregistered(p) : [];
     qty = Math.min(qty, holder.count(good) + guns.length);

@@ -8,9 +8,9 @@ import { Teams } from './teams.js';
 import { createWorld } from './World.js';
 import { makeWeapon } from './entities.js';
 
-/** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). */
+/** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). In prison: what the warden's keeping. */
 export function carriedSlots(p) {
-  return p.inventory.map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
+  return (p.jailed?.stash ?? p.inventory).map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
 }
 
 /** Saved hotbar slots back into a player's hotbar (anything no longer in the game is dropped). */
@@ -145,6 +145,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.prison.events.splice(0)) {
+      const { player, ...rest } = e;
+      if (player) this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.roadblocks.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -215,7 +219,8 @@ export class Room {
     for (const e of explosions) this.broadcast({ t: ServerMsg.BOOM, x: e.x, y: e.y });
     for (const { victim, killer } of deaths) {
       // What they carried is on their body now: nothing to come back with.
-      if (victim.account?.id && !victim.account.guest) this.#store('setCarried', victim.account.id, 0, null);
+      // (Died inside the wire: the warden still has your things, and you'll be back in the camp.)
+      if (victim.account?.id && !victim.account.guest) this.#store('setCarried', victim.account.id, 0, victim.jailed?.prison ? carriedSlots(victim) : null);
       const client = this.#clientForPlayer(victim);
       if (client) {
         client.player = null;
@@ -241,6 +246,8 @@ export class Room {
       v.carId = this.store.addCar(v.owner.id, { type: v.type, color: v.color, fuel: v.fuel, cargo: v.cargo });
     };
     w.onCarLost = (v) => this.#saveCar(v);
+    w.onCopChange = (account) => !account.guest && this.#store('setCop', account.id, account.cop);
+    w.prison.onChange = (account) => account.id && !account.guest && this.#store('setPrison', account.id, account.prison ?? null);
   }
 
   /** A store call that can't take the game down if the database has a problem. */
@@ -464,6 +471,7 @@ export class Room {
       player.cash = account.cash ?? 0;
       restoreSlots(player, account.carried);
     }
+    if (account?.prison) this.world.prison.jail(player, 0, account.prison); // still serving a sentence
     client.player = player;
     client.name = player.name;
     client.send({
@@ -501,6 +509,12 @@ export class Room {
 
   /** Markets and factories: describe, trade, factory actions and refuelling. */
   inspect(client, id) {
+    // The prison warden: your sentence, and bail for anyone inside.
+    const prison = this.world.prison;
+    if (prison.building && id === prison.building.id) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...prison.describe(client.player) });
+    // A Militsiya front desk: join up (answer the questions) or hand in your badge.
+    const desk = this.world.police.stations.find((s) => s.id === id);
+    if (desk) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...this.world.police.describeDesk(client.player, desk) });
     // The bar: the barman's list of muscle for hire, and yours.
     const hires = this.world.hires;
     if (hires.bar && id === hires.bar.id) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...hires.describe(client.player) });
@@ -600,6 +614,34 @@ export class Room {
     const fishing = this.world.fishing;
     const error = msg.action === 'cast' ? fishing.cast(p, msg.angle) : fishing.pull(p, msg.seen);
     if (error && error !== 'no_line') client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
+  /** At a Militsiya front desk: apply to join (answers to the questions) or resign. As an officer: arrest or fine a player. */
+  copAction(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const police = this.world.police;
+    if (msg.action === 'arrest' || msg.action === 'fine') {
+      const result = msg.action === 'arrest' ? police.copArrest(p, msg.id) : police.copFine(p, msg.id);
+      if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
+      return client.send({ t: ServerMsg.DONE, what: `cop_${msg.action}`, ...result, cash: p.cash });
+    }
+    const error = msg.action === 'apply' ? police.apply(p, msg.answers) : police.resign(p);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
+    else client.send({ t: ServerMsg.DONE, what: `cop_${msg.action}` });
+    const desk = police.deskOf(p);
+    if (desk) this.inspect(client, desk.id);
+  }
+
+  /** At the prison warden: pay bail (id: yourself, or anyone inside). */
+  prisonAction(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const prison = this.world.prison;
+    const result = prison.payBail(p, msg.id);
+    if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
+    client.send({ t: ServerMsg.DONE, what: 'bail', ...result, self: msg.id === p.id });
+    if (msg.id !== p.id && prison.building) this.inspect(client, prison.building.id);
   }
 
   /** At the bar: hire a goon, a guard (id: building to guard) or a hitman (id: target player), or let one go (id: hire). */
@@ -730,7 +772,8 @@ export class Room {
       bank: Math.floor(me.account?.bank ?? 0),
       job: this.world.economy.jobBoard(me).mine,
       wanted: me.wanted,
-      jail: me.jailed ? Math.max(0, Math.ceil(me.jailed.until - this.world.economy.time)) : 0,
+      jail: me.jailed && !me.jailed.prison ? Math.max(0, Math.ceil(me.jailed.until - this.world.economy.time)) : 0,
+      prison: me.jailed?.prison ? [me.jailed.coal, me.jailed.quota, me.jailed.bail] : 0, // [coal in, quota, bail]
       carry: me.carrying?.id ?? 0, // the body you're carrying
       hidden: me.hidden ? 1 : 0, // in a dumpster
       rob: me.robbing ? [me.robbing.kind, Math.round((me.robbing.elapsed / me.robbing.sec) * 1000) / 1000, me.robbing.sec] : null, // [kind, progress, seconds]
@@ -754,6 +797,7 @@ export class Room {
       // [type, ammo, reload seconds left] per slot; reload rounds up so it never shows 0 while still reloading.
       // Guns: [type, ammo, reload seconds left]; goods: ['goods', good, qty].
       heal: Math.round((me.digesting ?? []).reduce((sum, d) => sum + d.perSec * d.left, 0)), // still to come from food
+      cop: me.account?.cop ? 1 : 0, // I've joined the Militsiya
       buzz: Math.ceil(me.buzz ?? 0), // seconds of vodka buzz left (less damage taken)
       visions: Object.entries(me.visions ?? {}).map(([kind, left]) => [kind, Math.ceil(left)]),
       holdup: me.heldUp ? [Math.max(0, Math.round(me.heldUp.left * 10) / 10), me.heldUp.of] : null, // a gangster's got me at gunpoint: [seconds left, of] // vodka's (and the mixes') effects on how I see, stacked: [[kind, seconds left]]
@@ -793,7 +837,7 @@ export class Room {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
-          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth]);
+          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0]); // (in Militsiya uniform; wanted — only officers are told)
           if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.victim ? 2 : e.fishing.phase === 'bite' ? 1 : 0]); // 2: hooked onto a player
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];

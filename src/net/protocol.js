@@ -33,6 +33,8 @@ export const ClientMsg = Object.freeze({
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
+  PRISON: 'prison', // { t, action: 'bail', id (prisoner: yourself or anyone inside) } at the prison warden
+  COP: 'cop', // { t, action: 'apply', answers: [option index per question] } | { t, action: 'resign' } at a Militsiya front desk | { t, action: 'arrest' | 'fine', id (player) } as an officer
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
 });
 
@@ -41,7 +43,7 @@ export const ServerMsg = Object.freeze({
   SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}] }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color, look }
   PLAYER_LEFT: 'player_left', // { t, id }
-  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me),boosting,radio ([song, seconds playing] | 0)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), crew: [[id,x,y,angle,role (0 goon, 1 guard, 2 hitman),mine,health %]] (hired muscle on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
+  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth,cop (in uniform),wanted (only sent to officers)]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me),boosting,radio ([song, seconds playing] | 0)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), crew: [[id,x,y,angle,role (0 goon, 1 guard, 2 hitman),mine,health %]] (hired muscle on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
   DIED: 'died', // { t, killedBy, score }
   LEADERBOARD: 'leaderboard', // { t, entries: [{id, name, score (bank balance, rounded)}] }
   PONG: 'pong', // { t, ts, serverTime }
@@ -191,6 +193,14 @@ const validators = {
 
   [ClientMsg.HIRE]: (m) =>
     ['goon', 'guard', 'hitman', 'dismiss', 'vodka'].includes(m.action) && (m.action === 'goon' || m.action === 'vodka' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+
+  [ClientMsg.COP]: (m) =>
+    m.action === 'resign' ? { t: m.t, action: 'resign' }
+      : (m.action === 'arrest' || m.action === 'fine') && Number.isInteger(m.id) ? { t: m.t, action: m.action, id: m.id }
+      : m.action === 'apply' && Array.isArray(m.answers) && m.answers.length <= 20 && m.answers.every((a) => Number.isInteger(a) && a >= 0 && a < 10) ? { t: m.t, action: 'apply', answers: m.answers }
+        : null,
+
+  [ClientMsg.PRISON]: (m) => (m.action === 'bail' && Number.isInteger(m.id) ? { t: m.t, action: 'bail', id: m.id } : null),
 
   [ClientMsg.GANGSTER]: (m) => (Number.isInteger(m.id) && m.action === 'sell' ? { t: m.t, id: m.id, action: 'sell' } : null),
 

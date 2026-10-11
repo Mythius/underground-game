@@ -458,3 +458,34 @@ test('a mixing station mixes vodka with energy drinks, petrol or crude into cont
   }
   void world;
 });
+
+test('shop energy drinks go onto a pallet (and into a mixer) as energy drinks; a still and mixing line makes jet vodka', () => {
+  const { world, wh, player, act } = town();
+  act({ action: 'buy' });
+  wh.owner.bank = 1e6;
+  // Still: wheat by hand -> vodka.
+  assert.equal(act({ action: 'place', kind: 'still', x: 4, y: 2, dir: E }), null);
+  hotbarOf(player).add('wheat', 4);
+  assert.equal(act({ action: 'mload', x: 4, y: 2, slot: player.inventory.findIndex((s) => s?.good === 'wheat') }), null);
+  for (let i = 0; i < 25 * 3; i++) world.step(1 / 3);
+  assert.equal(wh.at(4, 2).out.vodka, 2, 'two bottles distilled');
+  assert.equal(act({ action: 'mtake', x: 4, y: 2 }), null);
+  assert.equal(hotbarOf(player).count('vodka'), 2);
+  // IN pallet -> belts -> mixing station (jet vodka) -> belts -> OUT pallet.
+  for (const x of [2, 3]) assert.equal(act({ action: 'place', kind: 'belt', x, y: 7, dir: E }), null);
+  assert.equal(act({ action: 'place', kind: 'mixer', x: 4, y: 6, dir: E }), null);
+  for (const x of [6, 7]) assert.equal(act({ action: 'place', kind: 'belt', x, y: 7, dir: E }), null);
+  assert.equal(wh.at(4, 6).recipe, 'illegal:jetvodka');
+  player.inventory[player.inventory.indexOf(null)] = { food: 'drink', qty: 3 }; // bought in a shop
+  Object.assign(player, wh.tileCenter(2, 5));
+  assert.equal(act({ action: 'pput', x: 0, y: 6, good: 'energy', qty: 2 }), null);
+  assert.equal(player.inventory.find((s) => s?.food === 'drink').qty, 1, 'two drinks off the hotbar');
+  assert.equal(act({ action: 'pput', x: 0, y: 6, good: 'vodka', qty: 2 }), null);
+  for (let i = 0; i < 30 * 40; i++) world.step(1 / 30);
+  assert.equal(wh.dockOut.stock.jetvodka, 2, 'two jet vodkas at the OUT pallet');
+  // A drink straight into the mixer by hand works too.
+  const mixer = wh.at(4, 6);
+  assert.equal(act({ action: 'mload', x: 4, y: 6, slot: player.inventory.findIndex((s) => s?.food === 'drink') }), null);
+  assert.equal(mixer.in.energy, 1);
+  assert.equal(player.inventory.some((s) => s?.food === 'drink'), false);
+});

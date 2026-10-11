@@ -11,7 +11,7 @@ import { hotbarOf } from './cargo.js';
 // Anyone can work any site. A player can buy a site: then the foreman's wages come out of their bank,
 // and whatever the site sells goes into it.
 
-const KIND_OF_TOOL = { pickaxe: ['rock', 'vein'], axe: ['tree'], scythe: ['wheat'] };
+const KIND_OF_TOOL = { pickaxe: ['rock', 'vein', 'coal'], axe: ['tree'], scythe: ['wheat'] };
 
 export class Work {
   constructor(world) {

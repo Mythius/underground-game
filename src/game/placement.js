@@ -69,7 +69,7 @@ export function generateTownRoads(width, height, city, { mainWidth = 270, street
  * Work sites (mine, lumberyards, farms, oil fields), each filling a whole country block between the
  * long gravel roads, its gate facing one of them. `counts`: { type: n }. Returns the buildings.
  */
-export function placeSites({ width, height, roads, city, counts, avoid = [], isWet = () => false }) {
+export function placeSites({ width, height, roads, city, counts, avoid = [], isWet = () => false, prison = false }) {
   const horizontal = roads.filter((r) => r.w >= width - 1).sort((a, b) => a.y - b.y);
   const vertical = roads.filter((r) => r.h >= height - 1).sort((a, b) => a.x - b.x);
   const M = 70; // keep off the roads
@@ -91,17 +91,24 @@ export function placeSites({ width, height, roads, city, counts, avoid = [], isW
   // The mine gets the biggest block.
   const kinds = Object.keys(counts).filter((t) => counts[t] > 0).sort((a, b) => (b === 'mine') - (a === 'mine'));
   const order = [...kinds, ...Object.entries(counts).flatMap(([t, n]) => Array(Math.max(0, n - 1)).fill(t))];
+  if (prison) order.splice(order[0] === 'mine' ? 1 : 0, 0, 'prison'); // right after the mine
   if (order[0] === 'mine') blocks.sort((a, b) => b.w * b.h - a.w * a.h);
+  // The prison: on the edge of town (the free block nearest the middle of it).
+  const town = city ? { x: city.x + city.w / 2, y: city.y + city.h / 2 } : { x: width / 2, y: height / 2 };
+  const nearTown = (b) => Math.hypot(b.x + b.w / 2 - town.x, b.y + b.h / 2 - town.y);
   for (const type of order) {
-    const block = blocks.shift();
+    const block = type === 'prison' && blocks.length ? blocks.splice(blocks.indexOf(blocks.reduce((a, b) => (nearTown(b) < nearTown(a) ? b : a))), 1)[0] : blocks.shift();
     if (!block) break;
     // Gate toward one of its roads: rot 0 = south, 1 = west, 2 = north, 3 = east.
     const rot = Math.floor(Math.random() * 4);
     let size = rot % 2 ? { w: Math.round(block.h), h: Math.round(block.w) } : { w: Math.round(block.w), h: Math.round(block.h) };
     let { x, y } = block;
-    if (type === 'oilwell') {
-      // Oil fields take a quarter of the block (half each way), against the road their gate faces.
-      size = { w: Math.round(Math.min(size.w, Math.max(700, size.w / 2))), h: Math.round(Math.min(size.h, Math.max(700, size.h / 2))) };
+    if (type === 'oilwell' || type === 'prison') {
+      // Oil fields take a quarter of the block (half each way), against the road their gate faces; the
+      // prison is about the mine's size at most.
+      size = type === 'prison'
+        ? { w: Math.min(size.w, 1900), h: Math.min(size.h, 1900) }
+        : { w: Math.round(Math.min(size.w, Math.max(700, size.w / 2))), h: Math.round(Math.min(size.h, Math.max(700, size.h / 2))) };
       const fw = rot % 2 ? size.h : size.w, fh = rot % 2 ? size.w : size.h; // its footprint on the map
       x += [(block.w - fw) / 2, 0, (block.w - fw) / 2, block.w - fw][rot];
       y += [block.h - fh, (block.h - fh) / 2, 0, (block.h - fh) / 2][rot];

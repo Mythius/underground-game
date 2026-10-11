@@ -68,9 +68,13 @@ export class AccountStore {
     if (!has('accounts', 'carried')) this.db.exec('ALTER TABLE accounts ADD COLUMN carried TEXT'); // JSON hotbar slots when they left
     if (!has('identities', 'email')) this.db.exec('ALTER TABLE identities ADD COLUMN email TEXT');
     if (!has('accounts', 'home_items')) this.db.exec('ALTER TABLE accounts ADD COLUMN home_items TEXT'); // JSON: furniture placed at home
+    if (!has('accounts', 'cop')) this.db.exec('ALTER TABLE accounts ADD COLUMN cop INTEGER NOT NULL DEFAULT 0'); // joined the Militsiya
+    if (!has('accounts', 'prison')) this.db.exec('ALTER TABLE accounts ADD COLUMN prison TEXT'); // JSON: the sentence still to serve ({ quota, coal, bail })
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison FROM accounts WHERE id = ?'),
+      setPrison: this.db.prepare('UPDATE accounts SET prison = ? WHERE id = ?'),
       setHomeItems: this.db.prepare('UPDATE accounts SET home_items = ? WHERE id = ?'),
+      setCop: this.db.prepare('UPDATE accounts SET cop = ? WHERE id = ?'),
       accountByName: this.db.prepare('SELECT id FROM accounts WHERE name = ?'),
       insertAccount: this.db.prepare('INSERT INTO accounts (name, bank, created_at) VALUES (?, ?, ?)'),
       identity: this.db.prepare('SELECT account_id, secret FROM identities WHERE provider = ? AND subject = ?'),
@@ -166,7 +170,7 @@ export class AccountStore {
     const row = this.q.accountById.get(id);
     if (!row) return null;
     const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
-    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items) };
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison) };
   }
 
   /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
@@ -174,6 +178,20 @@ export class AccountStore {
     this.q.setHomeItems.run(items?.length ? JSON.stringify(items) : null, id);
     const live = this.liveAccounts.get(id);
     if (live) live.homeItems = items;
+  }
+
+  /** Joined (or left) the Militsiya. */
+  setCop(id, cop) {
+    this.q.setCop.run(cop ? 1 : 0, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.cop = Boolean(cop);
+  }
+
+  /** The prison sentence still to serve ({ quota, coal, bail }), or null once out. */
+  setPrison(id, sentence) {
+    this.q.setPrison.run(sentence ? JSON.stringify(sentence) : null, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.prison = sentence ?? null;
   }
 
   /** What they're carrying (cash and hotbar slots) — saved when they leave, cleared when they die. */

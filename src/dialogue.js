@@ -27,6 +27,7 @@ export const DIALOGUE = [
     { id: 'gunshop', name: 'Gun store — hello', lines: ['Looking for protection?', 'No questions asked.'] },
     { id: 'barman', name: 'Barman — hello', lines: ['What\'ll it be?', 'Need a problem solved?', 'I know some people.', 'Vodka? Or business?'] },
     { id: 'dealer', name: 'Car dealer — hello', lines: ['Fine cars, almost new!', 'Come, take a look.'] },
+    { id: 'warden', name: 'Prison warden — hello', note: 'You walk up to the gatehouse counter at the prison camp.', lines: ['Name and number.', 'The boiler is hungry. So dig.', 'Visiting hours are whenever I say.', 'Bail is paid in cash. Or from the bank, if you must.', 'Nobody leaves without my say-so.'] },
     { id: 'station', name: 'Freight clerk — hello', lines: ['The train is late. As always.', 'Freight? I can arrange it.'] },
     { id: 'smuggler', name: 'Smuggler — hello', lines: ['…You didn\'t see me.', 'Psst. Got something special.'] },
     { id: 'bye', name: 'Goodbye (any of them)', note: 'You walk away from a counter.', lines: ['Come again.', 'All the best.', 'Poka.', 'Goodbye.'] },
@@ -34,6 +35,8 @@ export const DIALOGUE = [
     { id: 'robBank', name: 'Bank teller — being robbed', note: 'While you rob the bank (hold F).', lines: ['Don\'t hurt anyone!', 'The alarm is already ringing!', 'Take the money and go!', 'You won\'t get far.'] },
   ] },
   { group: 'Militsiya', kinds: [
+    { id: 'police', name: 'Front desk — hello', note: 'You walk up to the desk officer at a МИЛИЦИЯ station (apply to join here).', lines: ['Want to serve? Fill in the form.', 'Documents?', 'The Militsiya is hiring.', 'Next.'] },
+    { id: 'prisonGuard', name: 'Prison guard', note: 'You walk past a guard patrolling inside the wire.', lines: ['Keep moving, zek.', 'Back to the coal face.', 'The coal won\'t dig itself.', 'Eyes down.', 'Hands where I can see them.'] },
     { id: 'copIdle', name: 'On patrol', note: 'You walk past a cop while you\'re not wanted.', lines: ['Documents, please.', 'Move along.', 'Keep it quiet.'] },
     { id: 'copWanted', name: 'Chasing you', note: 'While you\'re wanted and they can see you.', lines: ['Stop! Militsiya!', 'Hands where I can see them!', 'Halt!', 'You\'re under arrest!'] },
     { id: 'copArrest', name: 'Arresting you', note: 'While the arrest bar fills (get away to stop it).', lines: ['Don\'t move!', 'Hands behind your back!', 'You\'re coming with us.', 'Stop resisting!', 'Got you now.'] },

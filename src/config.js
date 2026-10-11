@@ -166,7 +166,7 @@ export const config = Object.freeze({
     menu: {
       bread: { name: 'Bread', icon: '🍞', price: 10, heal: 15, healSec: 6, mass: 2, bread: 1 },
       burger: { name: 'Burger', icon: '🍔', price: 25, heal: 40, healSec: 10, mass: 6, bread: 2 },
-      drink: { name: 'Energy drink', icon: '🥤', price: 15, heal: 10, healSec: 4, mass: 0, stamina: true, bread: 0 },
+      drink: { name: 'Energy drink', icon: '🥤', price: 15, heal: 10, healSec: 4, mass: 0, stamina: true, bread: 0, good: 'energy' }, // (on a pallet or into a machine it counts as the energy-drinks good)
       feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, healSec: 20, mass: 15, bread: 4 },
     },
     foodStack: 5,
@@ -219,6 +219,7 @@ export const config = Object.freeze({
     crude: { name: 'Crude oil', icon: '🛢️', base: 10, weight: 1, tier: 'raw' },
     scrap: { name: 'Scrap metal', icon: '🔩', base: 7, weight: 1, tier: 'raw' },
     sand: { name: 'Sand', icon: '🏖️', base: 4, weight: 1, tier: 'raw' },
+    coal: { name: 'Coal', icon: '🪨', base: 9, weight: 1, tier: 'raw' }, // mined by convicts at the prison, for its power plant
     fish: { name: 'Fish', icon: '🐟', base: 18, weight: 1, tier: 'raw' }, // caught with a rod (see config.fishing); it eats too
     planks: { name: 'Planks', icon: '🪚', base: 20, weight: 1, tier: 'processed' },
     flour: { name: 'Flour', icon: '🥡', base: 15, weight: 1, tier: 'processed' },
@@ -438,12 +439,32 @@ export const config = Object.freeze({
   // Each crime sets your wanted level to at least its stars — if the police see it, or a townsperson
   // nearby calls it in. Alarms (robberies) always report.
   crime: {
-    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, mugging: 2, illegal_gun: 1, break_in: 1, carry_body: 2, near_body: 1, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
+    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, mugging: 2, illegal_gun: 1, break_in: 1, carry_body: 2, near_body: 1, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4, prison_escape: 3 },
     policeSees: 750, // police notice crimes this close
     witnessSees: 320, // townsfolk out walking notice (and phone it in) this close
     // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
     // from where you were last seen; they give up this long (by stars) after last seeing you.
     searchSec: [0, 30, 50, 75, 110, 150],
+  },
+  // The prison (ИТК, a gulag on the edge of town): every arrest ends up here. Half of it is a coal
+  // mine. Get out by paying the warden your bail (or a friend pays it), by mining your quota of coal
+  // for the prison's power plant (tip it into the coal bunker), or by escaping: lift a guard's key,
+  // unlock the door in the inner fence, then pick the lock on the outer fence — the tower snipers
+  // open up on anyone wanted round the camp.
+  prison: {
+    coalPerStar: 10, // the quota: this much coal per wanted star at the arrest
+    minStars: 1, // (a player officer's arrest counts as at least this)
+    guards: 3, // patrolling inside the wire
+    hopperReach: 110, // stand this close to the coal bunker and your coal goes in
+    wardenReach: 140,
+    keyReach: 50, // lifting a guard's key (F, from behind)
+    caughtCoal: 5, // caught at it (from the front): this much more coal on your quota
+    doorOpenSec: 12, // the escape doors swing shut (and lock) after this
+    lockpickSec: 6, // the outer fence door
+    escapeStars: 3,
+    sniperRange: 1100, // from each watchtower (out past this from the camp, an escape is done)
+    sniperEverySec: 3, // each tower
+    sniperSpread: 0.14, // they miss more the further off you are
   },
   robbery: {
     atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false, noDepositSec: 300 }, // noDepositSec: you can't pay the cash straight back in at the ATM you robbed
@@ -512,13 +533,14 @@ export const config = Object.freeze({
     leaveRange: 400, // walk this far off the site and the tool goes back to the foreman
     veinChance: 0.22, // share of the mine's rocks that are rich ore veins
     extraSand: 0.25, extraScrap: 0.12, // a worked-out rock sometimes gives sand or scrap too
-    hp: { rock: 3, vein: 4, tree: 4, wheat: 1 }, // hits to work one out
-    yield: { vein: { ore: 2 }, tree: { logs: 3 }, wheat: { wheat: 2 } }, // (a rock: 1 ore)
-    regrowSec: { rock: 150, vein: 200, tree: 180, wheat: 90 },
+    hp: { rock: 3, vein: 4, tree: 4, wheat: 1, coal: 3 }, // hits to work one out
+    yield: { vein: { ore: 2 }, tree: { logs: 3 }, wheat: { wheat: 2 }, coal: { coal: 2 } }, // (a rock: 1 ore)
+    regrowSec: { rock: 150, vein: 200, tree: 180, wheat: 90, coal: 60 },
     nodes: {
       mine: { gap: 100, density: 0.85, r: 26, kind: 'rock' },
       logging: { gap: 120, density: 0.9, r: 30, kind: 'tree' },
       farm: { gapX: 70, gapY: 54, density: 1, r: 26, kind: 'wheat', rows: true }, // straight rows, end to end, close together
+      prison: { gap: 85, density: 0.85, r: 26, kind: 'coal' }, // the convicts' coal face
     },
   },
   // Bodies: loot them (E), carry them (slowly, no shooting), and hide them before someone finds them.
@@ -548,8 +570,27 @@ export const config = Object.freeze({
     officerHealth: 100,
     officerArmor: 0.25, // body armour: officers take this much less damage
     respawnSec: 60, // a downed officer is replaced at the station after this (a new car, when there's a space)
-    bailPerStar: 250, // paid from cash, then the bank
-    jailSecPerStar: 30, // if you can't make bail
+    bailPerStar: 250, // paid to the prison warden (by you or a friend), from cash then the bank
+    jailSecPerStar: 30, // (maps with no prison only: a cell at the station, bail taken on arrest)
+    // Joining the Militsiya: answer the desk officer's questions (all right to pass). Officers wear the
+    // uniform and can't make or sell anything illegal. Fail and you wait retrySec to try again.
+    academy: {
+      reach: 130,
+      retrySec: 120,
+      // A player officer can arrest (Z: straight to jail, contraband seized) or fine (Y: cash, then bank,
+      // all to the officer) any player standing this close, on foot, once every cooldownSec.
+      collarReach: 70,
+      jailSec: 60,
+      fine: 200,
+      cooldownSec: 10,
+      questions: [
+        { q: 'What is the Militsiya for?', options: ['Collecting bribes', 'Keeping order and protecting the people', 'Running the black market'], answer: 1 },
+        { q: 'A shopkeeper offers you vodka from under the counter. You…', options: ['Buy a crate and sell it on', 'Take a bottle for yourself', 'Refuse — contraband is against the law'], answer: 2 },
+        { q: 'May an officer run a still or a printing press?', options: ['Never', 'Only out in a shack in the woods', 'If the captain gets a cut'], answer: 0 },
+        { q: 'When do you draw your weapon?', options: ['When lives are in danger', 'Whenever someone looks at me wrong', 'To clear a queue at the bakery'], answer: 0 },
+        { q: 'A man in a leather jacket wants to buy your seized goods. You…', options: ['Sell them — nobody will know', 'Say no and report him', 'Ask for a better price'], answer: 1 },
+      ],
+    },
   },
   // Hired muscle from the БАР (the barman): goons follow you (and ride along in your car), guards hold
   // your home or a warehouse from the inside, a hitman hunts one player. Hiring is paid from the bank;

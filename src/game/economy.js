@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { isCop } from './police.js';
 import { Combined, fits, hotbarOf, trunkOf } from './cargo.js';
 import { inRect } from './parking.js';
 
@@ -273,6 +274,7 @@ export class Economy {
   underTable(p, id, good, qty) {
     const market = this.markets.get(id);
     if (!this.underTableHere(market) || !config.goods[good]?.illegal) return 'not_bought_here';
+    if (isCop(p)) return 'cop_no_illegal';
     if (!this.#near(p, market, config.markets.reach)) return 'too_far';
     if (this.isClosed(market)) return 'closed_raid';
     const holder = this.cargoOf(p);

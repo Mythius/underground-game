@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Underground</title>
   <style>
     :root { color-scheme: dark; }
@@ -36,7 +36,7 @@
     @media (max-width: 560px) { .customize { grid-template-columns: 1fr; justify-items: center; } }
     #game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; }
     #top-right { position: fixed; top: 1rem; right: 1rem; z-index: 3; display: flex; gap: .5rem; align-items: flex-start; }
-    #settings-btn {
+    #settings-btn, #touch-menu-btn {
       width: 2.4rem; height: 2.4rem; border-radius: .5rem; border: 1px solid #444; background: rgba(0, 0, 0, .55);
       color: #eee; font-size: 1.2rem; cursor: pointer; display: grid; place-items: center; padding: 0;
     }
@@ -212,6 +212,13 @@
     #crimebar .bar { height: 10px; border-radius: 5px; background: rgba(0, 0, 0, .6); overflow: hidden; margin-top: .3rem; border: 1px solid rgba(255, 255, 255, .3); }
     #crimebar .bar i { display: block; height: 100%; background: #f4c430; }
     #crimebar.arrest .bar i { background: #e6194b; }
+    #prisonbar { position: fixed; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 3; padding: .45rem .9rem; border-radius: .5rem;
+      background: rgba(20, 20, 22, .82); color: #eee; font-size: .85rem; font-weight: 600; border: 1px solid #8a8f96; text-align: center;
+      max-width: min(30rem, calc(100vw - 2rem)); pointer-events: none; }
+    #prisonbar .bar { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, .15); overflow: hidden; margin-top: .3rem; }
+    #prisonbar .bar i { display: block; height: 100%; background: #6b6f75; }
+    #prisonbar small { display: block; color: #aaa; font-weight: 400; margin-top: .2rem; }
+    body.touch #prisonbar { top: auto; bottom: 8.5rem; font-size: .75rem; }
     #jailscreen { position: fixed; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none;
       background: repeating-linear-gradient(90deg, rgba(0, 0, 0, .55) 0 18px, rgba(0, 0, 0, .15) 18px 70px); }
     #jailscreen div { background: rgba(0, 0, 0, .8); padding: 1rem 1.6rem; border-radius: .7rem; font-size: 1.3rem; font-weight: 700; color: #fff; text-align: center; }
@@ -381,6 +388,49 @@
     #chat-input:not(:focus) { opacity: .5; }
     /* Not enough room beside the hotbar: sit above it instead. */
     @media (max-width: 1100px) { #chat { bottom: 9.5rem; width: min(300px, calc(100vw - 2rem)); } #hint { display: none; } }
+
+    /* ---- touch controls (phones and tablets): two thumb sticks and buttons ---- */
+    #touch { display: none; }
+    body.touch.in-game #touch { display: block; }
+    body.touch { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    body.touch #game { touch-action: none; }
+    body.touch button { touch-action: manipulation; }
+    /* Sticks: mostly see-through rings that appear under your thumb (a faint one rests in each corner). */
+    .stick { position: fixed; z-index: 3; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .04); pointer-events: none; opacity: .5; transition: opacity .15s; }
+    .stick.active { opacity: 1; transition: none; }
+    .stick i { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
+      background: rgba(255, 255, 255, .16); border: 2px solid rgba(255, 255, 255, .22); }
+    #stick-aim.firing i { background: rgba(230, 60, 60, .25); border-color: rgba(255, 120, 120, .35); }
+    /* One column down the right edge, E at the bottom under the thumb. */
+    #touch-buttons { position: fixed; right: calc(.6rem + env(safe-area-inset-right)); bottom: calc(.8rem + env(safe-area-inset-bottom)); z-index: 3;
+      display: flex; flex-direction: column; align-items: flex-end; gap: .35rem; }
+    #touch-buttons button { min-width: 2.7rem; height: 2.7rem; padding: 0 .6rem; border-radius: 1.5rem; font: 700 .85rem system-ui, sans-serif;
+      color: #fff; background: rgba(0, 0, 0, .35); border: 2px solid rgba(255, 255, 255, .3); text-shadow: 0 1px 2px #000; }
+    #touch-buttons button.big { width: 3.4rem; height: 3.4rem; border-radius: 50%; font-size: 1.3rem; border-color: rgba(244, 196, 48, .7); }
+    #touch-buttons button.down { background: rgba(244, 196, 48, .45); }
+    #touch-menu-btn { display: none; }
+    body.touch #touch-menu-btn { display: grid; }
+    #touch-menu { position: fixed; top: 4rem; right: 1rem; z-index: 6; display: grid; gap: .4rem; padding: .6rem; border-radius: .6rem;
+      background: rgba(18, 18, 18, .95); border: 1px solid #444; }
+    #touch-menu button { font: 600 1rem system-ui, sans-serif; padding: .6rem 1rem; border-radius: .4rem; border: 1px solid #444; background: #262626; color: #eee; text-align: left; }
+    /* Room for thumbs: smaller hotbar and minimap, no keyboard hint, chat up top (typing only from the menu). */
+    body.touch #hint { display: none !important; }
+    body.touch .slot { width: 3.2rem; height: 3.2rem; }
+    body.touch .slot img { width: 2.7rem; height: 2.7rem; }
+    body.touch .slot .goods-icon { font-size: 1.5rem; }
+    body.touch .slot .key { display: none; }
+    body.touch #hotbar { bottom: calc(.5rem + env(safe-area-inset-bottom)); gap: .3rem; padding: .3rem; }
+    body.touch #coins { bottom: 4.8rem; }
+    body.touch #stamina { bottom: 4.3rem; }
+    body.touch #minimap:not(.expanded) { width: 110px; height: 110px; top: .6rem; left: .6rem; }
+    body.touch #minimap-label { display: none; }
+    body.touch #clock { top: calc(.6rem + 116px); left: .6rem; width: 114px; }
+    body.touch #chat { top: .6rem; bottom: auto; left: calc(1.2rem + 110px); width: min(260px, calc(100vw - 15rem)); font-size: .78rem; }
+    body.touch #chat-log { max-height: 18vh; }
+    body.touch #chat:not(.typing) #chat-input { position: absolute; opacity: 0; pointer-events: none; height: 0; padding: 0; border: 0; }
+    body.touch #place, body.touch #wh, body.touch #jobs, body.touch #shop, body.touch #bankpanel, body.touch #bodypanel,
+    body.touch #furnishpanel, body.touch #garagepanel, body.touch #trunk { max-width: calc(100vw - 1rem); max-height: 78vh; overflow: auto; box-sizing: border-box; }
   </style>
 </head>
 <body>
@@ -419,6 +469,7 @@
   <div id="top-right">
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
+    <button id="touch-menu-btn" type="button" title="Menu">☰</button>
     <button id="settings-btn" type="button" title="Settings" aria-expanded="false" aria-controls="settings">⚙️</button>
     <aside id="leaderboard" hidden><h2>Richest · bank</h2><ol id="leaderboard-list"></ol></aside>
     <div id="settings" hidden>
@@ -431,6 +482,12 @@
       <label>Rain effects <input type="checkbox" id="set-rain"></label>
     </div>
   </div>
+  <div id="touch">
+    <div class="stick" id="stick-move"><i></i></div>
+    <div class="stick" id="stick-aim"><i></i></div>
+    <div id="touch-buttons"></div>
+  </div>
+  <div id="touch-menu" hidden></div>
   <div id="stamina" hidden title="Stamina"><i></i></div>
   <div id="hotbar" hidden></div>
   <div id="coins" hidden title="Cash you carry (dropped if you die) · money in the bank (safe)">💵 0 ₽</div>
@@ -444,6 +501,7 @@
   <div id="jobhud" hidden></div>
   <div id="wanted" hidden></div>
   <div id="crimebar" hidden><span></span><div class="bar"><i></i></div></div>
+  <div id="prisonbar" hidden><span></span><div class="bar"><i></i></div><small>Dig coal at the coal face, tip it into the bunker by the boiler house · or pay the warden at the gatehouse</small></div>
   <div id="jailscreen" hidden><div>🔒 In jail <span id="jail-time"></span><small>You couldn't make bail. You'll be let out when your time's up.</small></div></div>
   <div id="fuel-gauge" hidden></div>
   <div id="bankpanel" hidden role="dialog" aria-label="Bank">
@@ -730,11 +788,24 @@
           break;
         }
         case 'police':
-          if (msg.kind === 'busted') {
+          if (msg.kind === 'busted' && msg.prison) {
+            sfx('busted');
+            toast(`🚔 Busted! Off to the prison camp — dig ${msg.quota} coal or pay ${money(msg.bail)} bail to the warden${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`, 6000);
+          } else if (msg.kind === 'busted') {
             sfx('busted');
             toast(msg.jail ? `🚔 Busted! No money for ${money(msg.bail)} bail — ${msg.jail}s in jail` : `🚔 Busted! Paid ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
           }
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
+          if (msg.kind === 'prison_out') { sfx('doorOpen'); toast(msg.how === 'served' ? '🔓 Quota met — the warden hands your things back. Free to go.' : msg.by ? `🔓 ${msg.by} paid your bail — the warden hands your things back. Free to go.` : '🔓 Bail paid — the warden hands your things back. Free to go.', 5000); }
+          if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
+          if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the inner fence (north side) opens with it', 5000); }
+          if (msg.kind === 'key_caught') { sfx('error'); toast(`👮 The guard caught your hand — ${msg.extra} more coal on your quota (${msg.quota})`, 4000); }
+          if (msg.kind === 'escaped') { sfx('alarm'); toast('🚨 Over the wire! The towers have snipers — run, and get well clear of the camp', 6000); }
+          if (msg.kind === 'got_away') toast('🏃 You got away from the camp');
+          if (msg.kind === 'cop_arrested' && msg.prison) { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — off to the prison camp: dig ${msg.quota} coal or pay ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`, 6000); }
+          else if (msg.kind === 'cop_arrested') { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — ${msg.jail}s in jail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`); }
+          if (msg.kind === 'cop_fired') { sfx('error'); toast('🚔 You broke the law — you\'ve been thrown out of the Militsiya. Badge and uniform gone.'); }
+          if (msg.kind === 'cop_fined') { sfx('error'); toast(`🚔 Officer ${msg.by} fined you ${money(msg.amount)}`); }
           if (msg.kind === 'illegal_gun_seen') toast('🚨 A cop saw the unregistered gun in your hand!');
           if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. Run or shoot and he opens fire.`); }
           if (msg.kind === 'held_up') { sfx('error'); toast(msg.amount ? `🕴️ He took ${money(msg.amount)} and walked off` : '🕴️ Your pockets were empty — he walked off'); }
@@ -855,6 +926,12 @@
           if (msg.what === 'hire_guard') toast('🛡️ A guard is on his way in — he holds the place from inside');
           if (msg.what === 'hire_hitman') toast('🎯 The hitman is on it');
           if (msg.what === 'hire_dismiss') toast('You let them go');
+          if (msg.what === 'cop_apply') { copAnswers.length = 0; toast('🚔 Welcome to the Militsiya! You\'re in uniform now — no making or selling anything illegal.'); }
+          if (msg.what === 'cop_resign') toast('🚔 You hand in your badge and uniform');
+          if (msg.what === 'bail') toast(msg.self ? `🔓 Bail paid: ${money(msg.bail)}` : `🔓 You paid ${money(msg.bail)} bail for ${msg.name}`);
+          if (msg.what === 'cop_arrest' && msg.prison) toast(`🚔 You arrested ${msg.name} — off to the prison camp${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
+          else if (msg.what === 'cop_arrest') toast(`🚔 You arrested ${msg.name} — ${msg.jail}s in the cells${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
+          if (msg.what === 'cop_fine') toast(`🚔 You fined ${msg.name} ${money(msg.amount)}`);
           if (msg.what.startsWith('hire_') && msg.bank !== undefined) bankBalance = msg.bank;
           if (msg.what === 'wh_buy') toast('🏬 The warehouse is yours — walk in and start building');
           if (msg.what === 'wh_bring') toast('📦 Your factory is set up in here again, just as you left it');
@@ -1117,6 +1194,11 @@
           g.strokeStyle = 'rgba(240,240,240,.9)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(54, 8); g.quadraticCurveTo(60, 30, 50, 52); g.stroke();
           C(g, 50, 54, 3.5, '#e74c3c');
         },
+        'tool:key': (g) => { // a big brass key on a ring
+          g.strokeStyle = '#a07a1e'; g.lineWidth = 4; g.beginPath(); g.arc(20, 20, 11, 0, Math.PI * 2); g.stroke();
+          L(g, 28, 28, 54, 54, '#d4a017', 6);
+          R(g, 44, 50, 6, 10, '#d4a017'); R(g, 50, 44, 10, 6, '#d4a017');
+        },
         'tool:scythe': (g) => {
           L(g, 14, 58, 30, 8, '#8b5a2b', 4); L(g, 18, 40, 26, 42, '#8b5a2b', 4);
           g.fillStyle = '#b8bec6'; g.beginPath(); g.moveTo(30, 8); g.quadraticCurveTo(52, 6, 60, 30); g.quadraticCurveTo(50, 14, 30, 14); g.fill();
@@ -1171,11 +1253,11 @@
     }
     const gi = (good) => `⟦${good}⟧`; // the marker for a good's icon
 
-    function toast(text) {
+    function toast(text, ms = 1600) {
       toastEl.innerHTML = iconize(text);
       toastEl.classList.add('show');
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1600);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
     }
 
     function nearestShopkeeper() {
@@ -1448,8 +1530,8 @@
     };
     const placeEl = document.getElementById('place');
     const fuelEl = document.getElementById('fuel-gauge');
-    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen' };
-    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman']);
+    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force' };
+    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
     let rail = null; // the railway: { y, stopX, length, station, smuggler, wagons, x, speed, state, nextIn, at }
     let roadblocks = { list: [], bribe: 500 };
@@ -1469,6 +1551,15 @@
       { skin: '#e0ac69', shirt: '#3a3530', pants: '#1c1c1c', hat: 'fedora', coat: '#8a7355' }, // a gangster: trench coat and fedora
     ];
     const ECON_ERRORS = {
+      nobody_to_collar: 'Nobody there to arrest or fine',
+      not_wanted_player: '🚔 They haven\'t done anything — you can only arrest or fine someone who\'s wanted',
+      cop_no_illegal: '🚔 You\'re Militsiya now — you can\'t make or sell anything illegal',
+      cop_failed: '🚔 "Wrong answers. Study up and come back later."',
+      cop_retry: '🚔 "You just tried. Come back a little later."',
+      cop_wanted: '🚔 "Joining up? With the whole force looking for you?"',
+      cop_contraband: '🚔 "Get rid of that contraband before you come asking for a badge."',
+      already_cop: 'You\'re already in the Militsiya',
+      not_cop: 'You\'re not in the Militsiya',
       no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
       gangster_hostile: '🕴️ He isn\'t in a talking mood',
       atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
@@ -1532,6 +1623,12 @@
       hire_limit: 'You already have as many of those as you can',
       not_your_building: 'You can only post guards in your own home or warehouses',
       no_target: "That player isn't here any more",
+      no_prison: 'There is no prison on this map',
+      not_in_prison: "They're not in the prison any more",
+      cant_afford_bail: "You can't afford the bail (cash and bank together)",
+      have_key: 'You already have a key',
+      prison_key_door: '🔒 Locked — it opens with a guard\'s key',
+      prison_pick_door: '🔒 Locked — hold F to pick the lock',
     };
 
     const money = (n) => `${Math.round(n).toLocaleString('ru-RU')} ₽`; // rubles
@@ -1660,6 +1757,10 @@
         placeEl.append(h, sub, cargo, table);
       } else if (d.kind === 'bar') {
         barSection(d, h, sub);
+      } else if (d.kind === 'prison') {
+        prisonSection(d, h, sub);
+      } else if (d.kind === 'police') {
+        copSection(d, h, sub);
       } else if (d.kind === 'market') {
         h.textContent = RAW_NAMES[d.type] ?? 'Market';
         sub.textContent = {
@@ -1832,6 +1933,81 @@
       placeEl.append(h, sub, bank, table, crew);
     }
 
+    // ---- the Militsiya front desk: join the force ---------------------------------------
+
+    const copAnswers = []; // the option picked for each question (kept across the panel's refreshes)
+    function copSection(d, h, sub) {
+      h.textContent = '🚔 Militsiya';
+      if (d.cop) {
+        sub.textContent = 'You serve in the Militsiya. Walk up to a wanted player: Z arrests them (straight to the cells, contraband seized), Y fines them (the money is yours, and their slate is clean). You may shoot wanted players and drive Militsiya cars — but break the law yourself, even unseen, and you\'re fired. You wear the uniform, and you can\'t make or sell anything illegal — no stills, presses or gunsmith benches, nothing under the counter, nothing for the black market or the gangsters.';
+        placeEl.append(h, sub, button('Hand in your badge (resign)', () => send({ t: 'cop', action: 'resign' })));
+        return;
+      }
+      sub.textContent = 'The desk officer slides an application form across. Answer every question right and you\'re in: you get the uniform — but officers can\'t make or sell anything illegal.';
+      placeEl.append(h, sub);
+      if (d.retryIn) {
+        const wait = document.createElement('div');
+        wait.className = 'cargo';
+        wait.textContent = `"You failed. Come back in ${clock(d.retryIn)}."`;
+        placeEl.append(wait);
+        return;
+      }
+      d.questions.forEach((q, i) => {
+        const box = document.createElement('div');
+        box.className = 'recipe';
+        const title = document.createElement('div');
+        title.style.fontWeight = '700';
+        title.textContent = `${i + 1}. ${q.q}`;
+        box.append(title);
+        q.options.forEach((o, j) => {
+          const label = document.createElement('label');
+          label.style.display = 'block';
+          label.style.cursor = 'pointer';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = `cop-q${i}`;
+          radio.checked = copAnswers[i] === j;
+          radio.onchange = () => { copAnswers[i] = j; renderPlace(); };
+          label.append(radio, ' ', o);
+          box.append(label);
+        });
+        placeEl.append(box);
+      });
+      const done = d.questions.every((_, i) => copAnswers[i] !== undefined);
+      placeEl.append(button('Hand in the application', () => send({ t: 'cop', action: 'apply', answers: d.questions.map((_, i) => copAnswers[i]) }), { disabled: !done, cls: 'big go' }));
+    }
+
+    // ---- the prison warden: your sentence, and bail for anyone inside -----------------
+
+    function prisonSection(d, h, sub) {
+      h.textContent = '⛓ ИТК-7 — the warden';
+      const cash = document.createElement('div');
+      cash.className = 'cargo';
+      cash.textContent = `💵 ${money(coins)} cash  ·  🏦 ${money(bankBalance)} bank`;
+      if (d.me) {
+        sub.textContent = `"You're here till the boiler has its coal: ${d.me.quota} of it, and you've brought ${d.me.coal}. Dig it at the coal face and tip it in the bunker by the boiler house. Or pay your bail, and I'll give you your things back."`;
+        placeEl.append(h, sub, cash, button(`🔓 Pay bail — ${money(d.me.bail)}`, () => send({ t: 'prison', action: 'bail', id: myId }), { cls: 'big go', disabled: coins + bankBalance < d.me.bail }));
+      } else {
+        sub.textContent = '"Visiting someone? Bail\'s paid here — cash first, then your bank."';
+        placeEl.append(h, sub, cash);
+      }
+      if (!d.prisoners.length) {
+        if (!d.me) { const none = document.createElement('div'); none.className = 'cargo'; none.textContent = 'Nobody else is inside right now.'; placeEl.append(none); }
+        return;
+      }
+      const table = document.createElement('table');
+      const head = table.insertRow();
+      head.insertCell().outerHTML = '<th colspan="3" style="text-align:left">Prisoners</th>';
+      for (const q of d.prisoners) {
+        const tr = table.insertRow();
+        tr.insertCell().textContent = q.name;
+        const coal = tr.insertCell(); coal.className = 'num'; coal.textContent = `🪨 ${q.coal} / ${q.quota}`;
+        const act = tr.insertCell(); act.className = 'num';
+        act.append(button(`Pay bail ${money(q.bail)}`, () => send({ t: 'prison', action: 'bail', id: q.id }), { disabled: coins + bankBalance < q.bail }));
+      }
+      placeEl.append(table);
+    }
+
     // ---- gun stores, dealers and delivery jobs ---------------------------------------
 
     function catalogSection(d) {
@@ -1972,7 +2148,11 @@
 
     // Militsiya: grey-blue uniform; a fur ushanka in winter, the peaked furazhka the rest of the year.
     const POLICE_LOOK = { skin: '#e0ac69', shirt: '#4f5d6e', pants: '#2e3744', hat: 'furazhka' };
-    const CRIME_NAMES = { illegal_gun: 'carrying an unregistered gun', mugging: 'mugging', fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
+    // The camp: prisoners in the black quilted telogreika and cap; guards in the interior troops' olive.
+    const PRISONER_LOOK = { skin: '#e0ac69', shirt: '#2b2c2e', pants: '#232426', hat: 'zek' };
+    const GUARD_LOOK = { skin: '#d9a066', shirt: '#4e5a3a', pants: '#3a4230', hat: 'ushanka' };
+    const WARDEN_LOOK = { skin: '#e8b98a', shirt: '#4e5a3a', pants: '#2f3528', hat: 'furazhka' };
+    const CRIME_NAMES = { illegal_gun: 'carrying an unregistered gun', mugging: 'mugging', fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya', prison_escape: 'escaping from prison' };
     const ROB_NAMES = { atm: 'Breaking into the ATM…', shop: 'Emptying the till…', bank: 'Robbing the bank…', lockpick: 'Picking the lock…', carpick: 'Picking the car lock…' };
     let crimeState = { wanted: 0, jail: 0, rob: null, arrest: 0 };
     const wantedEl = document.getElementById('wanted');
@@ -1991,7 +2171,19 @@
       return robShown.progress;
     }
 
+    let prisonState = null; // [coal in, quota, bail] while I'm in the prison
+    const prisonBar = document.getElementById('prisonbar');
+    function updatePrisonHud() {
+      const st = playing ? prisonState : null;
+      prisonBar.hidden = !st;
+      if (!st) return;
+      const [coal, quota, bail] = st;
+      prisonBar.querySelector('span').textContent = `⛓ ИТК-7 — coal for the boiler: ${coal} / ${quota}  ·  bail ${money(bail)}`;
+      prisonBar.querySelector('i').style.width = `${Math.min(100, (coal / quota) * 100).toFixed(1)}%`;
+    }
+
     function updateCrimeHud() {
+      updatePrisonHud();
       const { wanted, jail, rob, arrest, at } = playing ? crimeState : { wanted: 0, jail: 0, rob: null, arrest: 0 };
       if (!rob) robShown = null;
       wantedEl.hidden = true; // no stars on screen: you only know from the sirens (the system still runs)
@@ -2088,7 +2280,7 @@
       return Boolean(l && whMine(l) && insideWarehouse(l) && playing && !me?.car);
     };
     function mouseTile(l) {
-      const wx = camera.x + mouse.x - innerWidth / 2, wy = camera.y + mouse.y - innerHeight / 2;
+      const wx = camera.x + (mouse.x - innerWidth / 2) / viewZ, wy = camera.y + (mouse.y - innerHeight / 2) / viewZ;
       return { x: Math.floor((wx - l.origin.x) / WH_TILE), y: Math.floor((wy - l.origin.y) / WH_TILE) };
     }
     const pieceAt = (l, x, y) => l.pieces.find((p) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
@@ -2103,6 +2295,14 @@
           const x = d.x + d.w / 2, y = d.y + d.h / 2;
           if (!d.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
         }
+      }
+      // The prison's outer fence door (picked from either side: an escape, or a break-out).
+      for (const b of buildings) {
+        if (!b.prison) continue;
+        const od = b.prison.outerDoor;
+        const d = b.doors.reduce((best, x) => (Math.hypot(x.x + x.w / 2 - od.x, x.y + x.h / 2 - od.y) < Math.hypot(best.x + best.w / 2 - od.x, best.y + best.h / 2 - od.y) ? x : best));
+        const x = d.x + d.w / 2, y = d.y + d.h / 2;
+        if (!(doorById.get(d.id) ?? d).open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
       }
       // Homes that aren't mine: their outside doors are locked (from outside).
       for (const b of buildings) {
@@ -2274,7 +2474,7 @@
               row.append(b);
             }
             s.append(row);
-            const mine = tally([...Object.entries(hotbarGoods()), ...Object.entries(trunkGoods())]);
+            const mine = tally([...Object.entries(hotbarGoods()), ...Object.entries(trunkGoods()), ...inv.filter((w) => w?.[0] === 'food' && shop.menu[w[1]]?.good).map((w) => [shop.menu[w[1]].good, w[2]])]); // (shop energy drinks go on as energy drinks)
             const put = document.createElement('div');
             put.append('Put on: ');
             if (!Object.keys(mine).length) put.append('(you’re not carrying any goods)');
@@ -2284,7 +2484,7 @@
               b.title = `Put your ${econ.goods[g]?.name ?? g} on it (shift-click: just one)`;
               put.append(b);
             }
-            dropTarget(s, (from, i) => { const st = from === 'hot' && inv[i]; if (isGoods(st)) whSend('pput', { x: sel.x, y: sel.y, good: st[1], qty: st[2] }); });
+            dropTarget(s, (from, i) => { const st = from === 'hot' && inv[i]; const g = asGood(st); if (g) whSend('pput', { x: sel.x, y: sel.y, good: g, qty: st[2] }); });
             s.append(put, Object.assign(document.createElement('div'), { className: 'note', textContent: sel.kind === 'container' ? 'Belts going in fill it; belts leading away take from it. Drag goods from your hotbar here too.' : 'Drag goods from your hotbar here too.' }));
           }
           if (sel.kind === 'filter' || sel.kind === 'invfilter') {
@@ -2622,6 +2822,23 @@
         if (n.x < viewBox.l - 60 || n.x > viewBox.r + 60 || n.y < viewBox.t - 60 || n.y > viewBox.b + 60) continue;
         const done = n.hp <= 0;
         const rnd = seeded(Math.round(n.x * 13 + n.y * 7) % 2147483646 + 1);
+        if (n.kind === 'coal') { // a lump of coal face: black, glossy, faceted
+          if (done) { for (let i = 0; i < 5; i++) circle(n.x + (rnd() - 0.5) * n.r * 1.2, n.y + (rnd() - 0.5) * n.r * 1.2, 3 + rnd() * 3, '#2a2826'); continue; }
+          const size = n.r * (0.55 + 0.45 * (n.hp / n.max));
+          circle(n.x + 4, n.y + 5, size, 'rgba(0, 0, 0, .35)');
+          ctx.fillStyle = '#242322';
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + rnd() * 0.4, rr = size * (0.72 + rnd() * 0.32);
+            ctx.lineTo(n.x + Math.cos(a) * rr, n.y + Math.sin(a) * rr);
+          }
+          ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = '#4a4744'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = 'rgba(160, 170, 185, .28)'; // facets catching the light
+          for (let i = 0; i < 3; i++) { const fx = n.x + (rnd() - 0.6) * size, fy = n.y + (rnd() - 0.6) * size; ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx + 6, fy + 2); ctx.lineTo(fx + 2, fy + 6); ctx.fill(); }
+          if (snowAmount > 0.3) { ctx.fillStyle = `rgba(240, 244, 248, ${0.55 * snowAmount})`; ctx.beginPath(); ctx.ellipse(n.x - size * 0.25, n.y - size * 0.35, size * 0.4, size * 0.22, -0.5, 0, Math.PI * 2); ctx.fill(); } // a dusting on top
+          continue;
+        }
         if (n.kind === 'rock' || n.kind === 'vein') {
           if (done) { // rubble
             for (let i = 0; i < 4; i++) circle(n.x + (rnd() - 0.5) * n.r, n.y + (rnd() - 0.5) * n.r, 4 + rnd() * 4, '#5e5850');
@@ -2674,6 +2891,20 @@
     let riding = 0; // the car I'm a passenger in (0: not)
     let healLeft = 0; // health still to come from food I've eaten
     let buzzLeft = 0; // seconds of vodka buzz left (I take less damage)
+    let amCop = false; // I've joined the Militsiya: Z arrests, Y fines the nearest player
+    let copCfg = { collarReach: 70 };
+    /** As an officer on foot: the player close enough to arrest or fine, or null. */
+    function collarTarget() {
+      if (!amCop || !me || me.car || riding) return null;
+      const r = radiusOf(me.mass);
+      let best = null, bestD = Infinity;
+      for (const [id, q] of snapshots.at(-1)?.players ?? []) {
+        if (id === myId || !q.wanted) continue;
+        const d = Math.hypot(q.x - me.x, q.y - me.y);
+        if (d < copCfg.collarReach + r + q.r && d < bestD) [best, bestD] = [{ id, ...q }, d];
+      }
+      return best;
+    }
     let visions = []; // vodka's effects on how I see, stacked: [{ kind: 'invert' | 'jet' | 'fire' | 'crude', left (s), at }]
     let visionSec = 180; // how long one lasts (config.economy.visionSec)
     const bodyEl = document.getElementById('bodypanel');
@@ -2992,6 +3223,13 @@
         grid.append(c);
       });
       trunkEl.append(label, grid);
+      if (touchMode && inv[selectedSlot]) { // (no dragging on a phone: put the selected hotbar item in)
+        const put = document.createElement('button');
+        put.type = 'button';
+        put.textContent = '⬇ Put selected in';
+        put.onclick = () => send({ t: 'trunk', id: t[0], action: 'put', slot: selectedSlot });
+        trunkEl.append(put);
+      }
       trunkEl.style.left = `${document.getElementById('hotbar').getBoundingClientRect().right + 10}px`;
     }
 
@@ -3030,10 +3268,10 @@
       // Onto a machine in my warehouse: into its input slot.
       const l = wh.open && wh.layouts.get(wh.open);
       if (l && whBuildMode()) {
-        const wx = camera.x + e.clientX - innerWidth / 2, wy = camera.y + e.clientY - innerHeight / 2;
+        const wx = camera.x + (e.clientX - innerWidth / 2) / viewZ, wy = camera.y + (e.clientY - innerHeight / 2) / viewZ;
         const piece = pieceAt(l, Math.floor((wx - l.origin.x) / WH_TILE), Math.floor((wy - l.origin.y) / WH_TILE));
         if (piece && wh.cfg.machines[piece.kind]) return whSend('mload', { x: piece.x, y: piece.y, slot: i });
-        if (piece && isStore(piece) && isGoods(inv[i])) return whSend('pput', { x: piece.x, y: piece.y, good: inv[i][1], qty: inv[i][2] });
+        if (piece && isStore(piece) && asGood(inv[i])) return whSend('pput', { x: piece.x, y: piece.y, good: asGood(inv[i]), qty: inv[i][2] });
       }
       if (!me?.car) { send({ t: 'drop', slot: i }); sfx('drop'); } // onto the ground
     });
@@ -3112,7 +3350,7 @@
     // Only for the building under the mouse (the Russian signs on the roofs are always there).
     function drawPlaceLabels() {
       if (!playing) return;
-      const mx = camera.x + mouse.x - innerWidth / 2, my = camera.y + mouse.y - innerHeight / 2;
+      const mx = camera.x + (mouse.x - innerWidth / 2) / viewZ, my = camera.y + (mouse.y - innerHeight / 2) / viewZ;
       const hovered = (b) => mx > b.x && mx < b.x + b.w && my > b.y && my < b.y + b.h;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -3151,7 +3389,7 @@
     function drawPlaceKeepers() {
       for (const p of econ.places) {
         if (p.x < viewBox.l || p.x > viewBox.r || p.y < viewBox.t || p.y > viewBox.b) continue;
-        const look = { factory: CLERK_LOOK, gunshop: GUNSHOP_LOOK, dealer: DEALER_LOOK, station: RAIL_LOOK, smuggler: SMUGGLER_LOOK, barman: BARMAN_LOOK }[p.role] ?? TRADER_LOOK;
+        const look = { factory: CLERK_LOOK, gunshop: GUNSHOP_LOOK, dealer: DEALER_LOOK, station: RAIL_LOOK, smuggler: SMUGGLER_LOOK, barman: BARMAN_LOOK, police: POLICE_LOOK, warden: WARDEN_LOOK }[p.role] ?? TRADER_LOOK;
         drawPerson({ x: p.x, y: p.y, r: 20, aim: p.angle, weapon: p.role === 'gunshop' ? 'rifle' : null }, look);
       }
     }
@@ -3255,10 +3493,10 @@
     // Minimap icons by building type. Factories (any type in econ.factories) get 🏭.
     const MAP_ICONS = {
       police: '🚓', bank: '🏦', shop: '🛒', kiosk: '🛒', gas: '⛽', market: '🏪', gunstore: '🔫', dealership: '🚗', bar: '🍺',
-      farm: '🌾', logging: '🪵', mine: '⛏️', oilwell: '🛢️', quarry: '🏖️', scrapyard: '🔩', station: '🚂', church: '⛪', powerplant: '⚡',
+      farm: '🌾', logging: '🪵', mine: '⛏️', oilwell: '🛢️', quarry: '🏖️', scrapyard: '🔩', station: '🚂', church: '⛪', powerplant: '⚡', prison: '⛓',
     };
     const MAP_NAMES = {
-      police: 'Militsiya station', bank: 'Bank', shop: 'Shop', kiosk: 'Kiosk', church: 'Church', powerplant: 'Power plant', bar: 'Bar — hire goons, guards and hitmen',
+      police: 'Militsiya station', bank: 'Bank', shop: 'Shop', kiosk: 'Kiosk', church: 'Church', powerplant: 'Power plant', bar: 'Bar — hire goons, guards and hitmen', prison: 'Prison camp — the warden takes bail at the gatehouse',
     };
     /** What a minimap icon is, for the hover label. */
     function mapIconName(b) {
@@ -3471,6 +3709,13 @@
       skx.beginPath(); skx.arc(x, y, outer, 0, Math.PI * 2); skx.fill();
     }
 
+    // The sky's light holes are placed in unzoomed screen coordinates; this scales them about the centre for the view zoom.
+    const zoomSky = (w, h) => skx.setTransform(devicePixelRatio * viewZ, 0, 0, devicePixelRatio * viewZ, devicePixelRatio * w / 2 * (1 - viewZ), devicePixelRatio * h / 2 * (1 - viewZ));
+    const onSky = (x, y, w, h, m) => Math.abs(x - w / 2) < w / 2 / viewZ + m && Math.abs(y - h / 2) < h / 2 / viewZ + m;
+
+    /** Which way a watchtower's searchlight points: a slow sweep, each tower out of step. */
+    const towerBeam = (x, y, now) => ((x * 31 + y * 17) % 628) / 100 + Math.sin(now / 2600 + x * 0.013 + y * 0.007) * 1.6;
+
     function drawSky(now, dt, w, h, cars) {
       const clock = clockNow(now);
       const light = daylight(clock);
@@ -3502,6 +3747,7 @@
         skx.fillStyle = `rgba(${shade}, ${shade + 4}, ${shade + 8}, ${0.92 * sky.fog})`;
         skx.fillRect(0, 0, w, h);
         skx.globalCompositeOperation = 'destination-out';
+        zoomSky(w, h);
         lightHole(focus.x, focus.y, 140, 560);
         ctx.drawImage(skyCanvas, 0, 0, w, h);
       }
@@ -3515,11 +3761,19 @@
         skx.fillStyle = `rgba(3, 6, 22, ${dark})`;
         skx.fillRect(0, 0, w, h);
         skx.globalCompositeOperation = 'destination-out';
+        zoomSky(w, h);
         if (me && playing) lightHole(focus.x, focus.y, 60, 330);
+        for (const b of buildings) { // the prison's searchlights sweeping the wire
+          for (const t of b.prison?.towers ?? []) {
+            if (!onSky(t.x + ox, t.y + oy, w, h, 600)) continue;
+            const a = towerBeam(t.x, t.y, now);
+            for (const [d, r] of [[120, 60], [230, 85], [340, 110]]) lightHole(t.x + ox + Math.cos(a) * d, t.y + oy + Math.sin(a) * d, 0, r, 0.85);
+          }
+        }
         for (const l of lamps) {
           const head = lampHead(l);
           const x = head.x + ox, y = head.y + oy;
-          if (x > -250 && x < w + 250 && y > -250 && y < h + 250) lightHole(x, y, 20, 230, 0.9);
+          if (onSky(x, y, w, h, 250)) lightHole(x, y, 20, 230, 0.9);
         }
         for (const v of cars.values()) {
           if (!v.driver) continue;
@@ -3527,7 +3781,7 @@
           if (!stats) continue;
           const cx = v.x + ox, cy = v.y + oy;
           const fx = Math.cos(v.angle), fy = Math.sin(v.angle);
-          if (cx < -400 || cx > w + 400 || cy < -400 || cy > h + 400) continue;
+          if (!onSky(cx, cy, w, h, 400)) continue;
           lightHole(cx, cy, 10, stats.length * 0.8, 0.7); // dashboard glow
           if (v.boosting) { const pipe = exhaustOf(v, stats); lightHole(pipe.x + ox - fx * 25, pipe.y + oy - fy * 25, 0, 90, 0.9); } // the exhaust fire lights the road
           if (v.lights) for (const d of [stats.length * 0.9, stats.length * 0.9 + 110, stats.length * 0.9 + 230]) {
@@ -5282,13 +5536,14 @@
     // What's in each slot (gun type, or which good), so the hotbar is only rebuilt when that changes.
     const slotKey = () => inv.map((w) => (!w ? '-' : w[0] === 'goods' ? `g:${w[1]}` : w[0])).join();
     const isGoods = (w) => w?.[0] === 'goods';
+    const asGood = (w) => (isGoods(w) ? w[1] : w?.[0] === 'food' ? shop.menu[w[1]]?.good ?? null : null); // a hotbar slot as a good (a shop energy drink is one)
     const isFood = (w) => w?.[0] === 'food'; // ['food', item, qty] — bought at a shop, E eats one
     const VODKAS = new Set(['vodka', 'jetvodka', 'firewater', 'blackvodka']); // vodka and its mixes (config.economy.visions): they drink
     const isVodka = (w) => isGoods(w) && VODKAS.has(w[1]);
     const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'fish' || w[1] === 'bat' || w[1] === 'blackguns')) || isVodka(w); // (bakery bread and fish eat too; vodka drinks; a bat from the factory is taken up)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
-    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧' }; // drawn icons (see ICON_DRAW)
-    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod' };
+    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧', key: '⟦tool:key⟧' }; // drawn icons (see ICON_DRAW)
+    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod', key: "Guard's key" };
     const holdingRod = () => isTool(inv[selectedSlot]) && inv[selectedSlot][1] === 'rod';
 
     function renderHotbar() {
@@ -5408,6 +5663,12 @@
       if (playing && e.code === 'KeyX' && !me?.car && !e.repeat) { if (coins > 0) cashHoldStart = performance.now(); else toast('No cash to drop'); return; }
       if (playing && e.code === 'KeyT' && !e.repeat) { toggleTeam(); return; }
       if (playing && e.code === 'KeyQ' && !me?.car) { send({ t: 'drop' }); if (inv[selectedSlot]) sfx('drop'); return; }
+      if (playing && (e.code === 'KeyZ' || e.code === 'KeyY') && amCop && !e.repeat && document.activeElement !== chatInput) { // an officer: arrest / fine
+        const t = collarTarget();
+        if (t) send({ t: 'cop', action: e.code === 'KeyZ' ? 'arrest' : 'fine', id: t.id });
+        else toast('🚔 Walk right up to a wanted player (🚨 over their head) to arrest (Z) or fine (Y) them');
+        return;
+      }
       if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; } // (the sound plays when it's paid)
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
       if (playing && e.code === 'KeyH' && me?.car?.type === 'police' && !e.repeat && document.activeElement !== chatInput) { send({ t: 'siren' }); return; } // a stolen Militsiya car's siren
@@ -5483,11 +5744,14 @@
     // Angle from my player (as drawn on screen) to the mouse.
     function aimAngle() {
       if (!me) return 0;
-      return Math.atan2(mouse.y - (me.y - camera.y + innerHeight / 2), mouse.x - (me.x - camera.x + innerWidth / 2));
+      if (touchMode) return touchAimAngle(); // the right stick (or, without it, the way I'm walking)
+      return Math.atan2(mouse.y - ((me.y - camera.y) * viewZ + innerHeight / 2), mouse.x - ((me.x - camera.x) * viewZ + innerWidth / 2));
     }
 
     // Walking: WASD is a direction. Driving: W/S is gas/brake and A/D steers.
     function moveInput() {
+      const touch = touchMove();
+      if (touch) return touch;
       const dx = keys.has('right') - keys.has('left');
       const dy = keys.has('down') - keys.has('up');
       const driving = Boolean(me?.car);
@@ -5511,6 +5775,193 @@
       reloadRequested = false;
       useRequested = false;
     }, 1000 / 30);
+
+    // ---- touch controls: left stick moves (or drives), right stick aims and attacks ----
+
+    const touchMode = matchMedia('(pointer: coarse)').matches;
+    const VIEW_ZOOM_TOUCH = 0.65; // zoomed out on phones so the small screen shows more of the town
+    if (touchMode) document.body.classList.add('touch');
+    const STICK_R = 55; // px the knob can travel from the centre
+    const sticks = { move: null, aim: null }; // { id, ox, oy, angle, mag } while a thumb is down
+    const stickEls = { move: document.getElementById('stick-move'), aim: document.getElementById('stick-aim') };
+    let touchAim = 0;
+
+    /** The selected item attacks or works when the right stick is pushed: guns, knives, bats and site tools (not the rod). */
+    const stickAttacks = () => {
+      const w = inv[selectedSlot];
+      return Boolean(w) && !isGoods(w) && !isFood(w) && !(isTool(w) && w[1] === 'rod');
+    };
+
+    function touchAimAngle() {
+      if (sticks.aim && sticks.aim.mag > 0.2) touchAim = sticks.aim.angle;
+      else if (!sticks.aim && sticks.move && sticks.move.mag > 0.2 && !me?.car) touchAim = sticks.move.angle; // face where I walk
+      return touchAim;
+    }
+
+    /** Movement from the left stick, or null (keys then). On foot: walk that way, run at the edge. In a car: steer toward it. */
+    function touchMove() {
+      const s = sticks.move;
+      if (!s || s.mag < 0.15) return null;
+      const power = Math.min(1, s.mag / 0.8);
+      if (!me?.car) return { angle: s.angle, throttle: riding ? 0 : power, boost: s.mag > 0.95, gas: 0, steer: 0, drift: false };
+      const off = Math.atan2(Math.sin(s.angle - me.car.angle), Math.cos(s.angle - me.car.angle));
+      const back = Math.abs(off) > 2.3; // pulled the other way: brake, then reverse
+      return { angle: s.angle, throttle: 0, boost: keys.has('space'), gas: back ? -power : power, steer: back ? 0 : Math.max(-1, Math.min(1, off * 1.6)), drift: keys.has('sprint') };
+    }
+
+    function placeStick(which) {
+      const el = stickEls[which], s = sticks[which];
+      if (!s) {
+        el.classList.remove('active', 'firing');
+        el.style.left = which === 'move' ? '6.5rem' : `calc(100vw - 11rem)`; // resting spots, lower corners (the aim one clear of the button column)
+        el.style.top = 'calc(100dvh - 9.5rem)';
+        el.firstElementChild.style.transform = '';
+        return;
+      }
+      el.classList.add('active');
+      el.classList.toggle('firing', which === 'aim' && firing);
+      el.style.left = `${s.ox}px`;
+      el.style.top = `${s.oy}px`;
+      el.firstElementChild.style.transform = `translate(${Math.cos(s.angle) * s.mag * STICK_R}px, ${Math.sin(s.angle) * s.mag * STICK_R}px)`;
+    }
+
+    function updateStick(s, t) {
+      const dx = t.clientX - s.ox, dy = t.clientY - s.oy;
+      s.angle = Math.atan2(dy, dx);
+      s.mag = Math.min(1, Math.hypot(dx, dy) / STICK_R);
+      s.moved ||= s.mag > 0.25;
+    }
+
+    function aimFiring() {
+      firing = Boolean(sticks.aim && sticks.aim.mag > 0.35 && stickAttacks() && playing);
+      const w = inv[selectedSlot];
+      if (firing && (w?.[0] === 'knife' || w?.[0] === 'bat') && performance.now() - stabAt > 450) { // the jab, again and again while held
+        stabAt = performance.now();
+        if (w[0] === 'bat') sfx('bat');
+      }
+    }
+
+    let triedFullscreen = false;
+    canvas.addEventListener('touchstart', (e) => {
+      if (!playing || whBuildMode()) return; // building in a warehouse: taps are clicks
+      e.preventDefault();
+      if (!triedFullscreen && document.documentElement.requestFullscreen) { triedFullscreen = true; document.documentElement.requestFullscreen().catch(() => {}); }
+      for (const t of e.changedTouches) {
+        const which = t.clientX < innerWidth / 2 ? 'move' : 'aim';
+        if (sticks[which]) continue;
+        sticks[which] = { id: t.identifier, ox: t.clientX, oy: t.clientY, angle: 0, mag: 0, moved: false };
+        placeStick(which);
+      }
+    }, { passive: false });
+    addEventListener('touchmove', (e) => {
+      let mine = false;
+      for (const t of e.changedTouches) {
+        for (const which of ['move', 'aim']) {
+          const s = sticks[which];
+          if (!s || s.id !== t.identifier) continue;
+          updateStick(s, t);
+          placeStick(which);
+          mine = true;
+        }
+      }
+      if (mine) { e.preventDefault(); aimFiring(); }
+    }, { passive: false });
+    const touchEnd = (e) => {
+      for (const t of e.changedTouches) {
+        for (const which of ['move', 'aim']) {
+          const s = sticks[which];
+          if (!s || s.id !== t.identifier) continue;
+          sticks[which] = null;
+          placeStick(which);
+          // The rod: drag to aim and let go to cast; a tap pulls the line in.
+          if (which === 'aim' && playing && holdingRod() && !me?.car && !riding) fishClick();
+        }
+      }
+      aimFiring();
+    };
+    addEventListener('touchend', touchEnd);
+    addEventListener('touchcancel', touchEnd);
+
+    // Buttons: E and F always; the rest only when they do something here. Each one presses its key.
+    const pressKey = (type, code) => dispatchEvent(new KeyboardEvent(type, { code, key: code === 'Space' ? ' ' : code.replace(/^(Key|Digit)/, '').toLowerCase() }));
+    const heldGun = () => { const w = inv[selectedSlot]; return Boolean(w) && !isGoods(w) && !isFood(w) && !isTool(w) && !weapons[w[0]]?.melee; };
+    const openChat = () => { chatBox.classList.add('typing'); chatInput.focus(); };
+    const TOUCH_BUTTONS = [
+      { label: '💬', action: openChat, show: () => true },
+      { code: 'KeyZ', label: '🚔 Arrest', show: () => collarTarget() },
+      { code: 'KeyY', label: '🚔 Fine', show: () => collarTarget() },
+      { code: 'KeyG', label: '💰 Bribe', show: () => myRoadblock() },
+      { code: 'KeyH', label: '🚨', show: () => me?.car?.type === 'police' },
+      { code: 'KeyC', label: '💡', show: () => me?.car },
+      { code: 'KeyV', label: '📻', show: () => me?.car || riding },
+      { code: 'KeyN', label: '⏭', show: () => me?.car || riding },
+      { code: 'ShiftLeft', label: 'Brake', hold: true, show: () => me?.car },
+      { code: 'Space', label: '🔥 Boost', hold: true, show: () => me?.car },
+      { code: 'KeyQ', label: 'Drop', show: () => inv[selectedSlot] && !me?.car },
+      { code: 'KeyR', label: 'Reload', show: () => heldGun() && !me?.car },
+      { code: 'KeyF', label: 'F', big: true, hold: true, show: () => !me?.car },
+      { code: 'KeyE', label: 'E', big: true, show: () => true },
+    ];
+    const touchButtonsEl = document.getElementById('touch-buttons');
+    for (const b of TOUCH_BUTTONS) {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.textContent = b.label;
+      if (b.big) el.className = 'big';
+      el.hidden = true;
+      el.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.add('down');
+        if (b.action) return b.action();
+        pressKey('keydown', b.code);
+        if (!b.hold) pressKey('keyup', b.code);
+      }, { passive: false });
+      const up = (e) => {
+        e.preventDefault();
+        el.classList.remove('down');
+        if (b.hold) pressKey('keyup', b.code);
+      };
+      el.addEventListener('touchend', up);
+      el.addEventListener('touchcancel', up);
+      b.el = el;
+      touchButtonsEl.append(el);
+    }
+
+    // ☰: everything else the keyboard does.
+    const touchMenu = document.getElementById('touch-menu');
+    const touchMenuBtn = document.getElementById('touch-menu-btn');
+    const MENU_ITEMS = [
+      ['💬 Chat', openChat],
+      ['🗺️ Map', () => pressKey('keydown', 'KeyM')],
+      ['📋 Jobs', () => pressKey('keydown', 'KeyJ')],
+      ['👥 Team', () => pressKey('keydown', 'KeyT')],
+      ['🏬 Warehouse', () => pressKey('keydown', 'KeyB')],
+      [`💵 Drop ${CASH_DROP} ₽`, () => (coins > 0 ? send({ t: 'drop', cash: CASH_DROP }) : toast('No cash to drop'))],
+      ['⛶ Full screen', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {})],
+    ];
+    for (const [label, action] of MENU_ITEMS) {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.textContent = label;
+      el.onclick = () => { touchMenu.hidden = true; action(); };
+      touchMenu.append(el);
+    }
+    touchMenuBtn.onclick = () => { touchMenu.hidden = !touchMenu.hidden; };
+    chatInput.addEventListener('blur', () => chatBox.classList.remove('typing'));
+
+    if (touchMode) {
+      placeStick('move');
+      placeStick('aim');
+      setInterval(() => {
+        document.body.classList.toggle('in-game', playing);
+        if (!playing) { sticks.move = sticks.aim = null; firing = false; touchMenu.hidden = true; return; }
+        for (const b of TOUCH_BUTTONS) {
+          const show = Boolean(b.show());
+          if (b.el.hidden === show) b.el.hidden = !show;
+        }
+      }, 150);
+    }
 
     // ---- movement: same formula the server uses (World.#movePlayers) ------
 
@@ -5764,7 +6215,7 @@
       clockOffset = clockOffset === null || offset < clockOffset ? offset : clockOffset + (offset - clockOffset) * 0.02;
 
       const players = new Map();
-      for (const [id, x, y, r, hp, aim, weapon, maxHp] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp });
+      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted });
       const bullets = new Map();
       for (const [id, x, y] of msg.bullets ?? []) bullets.set(id, { x, y });
       const vehicles = new Map();
@@ -5773,7 +6224,7 @@
       const npcs = new Map();
       for (const [id, x, y, angle, state] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1 || state === 3, robbed: state === 3, fleeing: state === 2 });
       const cops = new Map();
-      for (const [id, x, y, angle] of msg.cops ?? []) cops.set(id, { x, y, angle });
+      for (const [id, x, y, angle, guard] of msg.cops ?? []) cops.set(id, { x, y, angle, guard: guard === 1 });
       otherLines = msg.lines ?? [];
       const crew = new Map(); // hired muscle: goons, guards, hitmen
       for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
@@ -5855,10 +6306,12 @@
       healLeft = you.heal ?? 0;
       visions = (you.visions ?? []).map(([kind, left]) => ({ kind, left, at: performance.now() }));
       buzzLeft = you.buzz ?? 0;
+      amCop = Boolean(you.cop);
       if (JSON.stringify(you.cabinet ?? null) !== JSON.stringify(cabinetView)) { cabinetView = you.cabinet ?? null; if (furnOpen) renderFurnish(); }
       myFish = you.fish ? { v: you.fish, at: performance.now() } : null; // (the fight's clock runs on from `at`)
+      prisonState = you.prison || null;
       crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0, holdup: you.holdup ?? null, at: performance.now() };
-      const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null]);
+      const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null, Boolean(inv[selectedSlot])]);
       if (trunkKey !== lastTrunkKey) renderTrunk(); // only on change, or clicks get lost
       lastTrunkKey = trunkKey;
       if (you.cash !== undefined && (you.cash !== coins || you.bank !== bankBalance)) {
@@ -5888,7 +6341,7 @@
       for (const [id, pb] of b.players) {
         const pa = a.players.get(id);
         players.set(id, pa
-          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon }
+          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon, cop: pb.cop, wanted: pb.wanted }
           : pb);
       }
       const bullets = new Map();
@@ -5914,7 +6367,7 @@
       const cops = new Map();
       for (const [id, cb] of b.cops ?? []) {
         const ca = a.cops?.get(id);
-        cops.set(id, ca ? { x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t) } : cb);
+        cops.set(id, ca ? { x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t), guard: cb.guard } : cb);
       }
       const crew = new Map();
       for (const [id, hb] of b.crew ?? []) {
@@ -6014,6 +6467,14 @@
           circle(0, 0, head * 0.14, '#ffffff'); // pompom
           break;
         }
+        case 'zek': // the prisoner's black cotton cap, short visor forward
+          ctx.fillStyle = '#141516';
+          ctx.beginPath(); ctx.ellipse(head * 0.9, 0, head * 0.5, head * 0.7, 0, -Math.PI / 2, Math.PI / 2); ctx.fill();
+          circle(0, 0, head * 1.06, '#232426');
+          ctx.strokeStyle = '#3a3c3f';
+          for (const a of [0.6, 2.1, 3.6, 5.1]) { ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * head, Math.sin(a) * head); ctx.stroke(); }
+          circle(0, 0, head * 0.14, '#3a3c3f');
+          break;
         case 'ushanka': // fur hat with the ear flaps down
           ctx.fillStyle = '#5e5145';
           ctx.beginPath(); ctx.ellipse(-head * 0.1, -head * 0.95, head * 0.55, head * 0.4, 0, 0, Math.PI * 2); ctx.fill();
@@ -6088,6 +6549,11 @@
           rect(0.2, 0.75, -0.07, 0.07, '#7a4a2a');
           rect(0.75, 2.6, -0.035, 0.035, '#c9a26a');
           g.fillStyle = '#7d838a'; g.beginPath(); g.arc(0.55, 0.16, 0.13, 0, Math.PI * 2); g.fill();
+          break;
+        case 'key':
+          g.strokeStyle = '#d4a017'; g.lineWidth = 0.08; g.beginPath(); g.arc(0.5, 0, 0.16, 0, Math.PI * 2); g.stroke();
+          rect(0.66, 1.1, -0.04, 0.04, '#d4a017');
+          rect(0.95, 1.05, 0.04, 0.16, '#d4a017');
           break;
         case 'scythe':
           rect(0.3, 1.9, -0.05, 0.05, '#7a5a3a'); // the long snath
@@ -6934,6 +7400,34 @@
 
     /** A decor rect; concrete ones (pump pads) get the texture and a worn, darker edge. */
     function drawDecor(d) {
+      if (d.rake) { // the death strip: raked sand, so footprints show
+        ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.strokeStyle = 'rgba(90, 75, 50, .22)'; ctx.lineWidth = 2;
+        ctx.save(); ctx.beginPath(); ctx.rect(d.x, d.y, d.w, d.h); ctx.clip();
+        ctx.beginPath();
+        const lo = Math.max(d.x, viewBox.l), hi = Math.min(d.x + d.w, viewBox.r);
+        for (let x = d.x + Math.ceil((lo - d.x) / 9) * 9; x < hi; x += 9) { ctx.moveTo(x, Math.max(d.y, viewBox.t)); ctx.lineTo(x, Math.min(d.y + d.h, viewBox.b)); }
+        ctx.stroke(); ctx.restore();
+        return;
+      }
+      if (d.rail) { // narrow gauge: sleepers and two rails
+        const horizontal = d.w >= d.h;
+        ctx.fillStyle = '#4a3a2a';
+        if (horizontal) for (let x = d.x; x < d.x + d.w; x += 14) ctx.fillRect(x, d.y - 2, 5, d.h + 4);
+        else for (let y = d.y; y < d.y + d.h; y += 14) ctx.fillRect(d.x - 2, y, d.w + 4, 5);
+        ctx.fillStyle = '#8a8f96';
+        if (horizontal) { ctx.fillRect(d.x, d.y + 2, d.w, 2); ctx.fillRect(d.x, d.y + d.h - 4, d.w, 2); }
+        else { ctx.fillRect(d.x + 2, d.y, 2, d.h); ctx.fillRect(d.x + d.w - 4, d.y, 2, d.h); }
+        return;
+      }
+      if (d.cart) { // a mine cart heaped with coal
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(d.x + 3, d.y + 4, d.w, d.h);
+        ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.fillStyle = '#1d1c1b'; ctx.fillRect(d.x + 4, d.y + 4, d.w - 8, d.h - 8);
+        const rnd = seeded(Math.round(d.x * 3 + d.y));
+        for (let i = 0; i < 6; i++) circle(d.x + 7 + rnd() * (d.w - 14), d.y + 7 + rnd() * (d.h - 14), 2.5 + rnd() * 2, '#3a3836');
+        return;
+      }
       if (!d.concrete) return shadeRect(ctx, d, d.c);
       ctx.fillStyle = 'rgba(0, 0, 0, .25)';
       ctx.fillRect(d.x + 3, d.y + 4, d.w, d.h); // the slab's edge
@@ -7024,6 +7518,24 @@
     function drawWalls(b) {
       for (const wall of b.walls) {
         if (wall.npc || wall.pump) continue; // the shopkeeper's invisible blocker; pumpjacks are drawn by drawPumps
+        if (wall.wire) { drawWire(wall); continue; }
+        if (wall.gate) { drawCampGate(wall); continue; }
+        if (wall.tower) { // a watchtower's legs (its cabin is a roof, over everyone)
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(wall.x + 6, wall.y + 8, wall.w, wall.h);
+          ctx.strokeStyle = '#3a2d20'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(wall.x + 3, wall.y + 3); ctx.lineTo(wall.x + wall.w - 3, wall.y + wall.h - 3); ctx.moveTo(wall.x + wall.w - 3, wall.y + 3); ctx.lineTo(wall.x + 3, wall.y + wall.h - 3); ctx.stroke();
+          for (const [lx, ly] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { ctx.fillStyle = '#5a4630'; ctx.fillRect(wall.x + lx * (wall.w - 8), wall.y + ly * (wall.h - 8), 8, 8); }
+          continue;
+        }
+        if (wall.bunker) { // the boiler house's coal bunker: a concrete pit heaped with coal
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(wall.x + 4, wall.y + 5, wall.w, wall.h);
+          ctx.fillStyle = '#8a857a'; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+          ctx.fillStyle = '#1b1a19'; ctx.fillRect(wall.x + 7, wall.y + 7, wall.w - 14, wall.h - 14);
+          const rnd = seeded(Math.round(wall.x * 7 + wall.y));
+          for (let i = 0; i < 14; i++) circle(wall.x + 12 + rnd() * (wall.w - 24), wall.y + 12 + rnd() * (wall.h - 24), 3 + rnd() * 4, rnd() < 0.5 ? '#2c2a28' : '#3b3835');
+          ctx.strokeStyle = '#5f5b54'; ctx.lineWidth = 2; ctx.strokeRect(wall.x + 1, wall.y + 1, wall.w - 2, wall.h - 2);
+          continue;
+        }
         if (wall.picket) { // a white picket fence: a rail with pickets along it
           const horizontal = wall.w > wall.h;
           ctx.fillStyle = 'rgba(0, 0, 0, .25)';
@@ -7044,6 +7556,57 @@
         ctx.lineWidth = 2;
         ctx.strokeRect(wall.x + 1, wall.y + 1, wall.w - 2, wall.h - 2);
       }
+    }
+
+    /**
+     * Barbed wire: a coil of concertina wire along concrete posts, strands with barbs. People can't
+     * get through; you can see (and shoot) through it.
+     */
+    function drawWire(wall) {
+      const horizontal = wall.w > wall.h;
+      const len = horizontal ? wall.w : wall.h;
+      const at = (k, off) => (horizontal ? [wall.x + k, wall.y + wall.h / 2 + off] : [wall.x + wall.w / 2 + off, wall.y + k]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(0, 0, 0, .28)'; // its shadow on the ground
+      ctx.beginPath();
+      for (const off of [-3, 3]) { const [a, b] = at(0, off + 4), [c, d] = at(len, off + 4); ctx.moveTo(a + 3, b); ctx.lineTo(c + 3, d); }
+      ctx.stroke();
+      ctx.strokeStyle = '#7f848a';
+      ctx.beginPath();
+      for (const off of [-3, 0, 3]) { const [a, b] = at(0, off), [c, d] = at(len, off); ctx.moveTo(a, b); ctx.lineTo(c, d); }
+      ctx.stroke();
+      ctx.strokeStyle = '#a9aeb4'; // the concertina coil on top
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let k = 4; k < len - 2; k += 7) { const [x, y] = at(k, 0); ctx.moveTo(x + 5, y); ctx.arc(x, y, 5, 0, Math.PI * 2); }
+      ctx.stroke();
+      ctx.strokeStyle = '#c3c7cc'; // barbs
+      ctx.beginPath();
+      for (let k = 6; k < len; k += 11) { const [x, y] = at(k, (k % 3) - 1); ctx.moveTo(x - 2, y - 2); ctx.lineTo(x + 2, y + 2); ctx.moveTo(x + 2, y - 2); ctx.lineTo(x - 2, y + 2); }
+      ctx.stroke();
+      for (let k = 0; k <= len; k += 60) { // concrete posts
+        const [x, y] = at(Math.min(k, len - 3), 0);
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x - 3, y - 2, 8, 8);
+        ctx.fillStyle = '#a7a39b'; ctx.fillRect(x - 4, y - 4, 8, 8);
+        ctx.fillStyle = '#c6c2ba'; ctx.fillRect(x - 4, y - 4, 8, 2);
+      }
+    }
+
+    /** The camp's truck gate: shut steel leaves with a red star. */
+    function drawCampGate(wall) {
+      const horizontal = wall.w > wall.h;
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(wall.x + 3, wall.y + 5, wall.w, wall.h);
+      ctx.fillStyle = '#4d5358'; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+      ctx.strokeStyle = '#2e3236'; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      const len = horizontal ? wall.w : wall.h;
+      for (let k = 10; k < len; k += 10) { if (horizontal) { ctx.moveTo(wall.x + k, wall.y); ctx.lineTo(wall.x + k, wall.y + wall.h); } else { ctx.moveTo(wall.x, wall.y + k); ctx.lineTo(wall.x + wall.w, wall.y + k); } }
+      ctx.stroke();
+      ctx.fillStyle = '#2e3236'; // the seam between the leaves
+      if (horizontal) ctx.fillRect(wall.x + wall.w / 2 - 1.5, wall.y - 2, 3, wall.h + 4); else ctx.fillRect(wall.x - 2, wall.y + wall.h / 2 - 1.5, wall.w + 4, 3);
+      ctx.fillStyle = '#b3202a';
+      star(wall.x + wall.w / 2, wall.y + wall.h / 2, 9, 3.6, 5, -Math.PI / 2);
+      ctx.fill();
     }
 
     // Double doors hinged at each side of the doorway. Closed they sit in the wall line; open they swing outward.
@@ -7216,6 +7779,11 @@
           ctx.restore();
           ctx.strokeStyle = shade(r.c, 0.5); ctx.lineWidth = 2;
           ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+        }
+        if (r.tower) { // the watchtower cabin: a searchlight on the rail
+          const cx = r.x + r.w / 2, cy = r.y + r.h / 2, a = towerBeam(cx, cy, performance.now());
+          ctx.fillStyle = '#3a3d42'; ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 18, cy + Math.sin(a) * 18, 7, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#fff6c8'; ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 22, cy + Math.sin(a) * 22, 4, 0, Math.PI * 2); ctx.fill();
         }
         if (r.round && snowAmount > 0.02) { ctx.fillStyle = `rgba(238, 243, 248, ${0.7 * snowAmount})`; ctx.beginPath(); ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2 - 4, 0, Math.PI * 2); ctx.fill(); }
         ctx.restore();
@@ -7531,7 +8099,7 @@
           const edge = approach(s, d, 260, 340);
           if (crimeState.arrest > 0 && d < 160 && t > (s.cuff ?? 0)) { s.cuff = t + 2.5 + Math.random(); return { text: pick(SPEECH.copArrest), urgent: true }; } // arresting me
           if (wantedNow && d < 700 && t > (s.shout ?? 0)) { s.shout = t + 4 + Math.random() * 3; return { text: pick(SPEECH.copWanted), urgent: true }; }
-          if (!wantedNow && edge === 'in' && Math.random() < 0.4) return { text: pick(SPEECH.copIdle) };
+          if (!wantedNow && edge === 'in' && Math.random() < 0.4) return { text: pick(o.guard ? SPEECH.prisonGuard : SPEECH.copIdle) };
           return null;
         });
       }
@@ -7874,7 +8442,8 @@
 
     let lastFrame = performance.now();
     let editing = false; // map editor open (see the editor section)
-    let zoom = 1; // only the editor zooms
+    let zoom = 1; // the editor's zoom
+    let viewZ = 1; // the zoom this frame (phones see further: VIEW_ZOOM_TOUCH)
     let viewBox = { l: 0, t: 0, r: 0, b: 0 };
 
     function draw(frameTime) {
@@ -7923,7 +8492,7 @@
           me.cx -= me.cx * k; me.cy -= me.cy * k;
           if (firing && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat') && frameTime - stabAt > (inv[selectedSlot]?.[0] === 'bat' ? 700 : 550)) { stabAt = frameTime; if (inv[selectedSlot]?.[0] === 'bat') sfx('bat'); } // held: keep stabbing (swinging)
           const stabT = (frameTime - stabAt) / 180;
-          shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null });
+          shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null, cop: prisonState ? 2 : amCop ? 1 : 0 });
         }
         // The camera locks to my player, so there's nothing to smooth twice.
         camera.x = me.x;
@@ -7935,7 +8504,7 @@
         camera.x += (world.width / 2 - camera.x) * k;
         camera.y += (world.height / 2 - camera.y) * k;
       }
-      const z = editing ? zoom : 1;
+      const z = viewZ = editing ? zoom : touchMode ? VIEW_ZOOM_TOUCH : 1;
       const vw = w / z, vh = h / z; // visible world size
 
       if (playing) {
@@ -8054,7 +8623,11 @@
           const ripple = 1.15 + 0.15 * Math.sin(frameTime / 250 + id);
           ctx.beginPath(); ctx.arc(p.x, p.y, p.r * ripple * 1.2, 0, Math.PI * 2); ctx.stroke();
         }
-        drawPerson(p, lookOf(id));
+        if (p.wanted && id !== myId) { // (only officers are told who's wanted)
+          ctx.font = '700 16px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('🚨', p.x, p.y - p.r - 18);
+        }
+        drawPerson(p, p.cop === 1 ? { ...POLICE_LOOK, skin: lookOf(id).skin, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' } : p.cop === 2 ? { ...PRISONER_LOOK, skin: lookOf(id).skin } : lookOf(id)); // Militsiya players wear the uniform; prisoners the camp's black
       }
       drawBodies(view, true);
       drawGunfire(frameTime, dt);
@@ -8093,6 +8666,7 @@
       // Police officers on foot.
       for (const [, o] of view.cops ?? []) {
         if (o.x < viewBox.l || o.x > viewBox.r || o.y < viewBox.t || o.y > viewBox.b) continue;
+        if (o.guard) { drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'rifle' }, GUARD_LOOK); continue; } // a prison guard: interior troops, a rifle and an ushanka
         drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'pistol' }, { ...POLICE_LOOK, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' });
       }
       // Hired muscle on foot: yours get a gold tag; anyone hurt shows a health bar.
@@ -8165,6 +8739,8 @@
       const place = me && playing && !me.car ? nearestPlace() : null;
       const eNow = playing ? eTarget() : null;
       if (eNow) drawKeyPrompt(eNow.x, eNow.y); // just the closest E
+      const collar = playing ? collarTarget() : null; // an officer beside a player: Z arrest · Y fine
+      if (collar) { drawKeyPrompt(collar.x - 16, collar.y - collar.r - 40, 'Z', '#2e86de'); drawKeyPrompt(collar.x + 16, collar.y - collar.r - 40, 'Y', '#2e86de'); }
       else if (me && playing && fuelCar()) { // fuel or vodka in hand beside a car: E pours it in (before drinking it)
         drawKeyPrompt(me.x - 22, me.y - 58);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';

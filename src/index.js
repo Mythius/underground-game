@@ -412,6 +412,12 @@ function handleMessage(client, msg) {
     case ClientMsg.HIRE:
       client.room?.hireAction(client, msg);
       break;
+    case ClientMsg.PRISON:
+      client.room?.prisonAction(client, msg);
+      break;
+    case ClientMsg.COP:
+      client.room?.copAction(client, msg);
+      break;
     case ClientMsg.FISH:
       client.room?.fish(client, msg);
       break;

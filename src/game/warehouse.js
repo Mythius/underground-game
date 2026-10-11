@@ -30,6 +30,11 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 export const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const turn = (d, by) => (((d + by) % 4) + 4) % 4;
 
+/** p's hotbar stacks of shop food that counts as `good` (energy drinks bought in a shop are the 'energy' good). */
+function foodAs(p, good) {
+  return p.inventory.filter((s) => s?.food && config.economy.menu[s.food]?.good === good);
+}
+
 /** 'foundry:1' -> that recipe plus its factory's time per batch ('illegal:vodka' -> config.illegalRecipes). */
 export function recipeOf(key) {
   const [factory, index] = key.split(':');
@@ -360,7 +365,7 @@ export class Warehouse {
 
   #runMachine(piece, dt) {
     const recipe = recipeOf(piece.recipe);
-    const ready = recipe && Object.entries(recipe.in).every(([g, q]) => (piece.in[g] ?? 0) >= q) && total(piece.out) < config.warehouses.machineSlot;
+    const ready = recipe && !(recipe.illegal && this.owner?.cop) && Object.entries(recipe.in).every(([g, q]) => (piece.in[g] ?? 0) >= q) && total(piece.out) < config.warehouses.machineSlot;
     if (!ready) {
       piece.progress = 0;
       return;
@@ -591,6 +596,7 @@ export class Warehouses {
         if (!w.contains(p.x, p.y) && Math.hypot(w.building.x + w.building.w / 2 - p.x, w.building.y + w.building.h / 2 - p.y) > Math.max(w.building.w, w.building.h)) return 'too_far';
         if (!account || account.guest) return 'need_account';
         if (this.#ownsSize(account, w.size)) return 'one_per_size';
+        if (size.illegalOnly && account.cop) return 'cop_no_illegal'; // (a shack only takes illegal machines)
         if (this.stored.some((r) => r.accountId === account.id && r.data.size === w.size)) return 'load_saved_instead'; // (you've a saved one of this size: load it)
         if (account.bank < size.price) return 'not_enough_bank';
         account.bank -= size.price;
@@ -666,6 +672,7 @@ export class Warehouses {
       if (msg.action === 'place') {
         const price = Warehouse.price(msg.kind);
         if (price === null) return 'unknown';
+        if (config.machines[msg.kind]?.illegal && account.cop) return 'cop_no_illegal';
         if (!w.canPlace(msg.kind, x, y)) return 'blocked';
         if (account.bank < price) return 'not_enough_bank';
         const error = w.place(msg.kind, x, y, msg.dir | 0);
@@ -733,9 +740,18 @@ export class Warehouses {
     const holder = this.world.economy.cargoOf(p);
     if (msg.action === 'pput') {
       const room = (piece.kind === 'container' ? config.warehouses.containerCapacity : config.warehouses.dockCapacity) - total(piece.stock);
-      const qty = Math.min(msg.qty, holder.count(good), Math.floor(room));
-      if (qty <= 0) return holder.count(good) ? 'no_room' : 'not_carrying';
-      holder.add(good, -qty);
+      const food = foodAs(p, good); // shop food that counts as this good (energy drinks)
+      const have = holder.count(good) + food.reduce((n, s) => n + s.qty, 0);
+      const qty = Math.min(msg.qty, have, Math.floor(room));
+      if (qty <= 0) return have ? 'no_room' : 'not_carrying';
+      let left = qty - Math.min(qty, holder.count(good));
+      holder.add(good, -(qty - left));
+      for (const s of food) {
+        const n = Math.min(left, s.qty);
+        s.qty -= n;
+        left -= n;
+        if (s.qty <= 0) p.inventory[p.inventory.indexOf(s)] = null;
+      }
       add(piece.stock, good, qty);
       return null;
     }
@@ -755,14 +771,15 @@ export class Warehouses {
   /** By hand: a hotbar slot of one of the recipe's inputs into the machine's input slot. */
   #loadMachine(p, piece, index) {
     const stack = p.inventory[index];
-    if (!stack?.good) return 'nothing_there';
+    const good = stack?.good ?? config.economy.menu[stack?.food]?.good; // (a shop energy drink is an energy drink)
+    if (!good) return 'nothing_there';
     const recipe = recipeOf(piece.recipe);
-    if (!recipe?.in[stack.good]) return 'wrong_input';
-    const qty = Math.min(stack.qty, config.warehouses.machineSlot - (piece.in[stack.good] ?? 0));
+    if (!recipe?.in[good]) return 'wrong_input';
+    const qty = Math.min(stack.qty, config.warehouses.machineSlot - (piece.in[good] ?? 0));
     if (qty <= 0) return 'machine_full';
     stack.qty -= qty;
     if (stack.qty <= 0) p.inventory[index] = null;
-    add(piece.in, stack.good, qty);
+    add(piece.in, good, qty);
     return null;
   }
 

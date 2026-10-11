@@ -23,6 +23,7 @@ import { Hires } from './hires.js';
 import { Fishing } from './fishing.js';
 import { radioAt } from '../radio.js';
 import { Furnishings } from './furnishing.js';
+import { Prison } from './prison.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -146,7 +147,7 @@ export class World {
     ];
     this.wallGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
     const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks];
-    for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w });
+    for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: Boolean(w.low) }); // (barbed wire: low, see-through)
     for (const w of this.rails) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
 
     // Each building's NPC knows which building it works in.
@@ -196,6 +197,7 @@ export class World {
     this.hires = new Hires(this); // goons, guards and hitmen from the БАР
     this.fishing = new Fishing(this);
     this.furnishings = new Furnishings(this); // cabinets, beds and sofas placed in homes and warehouses
+    this.prison = new Prison(this); // where every arrest ends up (its guards join the police)
     this.brokenAtms = new Map(); // ATM key -> economy time it works again (smashed with a bat)
     this.atmsChanged = false; // (the room tells everyone which ATMs are broken)
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
@@ -266,14 +268,14 @@ export class World {
     // (These scale with the town, not the whole map.)
     const k = opts.citySize ? (opts.citySize / 4000) ** 2 : (opts.width * opts.height) / (9000 * 9000);
     Object.assign(fixed, { panelka: Math.round(4 * k), kiosk: Math.round(2.5 * k), garages: Math.round(1.5 * k), scrapyard: 3, quarry: 3 });
-    for (const t of Object.keys(config.work.sites)) fixed[t] = 0; // work sites: placed on whole blocks below
+    for (const t of [...Object.keys(config.work.sites), 'prison']) fixed[t] = 0; // work sites and the prison: placed on whole blocks below
     // The railway runs right across, between two roads; the freight station sits beside it.
     const plan = terrain && this.roads.length ? planRailway(opts.width, opts.height, this.roads, wetRect) : null;
     const corridor = plan ? [railCorridor(opts.width, plan.y), plan.station] : [];
     this.railwayY = plan?.y ?? null;
     // Every building fronts onto a road (city types in town, the rest in the country); shacks hide in the woods.
     // The mine, lumberyards, farms and oil fields first: each fills a whole country block.
-    const sites = this.roads.length ? placeSites({ width: opts.width, height: opts.height, roads: this.roads, city: this.city, counts: config.work.sites, avoid: corridor, isWet: wetRect }) : [];
+    const sites = this.roads.length ? placeSites({ width: opts.width, height: opts.height, roads: this.roads, city: this.city, counts: config.work.sites, avoid: corridor, isWet: wetRect, prison: Boolean(config.prison) }) : [];
     ({ buildings: this.buildings, lots: this.businessLots } = this.roads.length
       ? placeTown({ width: opts.width, height: opts.height, roads: this.roads, city: this.city, count: (opts.buildingCount ?? 0) + sites.length, fixed, remote: new Set(['shack']), avoid: corridor, isWet: wetRect, pre: sites })
       : { buildings: generateBuildings(opts.width, opts.height, opts.buildingCount ?? 0, 120, corridor, 40, wetRect, fixed, new Set(['shack'])), lots: [] });
@@ -906,6 +908,7 @@ export class World {
     this.hires.step(dt);
     for (const p of this.players.values()) p.arrest = 0;
     this.police.step(dt);
+    this.prison.step(dt);
     for (const { victim, killer } of deaths) this.bodies.setKiller(victim.id, killer);
     this.bodies.step(dt);
     doorChanges.push(...this.pendingDoors.splice(0));
@@ -926,13 +929,13 @@ export class World {
 
   /** Is `door` locked to p: someone else's warehouse or a home that isn't theirs (lock not picked)? */
   lockedFor(door, p) {
-    return this.warehouses.lockedFor(door, p) || this.homes.lockedFor(door, p);
+    return this.warehouses.lockedFor(door, p) || this.homes.lockedFor(door, p) || this.prison.lockedFor(door);
   }
 
   /** A door locked to p within reach, for lock picking. */
   lockedDoorNear(p, reach = 90) {
     for (const d of this.doors) {
-      if (d.open || !this.lockedFor(d, p)) continue;
+      if (d.open || !this.lockedFor(d, p) || this.prison.keyOnly(d)) continue; // (the prison's inner door: only a guard's key)
       if (Math.hypot(d.x + d.w / 2 - p.x, d.y + d.h / 2 - p.y) < reach + p.radius) return d;
     }
     return null;
@@ -1068,7 +1071,7 @@ export class World {
     for (const p of this.players.values()) {
       if (!p.input.use) continue;
       p.input.use = false;
-      if (p.jailed) continue;
+      if (p.jailed && !p.jailed.prison) continue; // (in the prison you get about inside the wire)
       if (p.hidden) {
         this.unhide(p);
         continue;
@@ -1130,8 +1133,9 @@ export class World {
         p.y = best.y;
         continue;
       }
+      if (this.prison.useKey(best, p)) continue; // a guard's key in the inner fence's door
       if (this.lockedFor(best, p)) {
-        this.police.events.push({ player: p, kind: 'error', code: 'locked' });
+        this.police.events.push({ player: p, kind: 'error', code: this.prison.keyOnly(best) ? 'prison_key_door' : this.prison.isPrisonDoor(best) ? 'prison_pick_door' : 'locked' });
         continue;
       }
       // Don't shut a door on someone standing in the doorway.
@@ -1148,7 +1152,7 @@ export class World {
 
     for (const p of this.players.values()) {
       const { angle, boost } = p.input;
-      const throttle = p.vehicle || p.jailed || p.hidden ? 0 : p.input.throttle; // drivers use gas/steer instead; prisoners and the hidden stay put
+      const throttle = p.vehicle || (p.jailed && !p.jailed.prison) || p.hidden ? 0 : p.input.throttle; // drivers use gas/steer instead; prisoners and the hidden stay put
       const swimming = !p.vehicle && this.isSwimming(p.x, p.y);
       let speed = p.speed * throttle * (swimming ? o.swimSpeed : 1) * (p.carrying ? config.bodies.carrySpeed : 1); // keep in sync with the client
 
@@ -1420,7 +1424,7 @@ export class World {
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
     t.hurt(t.maxHealth * stats.share + 0.01); // (+ a hair, so three stabs always do it)
     const killed = t.health <= 0;
-    this.police.crime(p, killed ? 'murder' : 'assault');
+    if (!this.police.lawful(p, t)) this.police.crime(p, killed ? 'murder' : 'assault');
     if (killed) {
       this.removePlayer(t.id);
       this.meleeDeaths.push({ victim: t, killer: p });
@@ -1489,7 +1493,7 @@ export class World {
           this.bullets.delete(b.id);
           p.health -= b.damage;
           if (p.driver && (shooter.kind === 'player' || shooter.kind === 'hire')) {
-            this.police.crime(shooter, 'assault');
+            if (!this.police.lawful(shooter, p.driver)) this.police.crime(shooter, 'assault');
             this.hires.noteAttack(shooter, p.driver);
           }
           if (p.health <= 0) this.#destroyVehicle(p, b.owner, deaths, explosions);
@@ -1502,7 +1506,7 @@ export class World {
         this.bullets.delete(b.id);
         p.hurt(b.damage);
         const killed = p.health <= 0;
-        if (shooter.kind === 'player' || shooter.kind === 'hire') this.police.crime(shooter, killed ? 'murder' : 'assault');
+        if ((shooter.kind === 'player' || shooter.kind === 'hire') && !this.police.lawful(shooter, p)) this.police.crime(shooter, killed ? 'murder' : 'assault');
         this.hires.noteAttack(shooter, p);
         if (killed) {
           this.removePlayer(p.id);

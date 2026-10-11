@@ -15,6 +15,9 @@ import { Vehicle, vehicleMotion } from './vehicles.js';
 
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
+/** Has p joined the Militsiya? (Officers wear the uniform and can't make or sell anything illegal.) */
+export const isCop = (p) => Boolean(p?.account?.cop);
+
 export class Police {
   constructor(world) {
     this.world = world;
@@ -47,9 +50,30 @@ export class Police {
     }
   }
 
+  /**
+   * Guards walking a loop inside the prison's wire. They deal with trouble in and round the camp like
+   * a bank guard; a prisoner can lift the key off one's belt from behind (see Prison.liftKey).
+   */
+  postPrisonGuards(b) {
+    const s = b.prison;
+    const c = { x: s.inner.x + s.inner.w / 2, y: s.inner.y + s.inner.h / 2 };
+    for (let i = 0; i < config.prison.guards; i++) {
+      const leg = Math.floor((i * s.patrol.length) / config.prison.guards);
+      const at = s.patrol[leg];
+      const u = this.#newUnit(this.#nearestStation(c.x, c.y), { guard: b.id, prison: true, x: c.x, y: c.y, angle: 0, range: Math.max(s.inner.w, s.inner.h), patrol: s.patrol });
+      Object.assign(u.officer, { x: at.x, y: at.y });
+      u.leg = (leg + 1) % s.patrol.length;
+    }
+  }
+
+  /** The prison guards on their feet. */
+  prisonGuards() {
+    return this.units.filter((u) => u.post?.prison && u.officer.health > 0).map((u) => u.officer);
+  }
+
   /** The (living) guard posted in bank building `id`, if any. */
   bankGuardOf(id) {
-    return this.units.find((u) => u.post?.guard === id && u.officer.health > 0) ?? null;
+    return this.units.find((u) => u.post?.guard === id && !u.post.prison && u.officer.health > 0) ?? null;
   }
 
   /** The old cruiser of a replaced unit goes back to the depot, unless someone's in it (stolen ones stay out there). */
@@ -152,6 +176,10 @@ export class Police {
   crime(p, kind, alarm = false, except = null, stars = config.crime.stars[kind] ?? 1) {
     if (!p?.alive || (p.kind !== 'player' && p.kind !== 'hire')) return false;
     if (p.role === 'gangster') return false; // the Militsiya and the gangsters leave each other be
+    if (p.kind === 'player' && isCop(p)) {
+      if (kind === 'fire' || kind === 'steal_police_car') return false; // officers may shoot, and drive Militsiya cars
+      if (kind !== 'near_body') this.#fire(p, kind); // any real crime, seen or not, costs an officer the badge
+    }
     if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
@@ -201,8 +229,14 @@ export class Police {
 
   /** Start robbing the ATM, till (shop/gas) or bank teller you're next to. The alarm goes off at once. */
   startRobbery(p) {
-    if (p.vehicle || p.robbing || p.jailed) return 'busy';
     const w = this.world;
+    if (p.jailed?.prison && !p.robbing) { // inside the wire, only the lock on the outer fence's door
+      const door = w.lockedDoorNear(p);
+      if (!door || !w.prison.isPrisonDoor(door)) return 'nothing_to_rob';
+      p.robbing = { kind: 'lockpick', door, prison: true, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec: config.prison.lockpickSec };
+      return null;
+    }
+    if (p.vehicle || p.robbing || p.jailed) return 'busy';
     const near = (list, reach) => list.find((s) => Math.hypot(s.x - p.x, s.y - p.y) < reach + p.radius);
     const atm = near(w.atms.filter((a) => !w.atmBroken(a)), config.economy.atmReach); // (a smashed one has nothing left)
     const teller = near(w.tellers, config.economy.bankReach);
@@ -212,8 +246,9 @@ export class Police {
       // Someone's locked warehouse or home, or their car: pick the lock. Only a crime if somebody sees it.
       const door = w.lockedDoorNear(p);
       if (door) {
-        const sec = w.warehouses.all.has(door.building) ? config.warehouses.lockpickSec : config.homes.lockpickSec;
-        p.robbing = { kind: 'lockpick', door, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec };
+        const prison = w.prison.isPrisonDoor(door); // breaking someone out
+        const sec = prison ? config.prison.lockpickSec : w.warehouses.all.has(door.building) ? config.warehouses.lockpickSec : config.homes.lockpickSec;
+        p.robbing = { kind: 'lockpick', door, prison, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec };
         this.crime(p, 'break_in');
         return null;
       }
@@ -249,7 +284,7 @@ export class Police {
       }
       const r = p.robbing;
       if (!r) continue;
-      if (!p.input.rob || p.vehicle || p.jailed || Math.hypot(r.x - p.x, r.y - p.y) > 160) {
+      if (!p.input.rob || p.vehicle || (p.jailed && !r.prison) || Math.hypot(r.x - p.x, r.y - p.y) > 160) {
         p.robbing = null; // gave up: no money (the alarm already went off)
         this.events.push({ player: p, kind: 'rob_stopped' });
         continue;
@@ -259,6 +294,12 @@ export class Police {
       if (r.kind === 'carpick') {
         if (this.world.vehicles.has(r.car.id)) r.car.picked = true; // open to anyone until the owner's back in it
         this.events.push({ player: p, kind: 'picked_car' });
+        p.robbing = null;
+        continue;
+      }
+      if (r.kind === 'lockpick' && r.prison) {
+        this.world.prison.picked(r.door);
+        this.events.push({ player: p, kind: 'picked' });
         p.robbing = null;
         continue;
       }
@@ -284,6 +325,8 @@ export class Police {
   /** F: lift some cash from the nearest townsperson or player. */
   pickpocket(p) {
     const rule = config.pickpocket;
+    const key = this.world.prison?.liftKey(p); // a prisoner next to a guard: his key
+    if (key) return key;
     if (p.vehicle || p.jailed) return 'busy';
     if ((p.pickpocketReady ?? 0) > this.time) return 'too_soon';
     const reach = rule.reach + p.radius;
@@ -340,15 +383,128 @@ export class Police {
     this.world.hires?.noteAttack(attacker, officer); // (your goons join in)
   }
 
-  // ---- arrests --------------------------------------------------------------------
+  // ---- joining the Militsiya ---------------------------------------------------------------
 
-  #bust(p) {
-    const w = this.world;
-    if (p.kind === 'hire') return w.hires.busted(p); // hired muscle is taken away
-    if (p.vehicle) w.leaveSeat(p);
-    // Illegal goods are confiscated (from hands and the car with them).
+  /** The station whose desk officer p is standing at, or null. */
+  deskOf(p) {
+    if (!p?.alive || p.vehicle) return null;
+    const reach = config.police.academy.reach + p.radius;
+    return this.stations.find((s) => s.npc && Math.hypot(s.npc.x - p.x, s.npc.y - p.y) < reach) ?? null;
+  }
+
+  /** What the desk panel shows p: their status, or the application's questions (without the answers). */
+  describeDesk(p, station) {
+    const a = config.police.academy;
+    return {
+      kind: 'police',
+      id: station.id,
+      cop: isCop(p),
+      retryIn: Math.max(0, Math.ceil((p.account?.copRetryAt ?? 0) - this.time)),
+      questions: a.questions.map(({ q, options }) => ({ q, options })),
+    };
+  }
+
+  /** Apply to join, with an answer (option index) for each question. Returns an error code, or null. */
+  apply(p, answers) {
+    const a = config.police.academy;
+    if (!this.deskOf(p)) return 'too_far';
+    if (!p.account || p.account.guest) return 'need_account';
+    if (isCop(p)) return 'already_cop';
+    if ((p.account.copRetryAt ?? 0) > this.time) return 'cop_retry';
+    if (p.wanted || p.jailed) return 'cop_wanted';
+    // Nobody joins with contraband on them.
+    if (Object.keys(hotbarOf(p).items).some((g) => config.goods[g]?.illegal) || p.inventory.some((s) => s?.illegal)) return 'cop_contraband';
+    if (!Array.isArray(answers) || answers.length !== a.questions.length || a.questions.some((q, i) => answers[i] !== q.answer)) {
+      p.account.copRetryAt = this.time + a.retrySec;
+      return 'cop_failed';
+    }
+    p.account.cop = true;
+    this.world.onCopChange?.(p.account);
+    return null;
+  }
+
+  /** Use of force that isn't a crime: an officer hurting a wanted player. */
+  lawful(attacker, victim) {
+    return isCop(attacker) && victim?.kind === 'player' && victim.wanted > 0;
+  }
+
+  /** An officer who broke the law is thrown out of the Militsiya. */
+  #fire(p, crime) {
+    p.account.cop = false;
+    this.world.onCopChange?.(p.account);
+    this.events.push({ player: p, kind: 'cop_fired', crime });
+  }
+
+  /** Hand in the badge. */
+  resign(p) {
+    if (!this.deskOf(p)) return 'too_far';
+    if (!isCop(p)) return 'not_cop';
+    p.account.cop = false;
+    this.world.onCopChange?.(p.account);
+    return null;
+  }
+
+  /** The player a player officer wants to arrest or fine, if it's allowed right now; else an error code. */
+  #collar(cop, id) {
+    const a = config.police.academy;
+    if (!isCop(cop)) return 'not_cop';
+    if (!cop.alive || cop.vehicle || cop.jailed) return 'busy';
+    const t = this.world.players.get(id);
+    if (!t?.alive || t === cop || t.vehicle || t.jailed || t.hidden) return 'nobody_to_collar';
+    if (!t.wanted) return 'not_wanted_player'; // only someone wanted for a crime
+    if (Math.hypot(t.x - cop.x, t.y - cop.y) > a.collarReach + cop.radius + t.radius) return 'too_far';
+    if ((cop.collaredAt ?? -Infinity) + a.cooldownSec > this.time) return 'too_soon';
+    cop.collaredAt = this.time;
+    return t;
+  }
+
+  /** A player officer arrests player `id`: contraband seized, and off to the cells (no bail). */
+  copArrest(cop, id) {
+    const t = this.#collar(cop, id);
+    if (typeof t === 'string') return t;
+    const seized = this.#seize(t);
+    if (this.world.prison?.jail(t, t.wanted)) {
+      t.arrest = 0;
+      this.events.push({ player: t, kind: 'cop_arrested', by: cop.name, prison: true, quota: t.jailed.quota, bail: t.jailed.bail, seized });
+      return { name: t.name, prison: true, seized };
+    }
+    t.wanted = 0;
+    t.robbing = null;
+    t.arrest = 0;
+    const station = this.#nearestStation(t.x, t.y);
+    const jail = config.police.academy.jailSec;
+    t.jailed = { until: this.time + jail, station };
+    if (station?.jail) {
+      t.x = station.jail.x;
+      t.y = station.jail.y;
+    }
+    this.events.push({ player: t, kind: 'cop_arrested', by: cop.name, jail, seized });
+    return { name: t.name, jail, seized };
+  }
+
+  /** A player officer fines player `id`: cash first, then the bank, all of it to the officer. */
+  copFine(cop, id) {
+    const t = this.#collar(cop, id);
+    if (typeof t === 'string') return t;
+    const fine = config.police.academy.fine;
+    const fromCash = Math.min(t.cash, fine);
+    const fromBank = Math.min(Math.floor(t.account?.bank ?? 0), fine - fromCash);
+    t.cash -= fromCash;
+    if (fromBank) {
+      t.account.bank -= fromBank;
+      this.world.onBankChange?.(t.account);
+    }
+    cop.cash += fromCash + fromBank;
+    t.wanted = 0; // paid up: the matter is closed
+    t.lastKnown = null;
+    this.events.push({ player: t, kind: 'cop_fined', by: cop.name, amount: fromCash + fromBank });
+    return { name: t.name, amount: fromCash + fromBank };
+  }
+
+  /** Takes every illegal good off p (hands and the car with them). Returns how many. */
+  #seize(p) {
     const holders = [hotbarOf(p)];
-    const v = w.economy.vehicleOf(p);
+    const v = this.world.economy.vehicleOf(p);
     if (v) holders.push(trunkOf(v));
     let seized = 0;
     for (const h of holders) {
@@ -357,6 +513,23 @@ export class Police {
         h.add(g, -q);
         seized += q;
       }
+    }
+    return seized;
+  }
+
+  // ---- arrests --------------------------------------------------------------------
+
+  #bust(p) {
+    const w = this.world;
+    if (p.kind === 'hire') return w.hires.busted(p); // hired muscle is taken away
+    if (p.vehicle) w.leaveSeat(p);
+    const seized = this.#seize(p); // illegal goods are confiscated (from hands and the car with them)
+    // Off to the prison (bail is paid to the warden there, by you or a friend).
+    const stars0 = p.wanted;
+    if (this.world.prison?.jail(p, stars0)) {
+      p.arrest = 0;
+      this.events.push({ player: p, kind: 'busted', prison: true, quota: p.jailed.quota, bail: p.jailed.bail, seized });
+      return;
     }
     const bail = config.police.bailPerStar * p.wanted;
     const fromCash = Math.min(p.cash, bail);
@@ -391,7 +564,7 @@ export class Police {
 
   #jail() {
     for (const p of this.world.players.values()) {
-      if (!p.jailed) continue;
+      if (!p.jailed || p.jailed.prison) continue; // (the prison looks after its own)
       const { until, station } = p.jailed;
       if (station?.jail) {
         p.x = station.jail.x; // stay in the cell
@@ -569,6 +742,12 @@ export class Police {
       if (target.lastKnown) return this.#search(u, target, dt);
     }
     u.arrest = 0;
+    if (post.patrol) { // a prison guard: round the camp at a stroll
+      const at = post.patrol[u.leg ?? 0];
+      if (Math.hypot(at.x - o.x, at.y - o.y) < 14) u.leg = ((u.leg ?? 0) + 1) % post.patrol.length;
+      o.angle = Math.atan2(at.y - o.y, at.x - o.x);
+      return this.#walk(o, at.x, at.y, dt * 0.45);
+    }
     // Back to his post, in through the front door if he's outside.
     const b = this.world.buildings[post.guard - 1];
     const inside = b && o.x > b.x && o.x < b.x + b.w && o.y > b.y && o.y < b.y + b.h;
@@ -797,7 +976,7 @@ export class Police {
 
   /** Open a closed public door (not a privately owned warehouse's) and tell everyone. */
   #openDoor(door) {
-    if (!door || door.open || this.world.warehouses.all.get(door.building)?.owner) return;
+    if (!door || door.open || this.world.warehouses.all.get(door.building)?.owner || this.world.prison?.isPrisonDoor(door)) return;
     door.open = true;
     this.world.pendingDoors.push(door);
   }
@@ -813,7 +992,7 @@ export class Police {
     for (const u of this.units) {
       const o = u.officer;
       if (!o.onFoot || o.health <= 0 || Math.abs(o.x - x) > range || Math.abs(o.y - y) > range) continue;
-      out.push([o.id, Math.round(o.x), Math.round(o.y), Math.round(o.angle * 100) / 100]);
+      out.push([o.id, Math.round(o.x), Math.round(o.y), Math.round(o.angle * 100) / 100, u.post?.prison ? 1 : 0]); // (1: a prison guard)
     }
     return out;
   }

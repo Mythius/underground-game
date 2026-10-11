@@ -132,7 +132,7 @@ const MACHINE = '#4b525a';
 
 /** Building type -> warehouse size (prices etc. in config.warehouses.sizes), and each size's floor grid. */
 /** Work sites: borrow the tool from the foreman and gather (the oil field pumps on its own). */
-export const WORK_SITES = { mine: 'pickaxe', logging: 'axe', farm: 'scythe', oilwell: null };
+export const WORK_SITES = { mine: 'pickaxe', logging: 'axe', farm: 'scythe', oilwell: null, prison: 'pickaxe' }; // (the prison's pickaxes are handed out, not borrowed)
 
 export const WAREHOUSE_SIZES = { smallwarehouse: 'small', warehouse: 'medium', bigwarehouse: 'large', shack: 'shack' };
 export const WAREHOUSE_TILE = 40;
@@ -601,6 +601,115 @@ export const BUILDING_TYPES = {
     { x: 40, y: 40, w: 60, h: 50, c: '#9a8a6a' }, { x: 260, y: 50, w: 60, h: 40, c: '#8a7a5a' },
   ], decor: [{ x: 110, y: 60, w: 130, h: 110, c: '#b89a5a', round: true }] }),
 
+  // ---- the prison (ИТК): a gulag on the edge of town, filling a country block ----
+  // Two barbed-wire fences with a raked "death strip" between them and watchtowers on the corners.
+  // Inside: the coal face (west half), barracks and the boiler house with its coal bunker (east), a
+  // parade ground, and the gatehouse (КПП) in the south fence, where the warden stands at a counter
+  // between the visitors' room (from the road) and the prisoners' side. Escape: the door in the inner
+  // fence opens with a guard's key; the one in the outer fence has to be picked.
+  prison: (size = { w: 1800, h: 1800 }) => {
+    const { w, h } = size;
+    const T = 6, S = 100, gx = Math.round(w / 2);
+    const gh = { x: gx - 150, y: h - S - 150, w: 300, h: S + 150 }; // the gatehouse
+    const wire = (r) => ({ ...r, wire: true, low: true }); // people can't get through; bullets and eyes can
+    const fences = [
+      ...wallLine(true, 0, 0, w, T, door(0.85, 60)), // outer, north: the door you pick
+      ...wallLine(false, 0, T, h - T, T),
+      ...wallLine(false, w - T, T, h - T, T),
+      ...wallLine(true, h - T, 0, gh.x, T),
+      ...wallLine(true, h - T, gh.x + gh.w, w, T),
+      ...wallLine(true, S, S, w - S, T, door(0.6, 60)), // inner, north: the door a guard's key opens
+      ...wallLine(false, S, S + T, h - S, T),
+      ...wallLine(false, w - S - T, S + T, h - S, T),
+      ...wallLine(true, h - S - T, S, gh.x, T),
+      ...wallLine(true, h - S - T, gh.x + gh.w, w - S, T),
+    ].map(wire);
+    const gates = [h - T - 3, h - S - T - 3].map((y) => ({ x: gx + 200, y, w: 200, h: T + 6, c: '#4d5358', gate: true })); // the truck gates (shut)
+    const GT = 14;
+    const cy = Math.round(gh.y + gh.h / 2); // the counter across the gatehouse
+    const gatehouse = [
+      ...wallLine(true, gh.y, gh.x, gh.x + gh.w, GT, door(0.5, 60)), // to the camp
+      ...wallLine(true, h - GT, gh.x, gh.x + gh.w, GT, door(0.5, 60), [0, 1]), // to the road (visitors)
+      ...wallLine(false, gh.x, gh.y + GT, h - GT, GT),
+      ...wallLine(false, gh.x + gh.w - GT, gh.y + GT, h - GT, GT),
+      { x: gh.x + GT, y: cy - 8, w: gx - 16 - gh.x - GT, h: 16, c: '#6b4a2e' }, // the counter (the warden stands in the gap)
+      { x: gx + 16, y: cy - 8, w: gh.x + gh.w - GT - gx - 16, h: 16, c: '#6b4a2e' },
+    ];
+    // Watchtowers: the corners of the strip, and halfway down the long sides of a big camp.
+    const towers = [[S / 2, S / 2], [w - S / 2, S / 2], [S / 2, h - S / 2], [w - S / 2, h - S / 2], ...(h > 1300 ? [[S / 2, h / 2], [w - S / 2, h / 2]] : [])].map(([x, y]) => ({ x: Math.round(x), y: Math.round(y) }));
+    // East half: barracks (as many as fit) above the boiler house; the coal face fills the west half.
+    const ex0 = gx + 60, ex1 = w - S - 110, top = S + 110;
+    const boiler = { w: 250, h: 190 };
+    const room = gh.y - 110 - top - boiler.h; // above the boiler house, which stays clear of the guards' walk
+    const huts = Math.max(0, Math.min(3, Math.floor(room / 220)));
+    const hutW = Math.min(560, ex1 - ex0);
+    const barracks = Array.from({ length: huts }, (_, i) => ({ x: ex0, y: top + i * 220, w: hutW, h: 160 }));
+    boiler.x = ex0;
+    boiler.y = top + huts * 220;
+    const hopper = { x: boiler.x - 75, y: boiler.y + 45 }; // the coal bunker, by the boiler house's side door
+    const mine = { x: S + 50, y: S + 50, w: gx - 70 - (S + 50), h: gh.y - 200 - (S + 50) };
+    const parade = { x: gx - 160, y: gh.y - 170, w: 320, h: 140 };
+    const wood = '#6e5a44', brick = '#8b4a3a';
+    const hutWalls = barracks.flatMap((b) => [
+      ...wallLine(true, b.y, b.x, b.x + b.w, 10),
+      ...wallLine(true, b.y + b.h - 10, b.x, b.x + b.w, 10, door(0.5, 60)),
+      ...wallLine(false, b.x, b.y + 10, b.y + b.h - 10, 10),
+      ...wallLine(false, b.x + b.w - 10, b.y + 10, b.y + b.h - 10, 10),
+    ].map((r) => ({ ...r, c: wood })));
+    const boilerWalls = [
+      ...wallLine(true, boiler.y, boiler.x, boiler.x + boiler.w, 12),
+      ...wallLine(true, boiler.y + boiler.h - 12, boiler.x, boiler.x + boiler.w, 12),
+      ...wallLine(false, boiler.x, boiler.y + 12, boiler.y + boiler.h - 12, 12, door(0.7, 60)),
+      ...wallLine(false, boiler.x + boiler.w - 12, boiler.y + 12, boiler.y + boiler.h - 12, 12),
+    ].map((r) => ({ ...r, c: brick }));
+    const chimney = { x: boiler.x + boiler.w - 75, y: boiler.y + 25, w: 50, h: 50 };
+    const terraces = [0, 1, 2].map((i) => ({ x: mine.x + i * 45, y: mine.y + i * 40, w: mine.w - i * 90, h: mine.h - i * 80, c: ['#4d4842', '#3f3b37', '#33302d'][i] }));
+    const railY = mine.y + mine.h + 30;
+    return {
+      w, h,
+      walls: [...fences, ...gates, ...gatehouse, ...hutWalls, ...boilerWalls, ...towers.map((t) => ({ x: t.x - 20, y: t.y - 20, w: 40, h: 40, c: '#4a3a2a', tower: true, low: true })), // (the snipers shoot from up top)
+        { x: hopper.x - 35, y: hopper.y - 35, w: 70, h: 70, c: '#55514c', bunker: true }],
+      decor: [
+        { x: 0, y: 0, w, h, c: '#a39579', rake: true }, // the raked death strip
+        { x: S, y: S, w: w - 2 * S, h: h - 2 * S, c: '#6a6259' }, // trodden mud inside the wire
+        ...terraces,
+        { x: mine.x + 20, y: railY - 6, w: hopper.x - 40 - mine.x - 20, h: 14, c: '#3a3530', rail: true }, // a narrow-gauge line from the coal face to the bunker
+        { x: mine.x + 60, y: railY - 11, w: 44, h: 24, c: '#5b5f63', cart: true }, { x: mine.x + 120, y: railY - 11, w: 44, h: 24, c: '#5b5f63', cart: true },
+        { ...parade, c: '#8a857a', concrete: true },
+        { x: gh.x + GT, y: gh.y + GT, w: gh.w - 2 * GT, h: gh.h - 2 * GT, c: '#9a948a' }, // gatehouse floor
+        { x: gh.x + GT + 6, y: cy - 3, w: gh.w - 2 * GT - 12, h: 6, c: 'rgba(190, 220, 235, .55)' }, // the glass over the counter
+        ...barracks.flatMap((b) => [
+          { x: b.x + 10, y: b.y + 10, w: b.w - 20, h: b.h - 20, c: '#7a6a55' },
+          ...Array.from({ length: Math.floor((b.w - 40) / 60) }, (_, k) => ({ x: b.x + 22 + k * 60, y: b.y + 18, w: 40, h: 70, c: '#4f4f47' })), // bunks
+        ]),
+        { x: boiler.x + 12, y: boiler.y + 12, w: boiler.w - 24, h: boiler.h - 24, c: '#5a5652' },
+        { x: boiler.x + 40, y: boiler.y + 45, w: 110, h: 100, c: '#2c2c2e', round: true }, // the boiler
+        { x: boiler.x + 160, y: boiler.y + 120, w: 60, h: 45, c: '#1f1d1c', round: true }, // coal by the firebox
+      ],
+      roofDecor: [{ ...chimney, c: brick, chimney: true }], // (smoke only: the camp has no roof of its own)
+      roofs: [
+        ...barracks.map((b) => ({ x: b.x - 8, y: b.y - 8, w: b.w + 16, h: b.h + 16, c: '#4a4038', pattern: 'planks', ridge: true })),
+        { x: boiler.x - 6, y: boiler.y - 6, w: boiler.w + 12, h: boiler.h + 12, c: '#5d6166', pattern: 'metal', ridge: true },
+        { ...chimney, c: '#9b4a3a', round: true },
+        { x: gh.x - 6, y: gh.y - 6, w: gh.w + 12, h: gh.h + 12, c: '#5f6a60', pattern: 'metal' },
+        ...towers.map((t) => ({ x: t.x - 34, y: t.y - 34, w: 68, h: 68, c: '#5b4630', pattern: 'planks', tower: true })),
+      ],
+      npc: { x: gx, y: cy, angle: -Math.PI / 2, role: 'warden' },
+      work: { x: mine.x + 30, y: mine.y + 30, w: mine.w - 60, h: mine.h - 60 },
+      prison: {
+        spawn: { x: gx, y: parade.y + parade.h / 2 },
+        release: { x: gx, y: h + 70 }, // out on the road side of the gatehouse
+        hopper,
+        keyDoor: { x: S + 0.6 * (w - 2 * S), y: S + T / 2 },
+        outerDoor: { x: 0.85 * w, y: T / 2 },
+        inner: { x: S, y: S, w: w - 2 * S, h: h - 2 * S },
+        patrol: [[S + 56, S + 56], [w - S - 56, S + 56], [w - S - 56, gh.y - 40], [S + 56, gh.y - 40]].map(([x, y]) => ({ x, y })),
+        towers,
+      },
+      floor: '#6a6259', wall: '#7a7a7a', roof: '#6a6259', pattern: 'none', label: 'ИТК-7',
+    };
+  },
+
   // ---- police station: patrol cars start here and arrested players are held here ----
   police: () => ({
     w: 380, h: 280,
@@ -762,9 +871,18 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     roofs: (layout.roofs ?? []).map(move), // separate roofs over buildings inside an open-air site
     size: size ? { w: layout.w, h: layout.h } : null, // work sites are sized to their block
     docks: layout.docks ? { in: move(layout.docks.in), out: move(layout.docks.out) } : null,
+    // The prison: its spots (points) and the inside of the inner fence (a rect), placed like the rest.
+    ...(layout.prison ? { prison: prisonSpots(layout.prison, move) } : {}),
     // Oil field pumpjacks: where each stands and which way its beam points.
     ...(layout.pumps ? { pumps: layout.pumps.map((p) => { const at = move({ x: p.x, y: p.y, w: 0, h: 0 }); return { x: at.x, y: at.y, angle: p.angle + (rot * Math.PI) / 2 }; }) } : {}),
   };
+}
+
+function prisonSpots(spots, move) {
+  const at = ({ x, y }) => { const r = move({ x, y, w: 0, h: 0 }); return { x: r.x, y: r.y }; };
+  const out = {};
+  for (const [k, v] of Object.entries(spots)) out[k] = Array.isArray(v) ? v.map(at) : v.w !== undefined ? (({ x, y, w, h }) => ({ x, y, w, h }))(move(v)) : at(v);
+  return out;
 }
 
 /** Spots for an ATM just outside each of a building's outside doors, on either side of the doorway. */

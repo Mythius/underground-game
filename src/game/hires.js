@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { isCop } from './police.js';
 import { segmentRectHit } from '../utils/math.js';
 import { Bullet } from './entities.js';
 import { hotbarOf } from './cargo.js';
@@ -1043,6 +1044,7 @@ export class Hires {
     const h = this.gangsterFor(p, id);
     if (!h) return 'too_far';
     if (this.#isFoe(h, p) || h.holdup) return 'gangster_hostile';
+    if (isCop(p)) return 'cop_no_illegal';
     const holder = this.world.economy.cargoOf(p);
     const sold = {};
     let total = 0;
