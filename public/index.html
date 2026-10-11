@@ -219,6 +219,8 @@
     .rob { background: #8b1a1a !important; border-color: #c0392b !important; color: #fff !important; }
     #jobhud { position: fixed; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 2; padding: .4rem .8rem; border-radius: .5rem;
       background: rgba(0, 0, 0, .65); color: #fff; font-size: .85rem; font-weight: 600; border: 1px solid #f4c430; max-width: calc(100vw - 30rem); text-align: center; }
+    #game { transition: filter 1.5s ease; }
+    #game.drunk { filter: invert(1); }
     #fuel-gauge { position: fixed; left: 50%; bottom: 7.9rem; transform: translateX(-50%); z-index: 2; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000; font-size: .85rem; }
     #bankpanel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; width: min(380px, calc(100vw - 2rem));
       padding: 1.2rem; border-radius: .8rem; background: rgba(22, 22, 22, .96); border: 2px solid #3cb44b; text-align: left; box-shadow: 0 10px 40px rgba(0, 0, 0, .6); }
@@ -413,7 +415,7 @@
     <div id="chat-log" aria-live="polite"></div>
     <input id="chat-input" maxlength="120" autocomplete="off" placeholder="Press Enter to chat">
   </div>
-  <p id="hint" hidden>WASD move · Shift sprint (in a car: drift) · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B warehouse · G bribe · C car lights · J jobs · Space boost (vodka in the car) · M map</p>
+  <p id="hint" hidden>WASD move · Shift sprint (in a car: drift) · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B warehouse · G bribe · C car lights · H siren (Militsiya car) · V radio / N next song · J jobs · Space boost (vodka in the car) · M map</p>
   <div id="top-right">
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
@@ -562,6 +564,7 @@
     let vehicleReach = 40;
     let homesCfg = { lockedTypes: [], garageReach: 140 };
     let carBoost = { perVodka: 25, burnPerSec: 12, accel: 1.9, topSpeed: 1.35 }; // vodka in the boost tank (Space)
+    let knockDecay = 6; // how fast a player thrown by a car slows (config.vehicles.knockDecay)
     let fishCfg = { rodPrice: 150, pulls: 3, lineReach: 40, cast: [70, 240] };
     let myFish = null; // my line: { v: [x, y] waiting | [x, y, t, cycle, from, to, pulls] fighting, at: when it came }
     let otherLines = []; // [player id, float x, float y, fighting] for other people fishing nearby
@@ -597,7 +600,7 @@
       terrain = { ...terrain, ...msg.terrain };
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
       doorReach = msg.doorReach ?? doorReach;
-      if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost } = msg.vehicles);
+      if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost, knockDecay = knockDecay } = msg.vehicles);
       if (msg.homes) homesCfg = msg.homes;
       if (msg.fishing) fishCfg = msg.fishing;
       if (msg.furnish) Object.assign(furn, msg.furnish);
@@ -729,10 +732,14 @@
           if (msg.kind === 'fish_bite') { sfx('splash'); toast('🎣 Fish on! It fights the line — click to pull each time it tires (goes still in the gold rings)'); }
           if (msg.kind === 'fish_pull') sfx('splash');
           if (msg.kind === 'fish_caught') {
-            sfx('pickup');
-            toast(msg.what === 'fish' ? '🐟 You landed a fish!' : msg.what === 'food' ? `🎣 Not a fish… ${shop.menu[msg.item]?.name ?? 'something to eat'}, still wrapped` : `🎣 Not a fish… a ${weapons[msg.item]?.name ?? 'gun'} someone threw in the water!`);
+            sfx('catch');
+            toast(msg.what === 'player' ? `🪝 You reeled in ${msg.name}'s ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!` : msg.what === 'fish' ? '🐟 You landed a fish!' : msg.what === 'food' ? `🎣 Not a fish… ${shop.menu[msg.item]?.name ?? 'something to eat'}, still wrapped` : `🎣 Not a fish… a ${weapons[msg.item]?.name ?? 'gun'} someone threw in the water!`);
           }
-          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away' }[msg.why] ?? 'It got away');
+          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them' }[msg.why] ?? 'It got away');
+          if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
+          if (msg.kind === 'hooked_by') { sfx('hooked'); toast(`🪝 ${msg.name} has hooked you with a fishing line! Walk away to snap it before they reel something in`); }
+          if (msg.kind === 'hook_free') toast(msg.escaped ? '🪝 You pulled free of the line' : '🪝 The line came off you');
+          if (msg.kind === 'hooked_robbed') { sfx('error'); toast(`🪝 ${msg.name} reeled in your ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!`); }
           if (msg.kind === 'fish_reeled' && msg.why === 'moved') toast('The line came in');
           if (msg.kind === 'tool_returned') toast(`${TOOL_ICONS[msg.tool] ?? ''} You left the site — the ${TOOL_NAMES[msg.tool]?.toLowerCase() ?? 'tool'} went back to the foreman`);
           if (msg.kind === 'gathered') { sfx('pickup', null, 0.6); toast(`+ ${Object.entries(msg.items).map(([g, q]) => `${q} ${gi(g)}`).join(' ')}`); }
@@ -743,7 +750,7 @@
           if (msg.kind === 'roadblock_run') { checkDueUntil = 0; toast('🚨 You drove past the checkpoint without stopping — the Militsiya want you'); }
           if (msg.kind === 'roadblock_clean' || msg.kind === 'roadblock_seized' || msg.kind === 'roadblock_waved' || msg.kind === 'roadblock_stolen') checkDueUntil = 0;
           if (msg.kind === 'roadblock_stolen') { sfx('busted'); toast("🚨 Checkpoint: they know that car isn't yours — you're pulled out and it's taken back"); }
-          if (msg.kind === 'roadblock_bribed') { sfx('coin'); toast(`💵 Bribe paid — checkpoints wave you through for a couple of minutes`); }
+          if (msg.kind === 'roadblock_bribed') { sfx('bribe'); toast(`💵 Bribe paid — checkpoints wave you through for a couple of minutes`); }
           if (msg.kind === 'roadblock_seized') { sfx('busted'); toast(`🚨 Checkpoint search: contraband seized (${Object.entries(msg.seized).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')})`); }
           if (msg.kind === 'warehouse_raid') {
             const what = Object.entries(msg.seized ?? {}).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ');
@@ -754,7 +761,7 @@
           if (msg.kind === 'picked_car') toast('🔓 Car unlocked — E to get in');
           if (msg.kind === 'rob_stopped') toast('Robbery abandoned — you have to keep holding F');
           if (msg.kind === 'robbed') { sfx('coin'); toast(`💰 Got away with ${money(msg.amount)}`); }
-          if (msg.kind === 'stole') { sfx('coin'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty') + (msg.unnoticed ? ' — they never noticed' : '')); }
+          if (msg.kind === 'stole') { sfx('pickpocket'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty') + (msg.unnoticed ? ' — they never noticed' : '')); }
           if (msg.kind === 'pickpocketed') toast(`👛 Someone picked your pocket: −${money(msg.amount)}`);
           if (msg.kind === 'crime') sfx('alarm');
           if (msg.kind === 'crime') toast(`🚨 Someone saw that — ${CRIME_NAMES[msg.crime] ?? 'a crime'} reported. The Militsiya will come looking.`);
@@ -816,9 +823,9 @@
           if (!shopEl.hidden) renderShop();
           break;
         case 'done':
-          sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : 'pickup');
+          sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
-          if (msg.what === 'pour') toast('⛽ Fuel poured into the tank');
+          if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
           if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
           if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
           if (msg.what === 'team_invite') toast('👥 Invite sent');
@@ -1449,6 +1456,7 @@
       too_soon: 'Wait a moment before trying again',
       tank_full: 'Your tank is already full',
       boost_full: 'The boost tank is already full of vodka',
+      no_siren: 'Only Militsiya cars have a siren',
       no_fuel: 'Hold some fuel first',
       no_car_near: 'Walk up to a car first',
       car_locked: "🔒 It's locked — hold F to pick the lock",
@@ -2251,7 +2259,7 @@
       if (x < 0 || y < 0 || x >= l.cols || y >= l.rows) return;
       if (e.button === 2) return whSend('remove', { x, y });
       const there = pieceAt(l, x, y);
-      if (wh.tool === 'select' && there?.w === 1 && wh.live.get(l.id)?.items.some(([ix, iy]) => ix === x && iy === y)) whSend('grab', { x, y }); // something riding it: take it off
+      if (wh.tool === 'select' && there?.w === 1 && wh.live.get(l.id)?.items.some(([ix, iy]) => ix === x && iy === y)) { whSend('grab', { x, y }); sfx('grab'); } // something riding it: take it off
       if (wh.tool === 'select' || (there && isStore(there))) { // pallets and containers: click to open, whatever the tool
         wh.selected = there?.id ?? null;
         return renderWarehouse();
@@ -2612,6 +2620,7 @@
     let riding = 0; // the car I'm a passenger in (0: not)
     let healLeft = 0; // health still to come from food I've eaten
     let buzzLeft = 0; // seconds of vodka buzz left (I take less damage)
+    let drunkUntil = 0; // vodka also turns the colours inside out until then
     const bodyEl = document.getElementById('bodypanel');
     const BODY_REACH = 55;
     let bodyOpen = null; // { id, data }
@@ -2667,7 +2676,7 @@
     function openFurnish(f) {
       furnOpen = f;
       cabinetView = null;
-      if (f[1] === 'cabinet') send({ t: 'furnish', action: 'open', id: f[0] });
+      if (f[1] === 'cabinet') { send({ t: 'furnish', action: 'open', id: f[0] }); sfx('cabinet'); }
       renderFurnish();
     }
     function closeFurnish() {
@@ -3693,6 +3702,18 @@
       cast: (o) => { noiseBurst(o, { dur: 0.25, freq: 1800, endFreq: 500, q: 1, vol: 0.18 }); tone(o, { at: 0.32, dur: 0.08, freq: 700, endFreq: 300, vol: 0.15 }); },
       splash: (o) => { noiseBurst(o, { dur: 0.3, filter: 'lowpass', freq: 1800, endFreq: 250, vol: 0.35 }); },
       reel: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.035, dur: 0.02, type: 'square', freq: 1500, vol: 0.05 }); },
+      catch: (o) => { noiseBurst(o, { dur: 0.25, filter: 'lowpass', freq: 1500, endFreq: 300, vol: 0.3 }); tone(o, { at: 0.15, dur: 0.12, freq: 784, vol: 0.2 }); tone(o, { at: 0.27, dur: 0.22, freq: 1046, vol: 0.2 }); },
+      hooked: (o) => { tone(o, { dur: 0.08, type: 'square', freq: 1200, endFreq: 600, vol: 0.12 }); tone(o, { at: 0.1, dur: 0.15, type: 'sawtooth', freq: 300, endFreq: 180, vol: 0.12 }); },
+      grab: (o) => { tone(o, { dur: 0.06, type: 'square', freq: 500, vol: 0.12 }); tone(o, { at: 0.05, dur: 0.1, freq: 880, vol: 0.18 }); },
+      pour: (o) => { noiseBurst(o, { dur: 0.7, freq: 900, endFreq: 500, q: 2, vol: 0.25 }); for (let i = 0; i < 5; i++) tone(o, { at: 0.08 + i * 0.12, dur: 0.05, freq: 300 + i * 40, vol: 0.06 }); },
+      eat: (o) => { for (let i = 0; i < 3; i++) noiseBurst(o, { at: i * 0.16, dur: 0.07, freq: 2200, q: 1.5, vol: 0.25 }); },
+      drink: (o) => { for (let i = 0; i < 3; i++) tone(o, { at: i * 0.2, dur: 0.12, type: 'sine', freq: 220 + i * 30, endFreq: 160, vol: 0.18 }); },
+      furnish: (o) => { tone(o, { dur: 0.14, freq: 110, endFreq: 70, vol: 0.5 }); noiseBurst(o, { dur: 0.15, filter: 'lowpass', freq: 600, vol: 0.4 }); },
+      cabinet: (o) => { noiseBurst(o, { dur: 0.3, freq: 700, endFreq: 1100, q: 3, vol: 0.15 }); tone(o, { at: 0.28, dur: 0.06, freq: 220, vol: 0.2 }); },
+      pickpocket: (o) => { noiseBurst(o, { dur: 0.12, freq: 3500, q: 1, vol: 0.12 }); },
+      bribe: (o) => { noiseBurst(o, { dur: 0.2, freq: 2500, q: 0.8, vol: 0.15 }); tone(o, { at: 0.15, dur: 0.1, type: 'square', freq: 1320, vol: 0.08 }); },
+      hire: (o) => { tone(o, { dur: 0.15, freq: 196, vol: 0.2 }); tone(o, { at: 0.14, dur: 0.25, freq: 147, vol: 0.2 }); },
+      radio1: (o) => { const src = audio.ctx.createBufferSource(); src.buffer = (builtInSong ??= makeBuiltInSong(audio.ctx)); src.connect(o); src.start(); src.stop(audio.ctx.currentTime + 4); }, // the built-in tune
     };
 
     // ---- custom sounds from the sound editor (GET /sounds): uploaded files replace the built-in ones ----
@@ -3728,6 +3749,7 @@
       // Loops are rebuilt so they pick up new files.
       for (const l of Object.values(audio.loops)) if (l) { try { l.src?.stop(); l.o?.stop(); } catch {} l.g.disconnect(); }
       audio.loops = {};
+      for (const [id, r] of radios) { try { r.src.stop(); } catch {} r.g.disconnect(); radios.delete(id); } // (radios too: a new song may be in)
     }
 
     // ---- sound editor: every sound slot, with preview, upload, volume and reset (admin password) ----
@@ -3738,6 +3760,7 @@
       skid: (o) => noiseBurst(o, { dur: 1.2, freq: 1400, q: 4, vol: 0.6 }),
       rain: (o) => noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 1800, q: 0.5, vol: 0.5 }),
       siren: (o) => { for (let i = 0; i < 4; i++) tone(o, { at: i * 0.5, dur: 0.5, type: 'triangle', freq: i % 2 ? 900 : 650, endFreq: i % 2 ? 650 : 900, vol: 0.25 }); },
+      boost: (o) => { noiseBurst(o, { dur: 1.5, filter: 'lowpass', freq: 700, q: 1, vol: 0.9 }); noiseBurst(o, { dur: 1.5, freq: 2600, q: 0.7, vol: 0.25 }); },
     };
     let previewing = null;
 
@@ -3966,6 +3989,56 @@
       } else SOUNDS[name]?.(out);
     }
 
+    // ---- gunfire you can see: a muzzle flash and a puff of smoke at the gun; a kick of screen shake when it's mine ----
+    const flashes = []; // { x, y, a, born }
+    const smoke = []; // { x, y, vx, vy, born, life, r }
+    const seenShots = new Set();
+    const shake = { mag: 0 }; // screen shake, decaying
+    function addShake(mag) { shake.mag = Math.max(shake.mag, mag); }
+    /** New bullets this snapshot: find who fired each (the nearest gun-holder) and flash their muzzle. */
+    function muzzleFlashes(bullets, shooters) {
+      for (const [id, x, y] of bullets) {
+        if (seenShots.has(id)) continue;
+        seenShots.add(id);
+        let best = null, bestD = 140;
+        for (const [key, q] of shooters) { const d = Math.hypot(q.x - x, q.y - y); if (d < bestD) [best, bestD] = [{ key, ...q }, d]; }
+        if (!best) continue;
+        const a = Math.atan2(y - best.y, x - best.x);
+        const mx = best.x + Math.cos(a) * (best.r + 18), my = best.y + Math.sin(a) * (best.r + 18);
+        if (flashes.length < 60) flashes.push({ x: mx, y: my, a, born: performance.now() });
+        for (let k = 0; k < 3 && smoke.length < 200; k++) {
+          const sa = a + (Math.random() - 0.5) * 0.8, sp = 20 + Math.random() * 40;
+          smoke.push({ x: mx, y: my, vx: Math.cos(sa) * sp, vy: Math.sin(sa) * sp, born: performance.now(), life: 700 + Math.random() * 500, r: 4 + Math.random() * 3 });
+        }
+        if (best.key === `p${myId}`) addShake(3.5); // my own shot: a little kick
+      }
+      if (seenShots.size > 3000) seenShots.clear();
+    }
+    function drawGunfire(now, dt) {
+      for (let i = smoke.length - 1; i >= 0; i--) { // grey puffs drifting off and spreading
+        const s = smoke[i], age = (now - s.born) / s.life;
+        if (age >= 1) { smoke.splice(i, 1); continue; }
+        s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 1 - 1.5 * dt; s.vy *= 1 - 1.5 * dt;
+        ctx.fillStyle = `rgba(150, 150, 150, ${0.35 * (1 - age)})`;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r * (1 + age * 2.2), 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = flashes.length - 1; i >= 0; i--) { // a short burst of fire out of the barrel
+        const f = flashes[i], age = (now - f.born) / 70;
+        if (age >= 1) { flashes.splice(i, 1); continue; }
+        ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.a);
+        const len = 22 * (1 - age * 0.5);
+        const g = ctx.createRadialGradient(4, 0, 0, 4, 0, len);
+        g.addColorStop(0, `rgba(255, 250, 210, ${1 - age})`); g.addColorStop(0.4, `rgba(255, 180, 60, ${0.85 * (1 - age)})`); g.addColorStop(1, 'rgba(255, 90, 20, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.moveTo(-2, 0); ctx.lineTo(len * 0.35, -7); ctx.lineTo(len, 0); ctx.lineTo(len * 0.35, 7); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(2, 0, 7 * (1 - age), 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
     // Shots (new bullets, one sound per gun per burst) and hits (health going down), from each snapshot.
     const heardBullets = new Set();
     const lastHp = new Map();
@@ -4008,6 +4081,76 @@
     }
     const loopGain = (l, name, value, now, smooth = 0.3) => l?.g.gain.setTargetAtTime(value * slotVolume(name), now, smooth);
 
+    // ---- car radios: every car with its radio on plays its song; you hear the ones near you, fading with distance ----
+    const RADIO_RANGE = 900;
+    const radios = new Map(); // vehicle id -> { src, g, pan, key }
+    let builtInSong = null;
+    /** The songs uploaded in the sound editor (Car radio slots), in slot order; with none, a built-in tune. */
+    function radioSongs() {
+      const up = [];
+      for (let i = 1; i <= 10; i++) if (custom.buffers.has(`radio${i}`)) up.push({ slot: `radio${i}`, buffer: custom.buffers.get(`radio${i}`) });
+      if (up.length) return up;
+      builtInSong ??= makeBuiltInSong(audio.ctx);
+      return [{ slot: 'radio1', buffer: builtInSong }];
+    }
+    /** A little looping tune (square lead over a bass line), so a radio plays something before any songs are uploaded. */
+    function makeBuiltInSong(a) {
+      const rate = a.sampleRate, beat = 0.24;
+      const lead = [64, 67, 71, 72, 71, 67, 64, 62, 60, 64, 67, 69, 67, 64, 62, 59, 60, 64, 67, 72, 74, 72, 71, 67, 69, 67, 64, 62, 64, 62, 60, 0];
+      const bass = [40, 40, 47, 47, 45, 45, 43, 43];
+      const buf = a.createBuffer(1, Math.ceil(lead.length * beat * rate), rate);
+      const d = buf.getChannelData(0);
+      const hz = (n) => 440 * 2 ** ((n - 69) / 12);
+      for (let i = 0; i < d.length; i++) {
+        const t = i / rate, k = Math.floor(t / beat), in_ = t - k * beat;
+        const env = Math.max(0, 1 - in_ / beat) ** 0.6;
+        const n = lead[k % lead.length], b = bass[Math.floor(t / (beat * 4)) % bass.length];
+        const sq = n ? (Math.sin(2 * Math.PI * hz(n) * t) > 0 ? 1 : -1) * 0.12 * env : 0;
+        const tri = (2 / Math.PI) * Math.asin(Math.sin(2 * Math.PI * hz(b) * t)) * 0.18;
+        d[i] = sq + tri;
+      }
+      return buf;
+    }
+    function updateRadios(now) {
+      const a = audio.ctx;
+      const ear = me && playing ? me : null;
+      const inCar = me?.car?.id ?? riding ?? null;
+      const want = new Set();
+      if (ear && !settings.mute) {
+        for (const [id, v] of snapshots.at(-1)?.vehicles ?? []) {
+          if (!v.radio) continue;
+          const d = id === inCar ? 0 : Math.hypot(v.x - ear.x, v.y - ear.y);
+          if (d > RADIO_RANGE) continue;
+          const songs = radioSongs();
+          const song = songs[((v.radio.song % songs.length) + songs.length) % songs.length];
+          const key = `${song.slot}:${v.radio.song}`;
+          let r = radios.get(id);
+          if (!r || r.key !== key) { // (re)start it, at the point in the song everyone else is at
+            if (r) { try { r.src.stop(); } catch {} r.g.disconnect(); }
+            const src = a.createBufferSource(); src.buffer = song.buffer; src.loop = true;
+            const g = a.createGain(); g.gain.value = 0;
+            const pan = a.createStereoPanner ? a.createStereoPanner() : null;
+            src.connect(g);
+            if (pan) { g.connect(pan); pan.connect(audio.master); } else g.connect(audio.master);
+            const elapsed = v.radio.playing + (performance.now() - v.radio.at) / 1000;
+            src.start(0, elapsed % song.buffer.duration);
+            r = { src, g, pan, key };
+            radios.set(id, r);
+          }
+          want.add(id);
+          const fade = id === inCar ? 1 : Math.max(0, 1 - d / RADIO_RANGE) ** 1.6; // fades out with distance
+          r.g.gain.setTargetAtTime(0.55 * slotVolume(song.slot) * fade, now, 0.15);
+          if (r.pan) r.pan.pan.setTargetAtTime(id === inCar ? 0 : Math.max(-1, Math.min(1, (v.x - ear.x) / 600)), now, 0.15);
+        }
+      }
+      for (const [id, r] of radios) {
+        if (want.has(id)) continue;
+        try { r.src.stop(); } catch {}
+        r.g.disconnect();
+        radios.delete(id);
+      }
+    }
+
     function updateLoops(dt) {
       if (!audio.ctx || audio.ctx.state !== 'running') return;
       const a = audio.ctx, now = a.currentTime;
@@ -4030,6 +4173,13 @@
       const wind = loop('wind', null);
       const night = loop('night', null);
       const music = loop('music', null);
+      const boostLoop = loop('boost', () => { // a roar: low rumble plus a hiss
+        const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+        const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 1;
+        const g = a.createGain(); g.gain.value = 0;
+        src.connect(f); f.connect(g); g.connect(audio.master); src.start();
+        return { src, g };
+      });
       const siren = loop('siren', () => {
         const o = a.createOscillator(); o.type = 'triangle';
         const g = a.createGain(); g.gain.value = 0;
@@ -4049,6 +4199,11 @@
       loopGain(wind, 'wind', winter ? 0.12 + 0.3 * sky.rain : 0, now, 1);
       loopGain(night, 'night', playing ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
       loopGain(music, 'music', (settings.music ?? 40) / 100 * 0.5, now, 0.5);
+      updateRadios(now);
+      // The vodka boost: my own car's, or the nearest other car burning one.
+      let boostNear = car?.boosting ? 0 : Infinity;
+      if (me && playing) for (const v of snapshots.at(-1)?.vehicles.values() ?? []) if (v.boosting) boostNear = Math.min(boostNear, Math.hypot(v.x - me.x, v.y - me.y));
+      loopGain(boostLoop, 'boost', boostNear < 1200 ? (boostLoop?.file ? 0.6 : 0.35) * (1 - boostNear / 1200) : 0, now, 0.08);
       // Sirens: louder the closer the nearest Militsiya car with its siren on.
       let nearest = Infinity;
       if (me && playing) for (const v of snapshots.at(-1)?.vehicles.values() ?? []) if (v.siren) nearest = Math.min(nearest, Math.hypot(v.x - me.x, v.y - me.y));
@@ -5052,8 +5207,10 @@
       if (playing && e.code === 'KeyX' && !me?.car && !e.repeat) { if (coins > 0) cashHoldStart = performance.now(); else toast('No cash to drop'); return; }
       if (playing && e.code === 'KeyT' && !e.repeat) { toggleTeam(); return; }
       if (playing && e.code === 'KeyQ' && !me?.car) { send({ t: 'drop' }); if (inv[selectedSlot]) sfx('drop'); return; }
-      if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; }
+      if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; } // (the sound plays when it's paid)
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
+      if (playing && e.code === 'KeyH' && me?.car?.type === 'police' && !e.repeat && document.activeElement !== chatInput) { send({ t: 'siren' }); return; } // a stolen Militsiya car's siren
+      if (playing && (e.code === 'KeyV' || e.code === 'KeyN') && (me?.car || riding) && !e.repeat && document.activeElement !== chatInput) { send({ t: 'radio', action: e.code === 'KeyV' ? 'toggle' : 'next' }); return; } // the car radio
       if (playing && e.code === 'KeyJ') { jobsEl.hidden ? openJobs() : closeJobs(); return; }
       if (playing && e.code === 'KeyF' && !me?.car && !e.repeat && carrying) { send({ t: 'body', action: 'drop' }); return; } // F: get rid of the body
       if (playing && e.code === 'KeyF' && !me?.car && !e.repeat && nearestBody()) { send({ t: 'body', action: 'carry', id: nearestBody().id }); closeBody(); return; } // F: pick it up
@@ -5071,7 +5228,7 @@
         else if (!bankEl.hidden) closeBank();
         else if (econ.open) closePlace();
         else if (fuelCar()) send({ t: 'refuel', can: true }); // fuel in hand beside a car: E pours it in
-        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding && !eTarget()) send({ t: 'eat' }); // food in hand (on foot): E eats it
+        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding && !eTarget()) { send({ t: 'eat' }); sfx(inv[selectedSlot]?.[1] === 'vodka' ? 'drink' : 'eat'); } // food in hand (on foot): E eats it
         else {
           const t = eTarget(); // only the closest thing, the one with the prompt
           if (t?.kind === 'shop') openShop();
@@ -5080,7 +5237,7 @@
           else if (t?.kind === 'body') openBody(t.target);
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
-          else if (!t && placeableHere()) send({ t: 'furnish', action: 'place', angle: aimAngle() }); // a cabinet, bed or sofa in hand: put it down
+          else if (!t && placeableHere()) { send({ t: 'furnish', action: 'place', angle: aimAngle() }); sfx('furnish'); } // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
         return;
@@ -5255,8 +5412,16 @@
       } else [p.vx, p.vy] = [wantX, wantY];
       const r = radiusOf(p.mass);
       const fromX = p.x, fromY = p.y;
-      p.x = Math.min(Math.max(p.x + p.vx * dt, r), world.width - r);
-      p.y = Math.min(Math.max(p.y + p.vy * dt, r), world.height - r);
+      // Knocked flying by a car (keep in sync with knockStep on the server).
+      let kx = 0, ky = 0;
+      if (p.kx || p.ky) {
+        [kx, ky] = [p.kx, p.ky];
+        const k = Math.exp(-(knockDecay ?? 6) * dt);
+        p.kx *= k; p.ky *= k;
+        if (Math.hypot(p.kx, p.ky) < 15) p.kx = p.ky = 0;
+      }
+      p.x = Math.min(Math.max(p.x + (p.vx + kx) * dt, r), world.width - r);
+      p.y = Math.min(Math.max(p.y + (p.vy + ky) * dt, r), world.height - r);
       collideWalls(p, r);
       if (ice && dt > 0) [p.vx, p.vy] = [(p.x - fromX) / dt, (p.y - fromY) / dt];
     }
@@ -5400,7 +5565,7 @@
       const bullets = new Map();
       for (const [id, x, y] of msg.bullets ?? []) bullets.set(id, { x, y });
       const vehicles = new Map();
-      for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting });
+      for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting, radio] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting, radio: radio ? { song: radio[0], playing: radio[1], at: performance.now() } : null });
       soundsFromSnapshot(players, msg.bullets ?? []);
       const npcs = new Map();
       for (const [id, x, y, angle, state] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1 || state === 3, robbed: state === 3, fleeing: state === 2 });
@@ -5409,6 +5574,9 @@
       otherLines = msg.lines ?? [];
       const crew = new Map(); // hired muscle: goons, guards, hitmen
       for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
+      const shooters = [...[...players].map(([id, q]) => [`p${id}`, q]), ...[...cops].map(([id, q]) => [`c${id}`, { ...q, r: 20 }]), ...[...crew].map(([id, q]) => [`h${id}`, { ...q, r: 18 }])];
+      if (me) shooters.push([`p${myId}`, { x: me.x, y: me.y, r: radiusOf(me.mass) }]); // (where I am now, not where the server last had me)
+      muzzleFlashes(msg.bullets ?? [], shooters);
       const corpses = new Map();
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, bodies: corpses });
@@ -5424,7 +5592,8 @@
 
       const [stamina, staminaDelay, exhausted] = you.stamina;
       const [vx, vy] = you.vel ?? [0, 0];
-      const target = { x: you.x, y: you.y, vx, vy, mass: you.mass, stamina, staminaDelay, exhausted: exhausted === 1 };
+      const target = { x: you.x, y: you.y, vx, vy, mass: you.mass, stamina, staminaDelay, exhausted: exhausted === 1, kx: you.knock?.[0] ?? 0, ky: you.knock?.[1] ?? 0 };
+      if (you.knock && !(me?.kx || me?.ky)) addShake(9); // hit by a car: a jolt
       // Driving: replay the car instead (walking input is zero then, but stamina still recovers).
       const car = you.car && vehicleTypes[you.car[6]]
         ? { x: you.car[0], y: you.car[1], angle: you.car[2], vx: you.car[3], vy: you.car[4], id: you.car[5], type: you.car[6], fuel: you.car[7] ?? 100, boost: you.car[8] ?? 0 }
@@ -5453,6 +5622,7 @@
         me.cy = target.y - me.y;
         if (car) {
           me.car.fuel = car.fuel;
+          me.car.boost = car.boost; // (the server's figure, then burnt locally as I boost)
           me.car.vx = car.vx;
           me.car.vy = car.vy;
           me.car.ca = Math.atan2(Math.sin(car.angle - me.car.angle), Math.cos(car.angle - me.car.angle));
@@ -5461,6 +5631,8 @@
       me.mass = you.mass;
       me.vx = target.vx;
       me.vy = target.vy;
+      me.kx = target.kx;
+      me.ky = target.ky;
       me.stamina = target.stamina;
       me.staminaDelay = target.staminaDelay;
       me.exhausted = target.exhausted;
@@ -5478,6 +5650,7 @@
       hiddenSelf = Boolean(you.hidden);
       riding = ride;
       healLeft = you.heal ?? 0;
+      if ((you.buzz ?? 0) > buzzLeft + 2) drunkUntil = performance.now() + 120000; // just drank vodka: the world goes strange for 2 minutes
       buzzLeft = you.buzz ?? 0;
       if (JSON.stringify(you.cabinet ?? null) !== JSON.stringify(cabinetView)) { cabinetView = you.cabinet ?? null; if (furnOpen) renderFurnish(); }
       myFish = you.fish ? { v: you.fish, at: performance.now() } : null; // (the fight's clock runs on from `at`)
@@ -5518,7 +5691,12 @@
       const bullets = new Map();
       for (const [id, bb] of b.bullets) {
         const ba = a.bullets.get(id);
-        if (ba) bullets.set(id, { x: lerp(ba.x, bb.x, t), y: lerp(ba.y, bb.y, t) });
+        if (ba) bullets.set(id, { x: lerp(ba.x, bb.x, t), y: lerp(ba.y, bb.y, t), a: Math.atan2(bb.y - ba.y, bb.x - ba.x) });
+        else { // only just fired: point it away from whoever's nearest (the shooter)
+          let best = null, bestD = 160;
+          for (const q of b.players.values()) { const d = Math.hypot(q.x - bb.x, q.y - bb.y); if (d < bestD) [best, bestD] = [q, d]; }
+          bullets.set(id, { ...bb, a: best ? Math.atan2(bb.y - best.y, bb.x - best.x) : 0 });
+        }
       }
       const vehicles = new Map();
       for (const [id, vb] of b.vehicles) {
@@ -7231,7 +7409,12 @@
       for (const [id, fx, fy, fighting] of otherLines) { // other people's lines
         const p = shown.get(id);
         if (!p) continue;
-        if (fighting) {
+        if (fighting === 2) { // hooked onto a player (maybe me): a tight line into them, and the hook
+          const v = [...shown.entries()].find(([, q]) => Math.hypot(q.x - fx, q.y - fy) < 60)?.[1] ?? { x: fx, y: fy };
+          fishLine(rodTip(p), { x: v.x, y: v.y }, 0, 'rgba(255, 120, 100, .95)', 2);
+          ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('🪝', v.x + 14, v.y - 10);
+        } else if (fighting) {
           const jx = fx + Math.sin(t * 17 + id) * 7, jy = fy + Math.cos(t * 13 + id) * 6;
           fishLine(rodTip(p), { x: jx, y: jy }, 0, 'rgba(255, 255, 255, .85)', 1.5);
           fishSplash(jx, jy, t);
@@ -7254,8 +7437,33 @@
         fishFloat(fx, fy + bob);
         return;
       }
-      const [, , , cycle, from, to, pulls] = myFish.v;
+      const [, , , cycle, from, to, pulls, hookedId] = myFish.v;
       const ft = fightTime();
+      const victim = hookedId ? shown.get(hookedId) : null;
+      if (hookedId) { // hooked onto another player: the fight's on them (no fish)
+        const [vx, vy] = victim ? [victim.x, victim.y] : [fx, fy];
+        if (fishTired(ft, cycle, from, to)) {
+          const pulse = 0.5 + 0.5 * Math.sin(t * 14);
+          const g = ctx.createRadialGradient(vx, vy, 10, vx, vy, 52);
+          g.addColorStop(0, `rgba(255, 210, 60, ${0.3 + 0.25 * pulse})`); g.addColorStop(1, 'rgba(255, 210, 60, 0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(vx, vy, 52, 0, Math.PI * 2); ctx.fill();
+          fishLine(tip, { x: vx, y: vy }, 10, 'rgba(255, 230, 140, .95)', 1.6);
+          ctx.font = `900 ${18 + 4 * pulse}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0, 0, 0, .75)'; ctx.fillStyle = '#ffd23c';
+          ctx.strokeText('PULL!', vx, vy - 48); ctx.fillText('PULL!', vx, vy - 48);
+        } else {
+          const shake = Math.sin(t * 60) * 1.5;
+          fishLine(tip, { x: vx + shake, y: vy - shake }, 0, 'rgba(255, 120, 100, .95)', 2);
+        }
+        ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('🪝', vx + 14, vy - 10); // the hook in them
+        for (let i = 0; i < fishCfg.pulls; i++) {
+          ctx.beginPath(); ctx.arc(vx + (i - (fishCfg.pulls - 1) / 2) * 16, vy + 40, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = i < pulls ? '#ffd23c' : 'rgba(0, 0, 0, .35)'; ctx.fill();
+          ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.stroke();
+        }
+        return;
+      }
       const away = Math.atan2(fy - p.y, fx - p.x); // it pulls away from you
       if (fishTired(ft, cycle, from, to)) {
         // Worn out: it goes still, turned toward you, gold rings spreading round it. Pull now!
@@ -7383,6 +7591,12 @@
         } else if (me.car) {
           const carGas = me.car.fuel > 0 ? gas : emptyTankGas(me.car, gas);
           stepVehicle(me.car, vehicleTypes[me.car.type], carGas, steer, drift, dt, undefined, boostStep(me.car, boost, carGas, dt));
+          // Crashing into something (a sudden loss of speed, beyond what the brakes do): shake, harder the faster.
+          const carSpeed = Math.hypot(me.car.vx, me.car.vy);
+          if (me.lastCarId !== me.car.id) [me.lastCarId, me.lastCarSpeed] = [me.car.id, carSpeed]; // (just got in)
+          const lost = me.lastCarSpeed - carSpeed - vehicleTypes[me.car.type].brake * dt * 1.2;
+          if (lost > 60) addShake(Math.min(16, 3 + lost / 22));
+          me.lastCarSpeed = carSpeed;
           me.car.x += me.cx * k; me.car.y += me.cy * k; me.car.angle += me.car.ca * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k; me.car.ca -= me.car.ca * k;
           me.x = me.car.x;
@@ -7419,13 +7633,23 @@
         fuelEl.hidden = !me?.car;
         if (me?.car) {
           const boost = Math.round(me.car.boost ?? 0);
-          fuelEl.textContent = `⛽ Fuel ${Math.round(me.car.fuel ?? 0)}%${(me.car.fuel ?? 0) <= 0 ? ' — empty! push to a gas station' : (me.car.fuel ?? 0) < 15 ? ' — low' : ''}   ·   🍾 Boost ${boost}%${me.car.boosting ? ' 🔥' : boost > 0 ? ' (Space)' : ' — pour vodka in'}`;
+          const radio = snapshots.at(-1)?.vehicles.get(me.car.id)?.radio;
+          const songs = radio ? radioSongs() : [];
+          const radioText = radio ? `📻 Song ${(((radio.song % songs.length) + songs.length) % songs.length) + 1}/${songs.length} (N next · V off)` : '📻 V radio';
+          const sirenText = me.car.type === 'police' ? (snapshots.at(-1)?.vehicles.get(me.car.id)?.siren ? '   ·   🚨 Siren ON — they know where you are (H off)' : '   ·   🚨 H siren') : '';
+          fuelEl.textContent = `⛽ Fuel ${Math.round(me.car.fuel ?? 0)}%${(me.car.fuel ?? 0) <= 0 ? ' — empty! push to a gas station' : (me.car.fuel ?? 0) < 15 ? ' — low' : ''}   ·   🍾 Boost ${boost}%${me.car.boosting ? ' 🔥' : boost > 0 ? ' (Space)' : ' — pour vodka in'}   ·   ${radioText}${sirenText}`;
         }
       }
       drawMinimap();
 
+      // Drunk on vodka: the game's colours inverted (eased in and out by a CSS transition).
+      const drunk = playing && performance.now() < drunkUntil;
+      if (drunk !== canvas.classList.contains('drunk')) canvas.classList.toggle('drunk', drunk);
+      // Screen shake (gunfire, crashes): a jitter that dies away fast.
+      shake.mag *= Math.exp(-dt * 9);
+      const sx = shake.mag > 0.2 && !editing ? (Math.random() * 2 - 1) * shake.mag : 0, sy = shake.mag > 0.2 && !editing ? (Math.random() * 2 - 1) * shake.mag : 0;
       ctx.save();
-      ctx.translate(w / 2, h / 2);
+      ctx.translate(w / 2 + sx, h / 2 + sy);
       ctx.scale(z, z);
       ctx.translate(-camera.x, -camera.y);
 
@@ -7499,9 +7723,13 @@
         ctx.fillText(weapons[type]?.name ?? TOOL_NAMES[type] ?? type, x, y + 38);
       }
 
-      ctx.fillStyle = '#ffd84a';
-      for (const { x, y } of view.bullets.values()) {
-        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+      // Bullets: small grey slugs, pointing the way they fly.
+      for (const { x, y, a = 0 } of view.bullets.values()) {
+        ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+        ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(-4, -0.5, 8, 3); // shadow
+        ctx.fillStyle = '#9a9ea3'; ctx.fillRect(-5, -1.5, 9, 3);
+        ctx.fillStyle = '#d6d9dc'; ctx.fillRect(-5, -1.5, 9, 1); // a glint along the top
+        ctx.restore();
       }
 
       drawWorkNodes();
@@ -7517,6 +7745,7 @@
         drawPerson(p, lookOf(id));
       }
       drawBodies(view, true);
+      drawGunfire(frameTime, dt);
       drawFishing(frameTime, shown);
 
       // My own car is drawn where I predict it; everyone else's from the interpolated snapshots.
@@ -7532,6 +7761,16 @@
       drawDust(frameTime);
       for (const v of cars.values()) drawVehicle(v);
       for (const v of cars.values()) drawExhaustFire(v, frameTime); // (over the cars, so the jet shows)
+      for (const v of cars.values()) if (v.radio) { // radio on: notes drifting up off the roof
+        ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (let k = 0; k < 2; k++) {
+          const ph = ((frameTime / 1400 + k / 2 + (v.x % 7) / 7) % 1);
+          ctx.globalAlpha = Math.sin(ph * Math.PI) * 0.9;
+          ctx.fillStyle = k ? '#f4c430' : '#9ad0ff';
+          ctx.fillText(k ? '♫' : '♪', v.x + (k ? 14 : -12) + Math.sin(ph * 6) * 4, v.y - 20 - ph * 34);
+        }
+        ctx.globalAlpha = 1;
+      }
       drawEmbers(frameTime, dt);
       drawDumpsters();
 
@@ -7646,7 +7885,7 @@
       if (me && playing && !me.car && !riding && holdingRod() && (!myFish || myFish.v.length <= 2)) { // rod in hand: what a click does
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const t = myFish ? '🎣 waiting for a bite… (click to reel in)' : '🎣 click the water to cast';
+        const t = myFish ? '🎣 waiting for a bite… (click to reel in)' : '🎣 click the water to cast (or a player, to hook them)';
         ctx.strokeText(t, me.x, me.y - 52); ctx.fillText(t, me.x, me.y - 52);
       }
       if (me && playing && buzzLeft > 0) { // vodka: tougher for a while

@@ -335,7 +335,7 @@ export class Room {
       snapshotRate: this.snapshotRate,
       buildings: this.world.buildings,
       doorReach: config.world.doorReach,
-      vehicles: { reach: config.vehicles.reach, types: config.vehicles.types, boost: config.vehicles.boost },
+      vehicles: { reach: config.vehicles.reach, types: config.vehicles.types, boost: config.vehicles.boost, knockDecay: config.vehicles.knockDecay },
       homes: { lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach },
       furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
@@ -541,14 +541,16 @@ export class Room {
       if (typeof result === 'string') error = result;
       else extra = result;
     } else if (msg.t === 'factory') error = eco.factoryAction(p, msg.id, msg.action);
-    else error = msg.can ? this.world.pourFuel(p) : eco.refuel(p);
+    else {
+      if (msg.can) extra = { good: p.inventory[p.selected]?.good }; // fuel or vodka (before it's poured)
+      error = msg.can ? this.world.pourFuel(p) : eco.refuel(p);
+    }
     if (error) return client.send({ t: ServerMsg.ERROR, code: error });
     const what = msg.t === 'factory' ? msg.action : msg.t === 'trade' ? msg.side : msg.t === 'refuel' ? (msg.can ? 'pour' : 'refuel') : msg.t;
-    client.send({ t: ServerMsg.DONE, what, good: msg.good, qty: msg.qty, type: msg.type, ...extra });
+    client.send({ t: ServerMsg.DONE, what, good: msg.good, qty: msg.qty, type: msg.type, ...extra }); // (a pour says which good went in)
     if (msg.id !== undefined) this.inspect(client, msg.id);
   }
 
-  /** At the bar: hire a goon, a guard (id: building to guard) or a hitman (id: target player), or let one go (id: hire). */
   /** Furniture: put it down, pick it up, and use a cabinet. */
   furnish(client, msg) {
     const p = client.player;
@@ -567,6 +569,14 @@ export class Room {
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
+  /** The car radio: on/off, next song. */
+  radio(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const error = this.world.radio(p, msg.action);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
   /** Fishing: cast the line, or pull. */
   fish(client, msg) {
     const p = client.player;
@@ -576,6 +586,7 @@ export class Room {
     if (error && error !== 'no_line') client.send({ t: ServerMsg.ERROR, code: error });
   }
 
+  /** At the bar: hire a goon, a guard (id: building to guard) or a hitman (id: target player), or let one go (id: hire). */
   hireAction(client, msg) {
     const p = client.player;
     if (!p?.alive) return;
@@ -638,7 +649,7 @@ export class Room {
       else client.send({ t: ServerMsg.DONE, what: 'drop_cash', amount: result });
       return;
     }
-    const error = msg.t === 'drop' ? this.world.drop(p, msg.slot) : msg.t === 'lights' ? this.world.toggleLights(p) : this.world.trunk(p, msg.id, msg.action, msg.slot);
+    const error = msg.t === 'drop' ? this.world.drop(p, msg.slot) : msg.t === 'lights' ? this.world.toggleLights(p) : msg.t === 'siren' ? this.world.toggleSiren(p) : this.world.trunk(p, msg.id, msg.action, msg.slot);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
@@ -698,6 +709,7 @@ export class Room {
       mass: round1(me.mass),
       stamina: [Math.round(me.stamina * 100) / 100, Math.round(me.staminaDelay * 100) / 100, me.exhausted ? 1 : 0],
       vel: [round1(me.vx), round1(me.vy)], // walking velocity (it carries you on ice)
+      knock: me.kx || me.ky ? [round1(me.kx), round1(me.ky)] : 0, // thrown by a car: the slide still to come
       cash: me.cash,
       bank: Math.floor(me.account?.bank ?? 0),
       job: this.world.economy.jobBoard(me).mine,
@@ -758,13 +770,13 @@ export class Room {
       const vehicles = [];
       for (const e of this.world.queryView(cx, cy)) {
         if (e.kind === 'vehicle') {
-          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0, me && this.world.carLockedFor(e, me) ? 1 : 0, e.boosting ? 1 : 0]);
+          vehicles.push([e.id, e.type, round1(e.x), round1(e.y), Math.round(e.angle * 100) / 100, e.driver?.id ?? 0, Math.ceil(e.health), e.color, e.slipping ? 1 : 0, e.owner?.name ?? null, e.siren ? 1 : 0, e.lights ? 1 : 0, me && this.world.carLockedFor(e, me) ? 1 : 0, e.boosting ? 1 : 0, e.radio ? [e.radio.song, round1(this.world.economy.time - e.radio.since)] : 0]);
         } else if (e.kind === 'player') {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
           players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth]);
-          if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.phase === 'bite' ? 1 : 0]);
+          if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.victim ? 2 : e.fishing.phase === 'bite' ? 1 : 0]); // 2: hooked onto a player
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];
           pickups.push(e.goods ? [...at, 'goods', e.goods.good, e.goods.qty] : e.cash ? [...at, 'cash', e.cash] : [...at, e.weapon.type]);

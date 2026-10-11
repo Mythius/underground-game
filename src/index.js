@@ -168,7 +168,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': file.type, 'cache-control': 'public, max-age=31536000, immutable' }); // the URL has a version
     return res.end(file.data);
   }
-  const soundRoute = req.url.match(/^\/sounds\/([A-Za-z]+)(\/volume)?$/);
+  const soundRoute = req.url.match(/^\/sounds\/([A-Za-z0-9]+)(\/volume)?$/);
   if (soundRoute && (req.method === 'POST' || req.method === 'DELETE')) {
     if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
     if (!passwordMatches(req.headers['x-admin-password'])) {
@@ -334,6 +334,7 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.DROP:
     case ClientMsg.LIGHTS:
+    case ClientMsg.SIREN:
     case ClientMsg.TRUNK:
       client.room?.inventoryAction(client, msg);
       break;
@@ -361,6 +362,9 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.FURNISH:
       client.room?.furnish(client, msg);
+      break;
+    case ClientMsg.RADIO:
+      client.room?.radio(client, msg);
       break;
     case ClientMsg.INPUT:
       client.room?.handleInput(client, msg);

@@ -23,7 +23,8 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 //   machine  takes recipe inputs moving its way (into its back half); puts outputs out of its front
 //   IN dock  puts the goods unloaded into it out onto any belt leading away from it
 //   OUT dock takes anything, from any side
-//   container takes anything from any side (up to its capacity) and puts it out onto any belt leading away
+//   container takes anything from any side (up to its capacity) and puts it out onto any belt pointing away
+//            from it (a plain belt running past its side is left alone; pallets and machines too)
 // The docks (drawn as wooden pallets) and containers can also be loaded and emptied by hand.
 
 export const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -290,8 +291,12 @@ export class Warehouse {
     return m === d; // splitters and filters: from behind only
   }
 
-  /** Offer `good`, moving in direction m, to whatever is at tile (x, y). True if it was taken. */
-  #handTo(x, y, m, good) {
+  /**
+   * Offer `good`, moving in direction m, to whatever is at tile (x, y). True if it was taken.
+   * `fromStore`: it's coming out of a container, pallet or machine, which only put onto a plain belt
+   * pointing straight away from them (not one running past their side).
+   */
+  #handTo(x, y, m, good, fromStore = false) {
     const target = this.at(x, y);
     if (!target) return false;
     if (target.kind === 'container') {
@@ -301,6 +306,7 @@ export class Warehouse {
     }
     if (target.w === 1) {
       if (target.item || !this.#entersFrom(target, m)) return false;
+      if (fromStore && target.kind === 'belt' && m !== target.dir) return false; // (a belt running past a container doesn't get loaded)
       target.item = { good, p: 0, from: m };
       target.item.to = this.#plan(target, good);
       return true;
@@ -341,7 +347,7 @@ export class Warehouse {
       const k = (piece.next + i) % (exits.length * goods.length);
       const exit = exits[k % exits.length];
       const good = goods[Math.floor(k / exits.length) % goods.length];
-      if (this.#handTo(exit.x, exit.y, exit.m, good)) {
+      if (this.#handTo(exit.x, exit.y, exit.m, good, true)) {
         add(bag, good, -1);
         piece.next = k + 1;
         return;

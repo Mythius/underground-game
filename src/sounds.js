@@ -34,6 +34,8 @@ export const SOUND_SLOTS = [
     { id: 'skid', name: 'Tyre skid', loop: true, note: 'While sliding or drifting.' },
     { id: 'siren', name: 'Militsiya siren', loop: true, note: 'Louder the closer a car with its siren on.' },
     { id: 'carDoor', name: 'Get in / out of a car' },
+    { id: 'boost', name: 'Vodka boost (fire from the exhaust)', loop: true, note: 'While a car near you burns its boost (Space).' },
+    { id: 'pour', name: 'Pour fuel or vodka into a car' },
   ] },
   { group: 'Player', slots: [
     { id: 'footstep', name: 'Footstep' },
@@ -41,6 +43,10 @@ export const SOUND_SLOTS = [
     { id: 'swim', name: 'Swimming stroke' },
     { id: 'pickup', name: 'Pick something up' },
     { id: 'drop', name: 'Drop an item' },
+    { id: 'eat', name: 'Eating' },
+    { id: 'drink', name: 'Drinking vodka' },
+    { id: 'furnish', name: 'Put down a cabinet, bed or sofa' },
+    { id: 'cabinet', name: 'Open a cabinet' },
   ] },
   { group: 'Work', slots: [
     { id: 'pick', name: 'Pickaxe on rock' },
@@ -49,6 +55,9 @@ export const SOUND_SLOTS = [
     { id: 'cast', name: 'Casting a fishing line' },
     { id: 'splash', name: 'A fish splashing on the line' },
     { id: 'reel', name: 'Reeling in' },
+    { id: 'catch', name: 'Landing a catch' },
+    { id: 'hooked', name: 'Hooking a player (or being hooked)' },
+    { id: 'grab', name: 'Take an item off a conveyor belt' },
   ] },
   { group: 'Town & money', slots: [
     { id: 'doorOpen', name: 'Door opens' },
@@ -58,10 +67,16 @@ export const SOUND_SLOTS = [
     { id: 'chat', name: 'Chat message' },
     { id: 'error', name: "Can't do that (error)" },
   ] },
+  { group: 'Car radio', slots: [
+    ...Array.from({ length: 10 }, (_, i) => ({ id: `radio${i + 1}`, name: `Radio song ${i + 1}`, note: i === 0 ? 'Upload songs here: a car\'s radio (V on/off, N next song) plays them in turn, heard by everyone near the car. With none uploaded it plays a built-in tune.' : undefined })),
+  ] },
   { group: 'Crime', slots: [
     { id: 'alarm', name: 'Wanted (crime reported)' },
     { id: 'busted', name: 'Arrested' },
     { id: 'lockpick', name: 'Picking a lock (repeats)' },
+    { id: 'pickpocket', name: 'Pickpocketing' },
+    { id: 'bribe', name: 'Paying a bribe at a checkpoint' },
+    { id: 'hire', name: 'Hiring muscle at the bar' },
   ] },
 ];
 export const SLOT_IDS = new Set(SOUND_SLOTS.flatMap((g) => g.slots.map((s) => s.id)));
@@ -135,7 +150,7 @@ export class SoundStore {
 
   /** { data, type } for a stored file name, or null. */
   read(file) {
-    if (!/^[A-Za-z]+\.[a-z0-9]+$/.test(file)) return null;
+    if (!/^[A-Za-z0-9]+\.[a-z0-9]+$/.test(file)) return null; // (slot names may end in a number: radio1…)
     const [slot, ext] = file.split('.');
     if (!SLOT_IDS.has(slot) || this.manifest[slot]?.file !== file) return null;
     try {

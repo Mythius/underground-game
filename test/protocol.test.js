@@ -55,3 +55,8 @@ test('fishing messages: cast with an angle, pull with what you saw; rods are on 
   assert.equal(decodeClientMessage(JSON.stringify({ t: 'fish', action: 'dynamite' })).ok, false);
   assert.equal(decodeClientMessage(JSON.stringify({ t: 'buy', item: 'rod' })).ok, true);
 });
+
+test('radio messages', () => {
+  assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'radio', action: 'next' })).msg, { t: 'radio', action: 'next' });
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'radio', action: 'louder' })).ok, false);
+});

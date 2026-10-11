@@ -425,3 +425,22 @@ test('a saved factory loaded into a warehouse facing another way is turned to ma
     assert.equal(wh.dockOut.stock.planks, 3, `rot ${rot}: the line still runs from the IN pallet to the OUT pallet`);
   }
 });
+
+test('containers only load belts pointing away from them, not ones running past their side', () => {
+  const { wh, act } = town();
+  act({ action: 'buy' });
+  wh.owner.bank = 1e6;
+  act({ action: 'place', kind: 'container', x: 4, y: 3, dir: E });
+  act({ action: 'place', kind: 'belt', x: 5, y: 3, dir: E }); // away from it
+  act({ action: 'place', kind: 'belt', x: 4, y: 2, dir: E }); // running past its top side
+  act({ action: 'place', kind: 'belt', x: 3, y: 3, dir: E }); // pointing into it
+  const box = wh.at(4, 3);
+  box.stock = { logs: 10 };
+  for (let i = 0; i < 40; i++) {
+    wh.step(0.1);
+    for (const [x, y] of [[5, 3], [4, 2]]) if (wh.at(x, y).item && x === 5) wh.at(x, y).item = null; // keep the out belt clear
+  }
+  assert.equal(wh.at(4, 2).item, null, 'the belt running past gets nothing');
+  assert.equal(wh.at(3, 3).item, null, 'nor the one pointing in');
+  assert.ok(box.stock.logs < 10, 'the belt pointing away does');
+});

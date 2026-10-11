@@ -3,7 +3,8 @@ import { Vehicle } from './vehicles.js';
 import { waterDistance } from './water.js';
 
 // Militsiya checkpoints. Each blocks a stretch of road with two parked Militsiya cars (a chicane you
-// can just squeeze through) and an officer at the roadside.
+// can just squeeze through) and an officer at the roadside — and has its own crewed cruiser parked
+// just past it, which chases whoever runs the checkpoint (see Police.post).
 //   Stop in the zone (slower than slowSpeed for searchSec) and they search you and your car:
 //     clean → wave you on; contraband → seized, and you're wanted (smuggling).
 //   A bribe (cash, while you're in the zone) gets you waved through for a while.
@@ -51,6 +52,9 @@ export class Roadblocks {
     // The officer stands at the roadside next to the zone.
     const officer = horizontal ? { x: cx, y: road.y - 26, angle: Math.PI / 2 } : { x: road.x - 26, y: cy, angle: 0 };
     this.list.push({ id, ...zone, horizontal, x: cx, y: cy, zone, officer, cars });
+    // Its own crewed cruiser, parked along the road just past the zone, by the officer's side.
+    const past = 260, lane = -(size / 2 - 40);
+    w.police.post({ roadblock: id, x: horizontal ? cx + past : cx + lane, y: horizontal ? cy + lane : cy + past, angle: horizontal ? 0 : Math.PI / 2 });
   }
 
   get time() {
@@ -88,6 +92,8 @@ export class Roadblocks {
         if (((p.bribedUntil ?? -Infinity) <= this.time || this.stolen(p)) && p.alive) {
           this.world.police.crime(p, 'run_roadblock', true);
           this.events.push({ player: p, kind: 'roadblock_run' });
+          const unit = this.world.police.checkpointUnit(id); // the checkpoint's own car comes straight after you
+          if (unit && p.wanted > 0) Object.assign(unit, { target: p, route: [] });
         }
       }
       const block = mine && v.driver === p ? this.at(v.x, v.y) : null;

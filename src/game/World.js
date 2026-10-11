@@ -52,6 +52,17 @@ export function createWorld(opts = config.world, playerOpts = config.player, wea
   return best.world;
 }
 
+/** This step's knock-back velocity (p.kx, p.ky), easing off; zero once it's spent. Keep in sync with the client. */
+export function knockStep(p, dt) {
+  if (!p.kx && !p.ky) return [0, 0];
+  const out = [p.kx, p.ky];
+  const k = Math.exp(-config.vehicles.knockDecay * dt);
+  p.kx *= k;
+  p.ky *= k;
+  if (Math.hypot(p.kx, p.ky) < 15) p.kx = p.ky = 0;
+  return out;
+}
+
 /** A saved trunk slot back as it goes in a car: goods, a gun (with its ammo), or nothing. */
 export function trunkSlot(s) {
   if (s?.good && config.goods[s.good] && s.qty > 0) return { good: s.good, qty: s.qty };
@@ -599,6 +610,40 @@ export class World {
     return v;
   }
 
+  /**
+   * The car radio (driver or passenger): V switches it on or off, N skips to the next song. Everyone
+   * near the car hears it (see the client), from the same point in the song.
+   */
+  radio(p, action) {
+    const v = p.vehicle;
+    if (!v) return 'not_in_car';
+    const now = this.economy.time;
+    if (action === 'toggle') {
+      v.radio = v.radio ? null : { song: v.lastSong ?? 0, since: now };
+      if (v.radio) v.lastSong = v.radio.song;
+      return null;
+    }
+    if (action === 'next') {
+      const song = v.radio ? v.radio.song + 1 : v.lastSong ?? 0;
+      v.radio = { song, since: now };
+      v.lastSong = song;
+      return null;
+    }
+    return 'unknown';
+  }
+
+  /**
+   * H: the siren of a Militsiya car you're driving, on or off. While it wails, the Militsiya know
+   * exactly where you are and come for you (see Police.step).
+   */
+  toggleSiren(p) {
+    const v = p.vehicle;
+    if (v?.driver !== p) return 'not_driving';
+    if (!v.police) return 'no_siren';
+    v.siren = !v.siren;
+    return null;
+  }
+
   /** C: headlights on or off (driver only). */
   toggleLights(p) {
     if (p.vehicle?.driver !== p) return 'not_driving';
@@ -730,6 +775,7 @@ export class World {
   leaveSeat(p) {
     const v = p.vehicle;
     if (!v) return;
+    if (v.driver === p && v.police && p.kind === 'player') v.siren = false; // (a thief's siren stops when they get out)
     if (v.driver === p) v.driver = null;
     if (v.passenger === p) v.passenger = null;
     p.vehicle = null;
@@ -1074,8 +1120,10 @@ export class World {
       } else [p.vx, p.vy] = [wantX, wantY];
       const r = p.radius;
       const fromX = p.x, fromY = p.y;
-      p.x = clamp(p.x + p.vx * dt, r, this.width - r);
-      p.y = clamp(p.y + p.vy * dt, r, this.height - r);
+      // Knocked flying by a car: a slide that dies away fast (walls stop it). Keep in sync with the client.
+      const [kx, ky] = knockStep(p, dt);
+      p.x = clamp(p.x + (p.vx + kx) * dt, r, this.width - r);
+      p.y = clamp(p.y + (p.vy + ky) * dt, r, this.height - r);
       // Two passes settle corners where two walls meet. (Someone in a dumpster is inside its walls.)
       if (!p.hidden) for (let pass = 0; pass < 2; pass++) for (const w of this.wallsNear(p.x, p.y, r)) pushCircleOutOfRect(p, r, w);
       if (ice && dt > 0) [p.vx, p.vy] = [(p.x - fromX) / dt, (p.y - fromY) / dt]; // walls stop the slide
@@ -1479,9 +1527,10 @@ export class World {
       p.hitCooldown = 0.6;
       p.hurt(crush * Math.min(1, v.speed / maxSpeed));
       if (v.driver) this.hires.noteAttack(v.driver, p);
-      // Knocked away from the car.
-      p.x += (dx / dist) * 30;
-      p.y += (dy / dist) * 30;
+      // Sent flying away from the car (not too far): faster cars throw you further.
+      const throwSpeed = clamp(v.speed * 1.1, 250, config.vehicles.knockMax);
+      p.kx = (dx / dist) * throwSpeed + v.vx * 0.3;
+      p.ky = (dy / dist) * throwSpeed + v.vy * 0.3;
       if (p.health <= 0 && p.alive) {
         this.removePlayer(p.id);
         deaths.push({ victim: p, killer: v.driver ?? { name: 'a runaway car' } });

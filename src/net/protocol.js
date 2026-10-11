@@ -24,10 +24,12 @@ export const ClientMsg = Object.freeze({
   TRAIN: 'train', // { t, action: 'deliver' (contract, at the freight clerk) | 'black' (contraband, back door), good, qty }
   BRIBE: 'bribe', // { t } pay off the Militsiya at a roadblock
   LIGHTS: 'lights', // { t } C: toggle your car's headlights
+  SIREN: 'siren', // { t } H: toggle the siren of the Militsiya car you're driving (they then always know where you are)
   WORK: 'work', // { t, id, action: 'tool' | 'haul' | 'buy' | 'sell' } at a work site's foreman
   GARAGE: 'garage', // { t, action: 'list' | 'take', id? } your saved cars, at the spot inside your home
   BODY: 'body', // { t, action: 'open' | 'loot' | 'carry' | 'drop', id?, slot? } (drop: the body you carry — into a dumpster, water, under a tree, or down)
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
+  RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
@@ -38,7 +40,7 @@ export const ServerMsg = Object.freeze({
   SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}] }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color, look }
   PLAYER_LEFT: 'player_left', // { t, id }
-  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), crew: [[id,x,y,angle,role (0 goon, 1 guard, 2 hitman),mine,health %]] (hired muscle on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
+  SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me),boosting,radio ([song, seconds playing] | 0)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), crew: [[id,x,y,angle,role (0 goon, 1 guard, 2 hitman),mine,health %]] (hired muscle on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
   DIED: 'died', // { t, killedBy, score }
   LEADERBOARD: 'leaderboard', // { t, entries: [{id, name, score (bank balance, rounded)}] }
   PONG: 'pong', // { t, ts, serverTime }
@@ -173,6 +175,7 @@ const validators = {
   [ClientMsg.BRIBE]: (m) => ({ t: m.t }),
 
   [ClientMsg.LIGHTS]: (m) => ({ t: m.t }),
+  [ClientMsg.SIREN]: (m) => ({ t: m.t }),
 
   [ClientMsg.WORK]: (m) => (Number.isInteger(m.id) && ['tool', 'haul', 'buy', 'sell'].includes(m.action) ? { t: m.t, id: m.id, action: m.action } : null),
 
@@ -185,6 +188,8 @@ const validators = {
 
   [ClientMsg.HIRE]: (m) =>
     ['goon', 'guard', 'hitman', 'dismiss'].includes(m.action) && (m.action === 'goon' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+
+  [ClientMsg.RADIO]: (m) => (m.action === 'toggle' || m.action === 'next' ? { t: m.t, action: m.action } : null),
 
   [ClientMsg.FURNISH]: (m) => {
     if (m.action === 'place') return isFiniteNumber(m.angle) ? { t: m.t, action: 'place', angle: m.angle } : null;

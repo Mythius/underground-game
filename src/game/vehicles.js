@@ -21,6 +21,7 @@ export class Vehicle {
     this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
     this.fuel = 40 + Math.random() * 60; // percent of a tank
     this.boost = 0; // percent of the boost tank (vodka); burnt with Space for a burst of speed
+    this.radio = null; // { song, since }: playing song number `song` (clients map it onto the uploaded songs) since world time `since`
     this.boosting = false;
     this.owner = null; // the account that bought it at a dealership (anyone can still drive it)
     this.cargo = Array.from({ length: config.cargo.vehicles[type] ?? 1 }, () => null); // trunk slots: { good, qty } or null

@@ -823,3 +823,27 @@ test('players heal slowly on their own', () => {
   for (let i = 0; i < 30 * 120; i++) world.step(1 / 30);
   assert.equal(p.health, p.maxHealth, 'never past full');
 });
+
+test('a car hitting someone sends them flying — a short way, further the faster it was going', () => {
+  const thrown = (speed) => {
+    const { map } = validateMap({ width: 4000, height: 3000, buildings: [] });
+    const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, config.player, config.weapons, map);
+    world.townsfolk.people.length = 0;
+    const p = world.spawnPlayer('walker');
+    Object.assign(p, { x: 2000, y: 1500 });
+    const car = new Vehicle(9400, 'sedan', 2000 - 60, 1500, 0);
+    Object.assign(car, { vx: speed, vy: 0, fuel: 100 });
+    world.vehicles.set(car.id, car);
+    let start = null;
+    for (let i = 0; i < 30 * 2; i++) {
+      world.step(1 / 30);
+      if (!start && (p.kx || p.ky)) { start = { x: p.x, y: p.y }; Object.assign(car, { vx: 0, vy: 0, x: car.x - 40 }); } // hit: the car stops there
+    }
+    assert.ok(start, 'hit');
+    return Math.hypot(p.x - start.x, p.y - start.y);
+  };
+  const slow = thrown(200), fast = thrown(420);
+  assert.ok(slow > 30 && slow < 200, `a slow car throws them a bit (${Math.round(slow)})`);
+  assert.ok(fast > slow, `a fast one further (${Math.round(fast)} vs ${Math.round(slow)})`);
+  assert.ok(fast < 260, `but not far (${Math.round(fast)})`);
+});

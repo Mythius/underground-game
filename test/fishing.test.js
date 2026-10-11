@@ -161,3 +161,40 @@ test('fish eat; the rod is yours to keep (work sites leave it alone, and it is s
   restoreSlots(next, saved);
   assert.ok(next.inventory.some((s) => s?.type === 'rod' && s.tool));
 });
+
+test('cast at another player: hook them, win the fight and take one random thing from their hotbar (theft)', () => {
+  const f = pond();
+  onBank(f);
+  Object.assign(f.p, { x: 600, y: 2600 }); // dry land, nowhere near the pond
+  const mark = f.world.spawnPlayer('mark');
+  mark.account = { id: 9, name: 'mark', bank: 0, guest: false };
+  Object.assign(mark, { x: 750, y: 2600 });
+  hotbarOf(mark).add('steel', 3);
+  assert.equal(f.fishing.cast(f.p, 0), null);
+  assert.equal(f.p.fishing.victim, mark, 'hooked');
+  assert.ok(f.fishing.events.some((e) => e.player === mark && e.kind === 'hooked_by'), 'they are warned');
+  const crimes = [];
+  f.world.police.crime = (who, kind) => { crimes.push([who, kind]); return true; };
+  for (let i = 0; i < config.fishing.pulls; i++) pullAt(f, nextMoment(f, true));
+  assert.equal(f.p.fishing, null);
+  assert.equal(hotbarOf(f.p).count('steel'), 3, 'the only thing worth taking (not the knife)');
+  assert.equal(hotbarOf(mark).count('steel'), 0);
+  assert.ok(mark.inventory.some((s) => s?.type === 'knife'), 'they keep their starting knife');
+  assert.deepEqual(crimes, [[f.p, 'pickpocket']]);
+});
+
+test('a hooked player walks off and snaps the line', () => {
+  const f = pond();
+  onBank(f);
+  Object.assign(f.p, { x: 600, y: 2600 });
+  const mark = f.world.spawnPlayer('mark');
+  Object.assign(mark, { x: 750, y: 2600 });
+  hotbarOf(mark).add('steel', 3);
+  f.fishing.cast(f.p, 0);
+  assert.ok(f.p.fishing?.victim);
+  mark.y += config.fishing.hookBreak + 10;
+  f.world.step(1 / 30);
+  assert.equal(f.p.fishing, null);
+  assert.ok(f.fishing.events.some((e) => e.player === mark && e.kind === 'hook_free' && e.escaped));
+  assert.equal(hotbarOf(mark).count('steel'), 3);
+});

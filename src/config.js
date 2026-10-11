@@ -128,6 +128,8 @@ export const config = Object.freeze({
     respawnSec: 20, // after one is destroyed
     reach: 40, // how far past your edge you can get in
     crushMinSpeed: 120, // slower than this, cars just push people
+    knockMax: 700, // a car hitting someone throws them off at up to this speed…
+    knockDecay: 6, // …slowing like this (so ~40–120 px: sent flying, not far)
     exitDamage: 35, // to the driver when their vehicle is destroyed
     lockpickSec: 5, // holding F at someone else's car to pick its lock (it stays open until they're back in it)
     types: { // (top speeds ~15% lower than at first: cars felt a little fast)
@@ -454,6 +456,7 @@ export const config = Object.freeze({
     giveUpSec: 9, // no pull for this long and it swims off
     slackSec: 0.35, // allowance for lag when judging a pull (what the player saw vs. the server's clock)
     lineReach: 40, // walk further than this from where you cast and the line comes in
+    hookBreak: 160, // a hooked player who walks this far from where they were hooked snaps the line
     fishChance: 0.8, // otherwise something else is on the hook:
     junk: { food: 0.65, gun: 0.35 },
     junkGuns: { pistol: 5, smg: 2, shotgun: 2, rifle: 1, sniper: 0.5 }, // relative odds; it has a few rounds in it
@@ -506,6 +509,7 @@ export const config = Object.freeze({
     responseSec: 8, // a reported crime takes this long before cars are sent
     chaseThrottle: 0.85, // how hard they drive after you
     searchRadius: 550, // hiding spots (trees, dumpsters, cars, buildings) they check round your last known spot
+    postRange: 1800, // a checkpoint's own car answers calls this close to its checkpoint (and always chases whoever runs it)
     cruiseRadius: 1800, // lost in a car chase: they cruise the roads this far round where you were last seen
     inspectSec: 1.5, // looking into each one
     hideSeenRange: 140, // under a tree or in a parked car you're only noticed this close

@@ -23,6 +23,11 @@ function town({ townsfolk = true } = {}) {
   });
   const world = new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
   if (!townsfolk) world.townsfolk.people.length = 0;
+  // Just the station's patrol cars: no checkpoints in the way (their own tests are further down).
+  for (const u of world.police.units.filter((x) => x.post)) world.vehicles.delete(u.car.id);
+  world.police.units = world.police.units.filter((x) => !x.post);
+  for (const r of world.roadblocks.list) for (const id of r.cars) world.vehicles.delete(id);
+  world.roadblocks.list.length = 0;
   const p = world.spawnPlayer('crook');
   p.account = { id: 7, name: 'crook', bank: 0, guest: false };
   return { world, p, police: world.police };
@@ -481,4 +486,71 @@ test('officers wear body armour; a fallen one is replaced at the station and the
   world.parkNewVehicle = park;
   for (let i = 0; i < 30 * 11; i++) world.step(1 / 30);
   assert.equal(police.units.length, count, 'back to full strength');
+});
+
+test("a checkpoint's own crewed car chases whoever runs it, then goes back and parks", () => {
+  const { map } = validateMap({ width: 9000, height: 3000, roads: [{ x: 0, y: 1400, w: 9000, h: 240 }], buildings: [{ type: 'police', x: 400, y: 900, rot: 0 }] });
+  const world = new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
+  world.townsfolk.people.length = 0;
+  const rb = world.roadblocks.list[0];
+  assert.ok(rb, 'a checkpoint on the road');
+  const unit = world.police.checkpointUnit(rb.id);
+  assert.ok(unit && unit.car && !unit.officer.onFoot, 'a cop sitting in a car there');
+  const post = { x: unit.car.x, y: unit.car.y };
+  assert.ok(Math.hypot(post.x - rb.x, post.y - rb.y) < 400, 'parked by the checkpoint');
+  // Keep the station's patrols out of it.
+  for (const u of world.police.units) if (!u.post) u.officer.health = -1e9;
+  // A player drives through without stopping.
+  const p = world.spawnPlayer('runner');
+  p.account = { id: 5, name: 'runner', bank: 0, guest: false };
+  const car = world.spawnVehicle('sedan');
+  Object.assign(car, { x: rb.x - 900, y: rb.y, angle: 0, vx: 0, vy: 0, fuel: 100 });
+  Object.assign(p, { vehicle: car, x: car.x, y: car.y });
+  car.driver = p;
+  let chased = false;
+  for (let i = 0; i < 30 * 16 && !chased; i++) {
+    p.input.gas = 1;
+    world.step(1 / 30);
+    chased = unit.target === p;
+  }
+  assert.ok(chased, 'ran it: the checkpoint car comes after them');
+  assert.ok(p.wanted > 0);
+  for (let i = 0; i < 30 * 3; i++) { p.input.gas = 1; world.step(1 / 30); }
+  assert.ok(Math.hypot(unit.car.x - post.x, unit.car.y - post.y) > 150, 'it left its post to chase');
+  // Off the hook (say they got away): it drives back and parks.
+  Object.assign(p, { wanted: 0 });
+  for (let i = 0; i < 30 * 40; i++) { p.input.gas = 0; world.step(1 / 30); }
+  assert.equal(unit.target, null);
+  assert.ok(Math.hypot(unit.car.x - post.x, unit.car.y - post.y) < 120, `back at its post (${Math.round(Math.hypot(unit.car.x - post.x, unit.car.y - post.y))} away)`);
+  assert.ok(unit.car.speed < 10, 'parked');
+});
+
+test('in a stolen Militsiya car, H toggles the siren: while it wails they always know where you are and hunt you', () => {
+  const { world, p, police } = town({ townsfolk: false });
+  const car = police.units[0].car;
+  police.units[0].officer.onFoot = true; // (out of it)
+  Object.assign(car, { x: 5500, y: 1935, vx: 0, vy: 0 });
+  assert.equal(world.toggleSiren(p), 'not_driving');
+  Object.assign(p, { vehicle: car, x: car.x, y: car.y });
+  car.driver = p;
+  p.wanted = 0;
+  car.siren = false;
+  assert.equal(world.toggleSiren(p), null);
+  assert.equal(car.siren, true);
+  world.step(1 / 30);
+  assert.ok(p.wanted > 0, 'wanted the moment it wails');
+  police.policeSee = () => false; // nobody can see them…
+  for (let i = 0; i < config.crime.searchSec[p.wanted] + 10; i++) world.step(1);
+  assert.ok(p.wanted > 0, '…but they never lose track');
+  assert.ok(Math.abs(p.lastSeen - police.time) < 1.01, 'always known');
+  assert.ok(police.units.some((u) => u.target === p), 'hunted');
+  // Off: back to being lost if nobody sees you.
+  assert.equal(world.toggleSiren(p), null);
+  assert.equal(car.siren, false);
+  for (let i = 0; i < config.crime.searchSec[p.wanted] + 10; i++) world.step(1);
+  assert.equal(p.wanted, 0, 'lost you');
+  // Getting out switches it off.
+  world.toggleSiren(p);
+  world.leaveSeat(p);
+  assert.equal(car.siren, false);
 });

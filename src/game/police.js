@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { segmentRectHit } from '../utils/math.js';
 import { Bullet } from './entities.js';
 import { hotbarOf, trunkOf } from './cargo.js';
-import { vehicleMotion } from './vehicles.js';
+import { Vehicle, vehicleMotion } from './vehicles.js';
 
 // Crime and the police.
 //
@@ -34,17 +34,35 @@ export class Police {
     if (car && this.world.vehicles.has(car.id) && !car.driver && !car.passenger) this.world.vehicles.delete(car.id);
   }
 
-  /** A new unit at `station`; with no space to park its car, it tries again a little later (the force never shrinks). */
-  #replace(station) {
-    if (!this.#newUnit(station)) this.waiting.push({ station, in: 10 });
+  /** A new unit at `station` (or at its `post`); with no space to park its car, it tries again a little later (the force never shrinks). */
+  #replace(station, post = null) {
+    if (!this.#newUnit(station, post)) this.waiting.push({ station, post, in: 10 });
+  }
+
+  /**
+   * A unit stationed at a checkpoint: its cruiser parked by the road there, officer inside. It chases
+   * whoever runs the checkpoint, answers crimes nearby like any patrol, and goes back to park after.
+   * `post`: { roadblock, x, y, angle }.
+   */
+  post(post) {
+    return this.#newUnit(this.#nearestStation(post.x, post.y), post);
+  }
+
+  /** The (living) unit posted at checkpoint `roadblock`, if any. */
+  checkpointUnit(roadblock) {
+    return this.units.find((u) => u.post?.roadblock === roadblock && u.officer.health > 0) ?? null;
   }
 
   get time() {
     return this.world.economy.time;
   }
 
-  #newUnit(station) {
-    const car = this.world.parkNewVehicle('police', station.id, null);
+  #newUnit(station, post = null) {
+    let car;
+    if (post) { // parked at its checkpoint (a new car turns up there)
+      car = new Vehicle(this.world.nextEntityId++, 'police', post.x, post.y, post.angle);
+      this.world.vehicles.set(car.id, car);
+    } else car = station && this.world.parkNewVehicle('police', station.id, null);
     if (!car) return null;
     car.police = true;
     car.lights = true;
@@ -59,6 +77,7 @@ export class Police {
       reverse: 0,
       arrest: 0,
       respawn: 0,
+      post, // null for patrol cars
     };
     this.units.push(unit);
     return unit;
@@ -361,16 +380,21 @@ export class Police {
   step(dt) {
     for (const w of this.waiting.splice(0)) {
       if ((w.in -= dt) > 0) this.waiting.push(w);
-      else this.#replace(w.station);
+      else this.#replace(w.station, w.post);
     }
     this.#robberies(dt);
     this.#jail();
+    // Driving a stolen Militsiya car with its siren on: the whole force can hear (and track) you.
+    const wailing = (p) => p.vehicle?.police && p.vehicle.siren && p.vehicle.driver === p && p.kind === 'player';
+    for (const p of this.world.players.values()) {
+      if (wailing(p) && !p.wanted && !p.jailed) this.crime(p, 'steal_police_car', true);
+    }
     // While they can see you they know where you are; out of sight long enough (longer for worse
     // crimes) and they give up.
     for (const p of this.#suspects()) {
       if (!p.wanted) continue;
       if (p.jailed) continue;
-      if (this.policeSee(p.x, p.y, p)) this.#lastKnown(p);
+      if (wailing(p) || this.policeSee(p.x, p.y, p)) this.#lastKnown(p);
       else if (p.inSight) {
         p.inSight = false;
         this.#sawHide(p);
@@ -394,7 +418,7 @@ export class Police {
     for (const p of wanted.sort((a, b) => b.wanted - a.wanted)) {
       const chasing = this.units.filter((u) => u.target === p).length;
       const free = this.units
-        .filter((u) => !u.target && u.officer.health > 0)
+        .filter((u) => !u.target && u.officer.health > 0 && (!u.post || Math.hypot(u.post.x - p.x, u.post.y - p.y) < config.police.postRange)) // checkpoint cars only answer calls nearby
         .sort((a, b) => Math.hypot(a.officer.x - p.x, a.officer.y - p.y) - Math.hypot(b.officer.x - p.x, b.officer.y - p.y));
       for (const u of free.slice(0, Math.max(0, p.wanted - chasing))) {
         u.target = p;
@@ -412,7 +436,7 @@ export class Police {
       if (u.respawn > config.police.respawnSec) {
         this.units.splice(this.units.indexOf(u), 1);
         this.#towAway(u.car);
-        this.#replace(u.station);
+        this.#replace(u.station, u.post);
       }
       return;
     }
@@ -445,6 +469,7 @@ export class Police {
     o.y = car.y;
     o.angle = car.angle;
     car.siren = Boolean(t);
+    if (t) u.parked = false; // (a checkpoint car off on a chase drives right back to its spot after)
     if (t && !seen && t.lastKnown) {
       const lk = t.lastKnown;
       // Lost in a car chase: cruise the roads round where they were last seen, looking.
@@ -478,14 +503,34 @@ export class Police {
       this.#drive(u, car, tx, ty, config.police.chaseThrottle, dt);
       return;
     }
-    // Patrol along the roads.
     u.cruiseFor = null;
+    if (u.post) return this.#backToPost(u, car, dt);
+    // Patrol along the roads.
     const graph = this.world.townsfolk.graph;
     if (!u.route.length && graph.nodes.length) {
       const node = graph.nodes[Math.floor(Math.random() * graph.nodes.length)];
       u.route = graph.route({ x: car.x, y: car.y }, node);
     }
     this.#followRoute(u, car, 0.55, dt);
+  }
+
+  /** A checkpoint car with nothing to do: drive back along the roads and park at its post. */
+  #backToPost(u, car, dt) {
+    const p = u.post;
+    const d = Math.hypot(p.x - car.x, p.y - car.y);
+    if (d < (u.parked ? 200 : 90)) { // there (or near enough): stop and stay stopped
+      u.parked = true;
+      u.route = [];
+      car.ai = car.speed < 5 ? null : { gas: vehicleMotion(car).forward > 0 ? -1 : 1, steer: 0, drift: false };
+      return;
+    }
+    u.parked = false;
+    const graph = this.world.townsfolk.graph;
+    if (!u.route.length || u.routeTo !== p) {
+      u.routeTo = p;
+      u.route = d > 400 && graph.nodes.length ? [...graph.route({ x: car.x, y: car.y }, p), { x: p.x, y: p.y }] : [{ x: p.x, y: p.y }];
+    }
+    this.#followRoute(u, car, d < 300 ? 0.25 : 0.55, dt);
   }
 
   #followRoute(u, car, throttle, dt) {
@@ -636,7 +681,7 @@ export class Police {
       if (u.respawn > config.police.respawnSec / 2) {
         this.units.splice(this.units.indexOf(u), 1);
         this.#towAway(u.car);
-        this.#replace(u.station);
+        this.#replace(u.station, u.post);
       }
       return;
     }

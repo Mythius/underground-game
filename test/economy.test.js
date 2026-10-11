@@ -329,3 +329,22 @@ test('vodka poured into a car fills its boost tank; Space burns it for more spee
   drive(4, true);
   assert.ok(Math.hypot(car.vx, car.vy) <= top + 1, 'out of vodka: back down to normal');
 });
+
+test('the car radio: V switches it on and off, N skips to the next song; others see what it plays', () => {
+  const { world, player } = town();
+  const car = new Vehicle(9020, 'sedan', 2000, 2000, 0);
+  world.vehicles.set(car.id, car);
+  assert.equal(world.radio(player, 'toggle'), 'not_in_car');
+  Object.assign(player, { vehicle: car, x: car.x, y: car.y });
+  car.driver = player;
+  assert.equal(world.radio(player, 'toggle'), null);
+  assert.deepEqual(car.radio, { song: 0, since: world.economy.time });
+  for (let i = 0; i < 30; i++) world.step(1 / 30);
+  assert.equal(world.radio(player, 'next'), null);
+  assert.equal(car.radio.song, 1);
+  assert.equal(car.radio.since, world.economy.time, 'the new song starts now');
+  assert.equal(world.radio(player, 'toggle'), null);
+  assert.equal(car.radio, null, 'off');
+  world.radio(player, 'toggle');
+  assert.equal(car.radio.song, 1, 'back on where it was');
+});
