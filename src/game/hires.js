@@ -806,12 +806,20 @@ export class Hires {
 
   // ---- gangsters ---------------------------------------------------------------------------
 
-  /** A new gangster, somewhere along a road out of sight of everyone. Returns false if there's nowhere. */
+  /** Is (x, y) in town? (Gangsters keep to the city's streets; anywhere, on a map without one.) */
+  #inTown(x, y) {
+    const c = this.world.city;
+    return !c || (x > c.x && x < c.x + c.w && y > c.y && y < c.y + c.h);
+  }
+
+  /** A new gangster, on a street in town, out of sight of everyone. Returns false if there's nowhere. */
   #spawnGangster() {
     const w = this.world, g = config.gangsters;
-    for (let i = 0; i < 60 && w.roads.length; i++) {
-      const road = w.roads[Math.floor(Math.random() * w.roads.length)];
+    const roads = w.roads.filter((r) => this.#inTown(r.x + r.w / 2, r.y + r.h / 2));
+    for (let i = 0; i < 80 && roads.length; i++) {
+      const road = roads[Math.floor(Math.random() * roads.length)];
       const x = road.x + Math.random() * road.w, y = road.y + Math.random() * road.h;
+      if (!this.#inTown(x, y)) continue;
       if (w.isBlocked(x, y, 22) || w.isSwimming(x, y)) continue;
       if ([...w.players.values()].some((p) => Math.hypot(p.x - x, p.y - y) < 900)) continue;
       const r = config.hires;
@@ -910,7 +918,7 @@ export class Hires {
   #wander(h, dt) {
     const graph = this.world.townsfolk.graph;
     if (!h.route.length) {
-      const near = graph.nodes.filter((n) => Math.hypot(n.x - h.x, n.y - h.y) < 1800);
+      const near = graph.nodes.filter((n) => Math.hypot(n.x - h.x, n.y - h.y) < 1800 && this.#inTown(n.x, n.y)); // (they keep to town)
       const node = near[Math.floor(Math.random() * near.length)];
       if (!node) return;
       h.route = graph.route({ x: h.x, y: h.y }, node);
@@ -968,7 +976,7 @@ export class Hires {
     v.picked = false;
     this.#board(h, v);
     const graph = w.townsfolk.graph;
-    const far = graph.nodes.filter((n) => Math.hypot(n.x - v.x, n.y - v.y) > 1500);
+    const far = graph.nodes.filter((n) => Math.hypot(n.x - v.x, n.y - v.y) > 1500 && this.#inTown(n.x, n.y)); // (dumped somewhere in town)
     const dest = far[Math.floor(Math.random() * far.length)];
     h.joy = { until: this.time + config.gangsters.joyrideSec[0] + Math.random() * (config.gangsters.joyrideSec[1] - config.gangsters.joyrideSec[0]), stuck: 0, reverse: 0 };
     h.route = dest && graph.nodes.length ? graph.route({ x: v.x, y: v.y }, dest) : [];
