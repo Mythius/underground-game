@@ -131,9 +131,13 @@ test('bought cars are saved and come out of the garage at home, even after a res
   assert.equal(again.world.homes.homeOf(c2.account).id, home.id, 'same house');
   sent.length = 0;
   const me = [...again.world.players.values()].find((x) => x.account === c2.account);
+  const pad = again.world.homes.padOf(home);
+  // Inside, at the far side from the car pad (the pad's placed at random: it can be near the door).
+  const corners = [[home.x + 40, home.y + 40], [home.x + home.w - 40, home.y + 40], [home.x + 40, home.y + home.h - 40], [home.x + home.w - 40, home.y + home.h - 40]];
+  const [fx, fy] = corners.sort((a, b) => Math.hypot(b[0] - pad.x, b[1] - pad.y) - Math.hypot(a[0] - pad.x, a[1] - pad.y))[0];
+  Object.assign(me, { x: fx, y: fy });
   again.garage(c2, { action: 'take', id: store.cars(account.id)[0].id });
   assert.equal([...again.world.vehicles.values()].filter((v) => v.carId).length, 0, 'not from inside the house');
-  const pad = again.world.homes.padOf(home);
   Object.assign(me, { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 });
   sent.length = 0;
   again.garage(c2, { action: 'list' });
@@ -189,6 +193,10 @@ test('every starter house gets a car pad outside, clear of walls, and the garage
   const home = world.homes.assign(me);
   const p = world.spawnPlayer('me', null, me);
   p.account = me;
+  const pad = world.homes.padOf(home);
+  const corners = [[home.x + 40, home.y + 40], [home.x + home.w - 40, home.y + 40], [home.x + 40, home.y + home.h - 40], [home.x + home.w - 40, home.y + home.h - 40]];
+  const [fx, fy] = corners.sort((a, b) => Math.hypot(b[0] - pad.x, b[1] - pad.y) - Math.hypot(a[0] - pad.x, a[1] - pad.y))[0];
+  Object.assign(p, { x: fx, y: fy }); // inside, at the far side from the pad (placed at random: it can be near)
   assert.equal(world.homes.atGarage(p), false, 'not from inside');
   Object.assign(p, world.homes.garagePoint(home));
   assert.equal(world.homes.atGarage(p), true);

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { config } from './config.js';
 
 // Custom sound effects and music, uploaded from the sound editor (admin password).
 // Every slot has a built-in synthesised default in the client; an uploaded file replaces it.
@@ -30,7 +31,9 @@ export const SOUND_SLOTS = [
     { id: 'explosion', name: 'Vehicle explosion' },
   ] },
   { group: 'Vehicles', slots: [
-    { id: 'engine', name: 'Engine', loop: true, note: 'Pitch rises with speed.' },
+    { id: 'engine', name: 'Engine', loop: true, note: 'Pitch rises with speed. Used for any car without its own engine sound below.' },
+    // Each kind of car can have its own engine (falling back to the one above).
+    ...Object.entries(config.vehicles.types).map(([type, t]) => ({ id: `engine${type[0].toUpperCase()}${type.slice(1)}`, name: `Engine — ${t.name}`, loop: true, note: `Your engine while driving a ${t.name}.` })),
     { id: 'skid', name: 'Tyre skid', loop: true, note: 'While sliding or drifting.' },
     { id: 'siren', name: 'Militsiya siren', loop: true, note: 'Louder the closer a car with its siren on.' },
     { id: 'carDoor', name: 'Get in / out of a car' },
@@ -67,9 +70,6 @@ export const SOUND_SLOTS = [
     { id: 'chat', name: 'Chat message' },
     { id: 'error', name: "Can't do that (error)" },
   ] },
-  { group: 'Car radio', slots: [
-    ...Array.from({ length: 10 }, (_, i) => ({ id: `radio${i + 1}`, name: `Radio song ${i + 1}`, note: i === 0 ? 'Upload songs here: a car\'s radio (V on/off, N next song) plays them in turn, heard by everyone near the car. With none uploaded it plays a built-in tune.' : undefined })),
-  ] },
   { group: 'Crime', slots: [
     { id: 'alarm', name: 'Wanted (crime reported)' },
     { id: 'busted', name: 'Arrested' },
@@ -96,7 +96,7 @@ export class SoundStore {
     }
   }
 
-  #saveManifest() {
+  saveManifest() {
     writeFileSync(`${this.dir}manifest.json.tmp`, JSON.stringify(this.manifest, null, 2));
     renameSync(`${this.dir}manifest.json.tmp`, `${this.dir}manifest.json`);
   }
@@ -123,7 +123,7 @@ export class SoundStore {
     renameSync(`${this.dir}${file}.tmp`, `${this.dir}${file}`);
     if (old?.file && old.file !== file) this.#unlink(old.file);
     this.manifest[slot] = { file, version: (old?.version ?? 0) + 1, volume: old?.volume ?? 1 };
-    this.#saveManifest();
+    this.saveManifest();
     return null;
   }
 
@@ -134,7 +134,7 @@ export class SoundStore {
     const m = this.manifest[slot] ?? { file: null, version: 0 };
     m.volume = Math.min(2, Math.max(0, volume));
     this.manifest[slot] = m;
-    this.#saveManifest();
+    this.saveManifest();
     return null;
   }
 
@@ -144,7 +144,7 @@ export class SoundStore {
     const m = this.manifest[slot];
     if (m?.file) this.#unlink(m.file);
     delete this.manifest[slot];
-    this.#saveManifest();
+    this.saveManifest();
     return null;
   }
 

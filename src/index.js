@@ -5,6 +5,9 @@ import { WebSocketServer } from 'ws';
 import { AccountStore } from './accounts.js';
 import { SoundStore } from './sounds.js';
 import { DialogueStore } from './dialogue.js';
+import { RadioStore } from './radio.js';
+import { World } from './game/World.js';
+import { createReadStream } from 'node:fs';
 import { config } from './config.js';
 import { RoomManager } from './game/RoomManager.js';
 import { createWorld } from './game/World.js';
@@ -33,6 +36,19 @@ const MAX_MAP_BYTES = 4 * 1024 * 1024;
 const MAX_SOUND_BYTES = 30 * 1024 * 1024; // a few minutes of music
 const sounds = new SoundStore();
 const dialogue = new DialogueStore();
+const radio = new RadioStore();
+World.radioDurations = () => radio.durations(); // (so a car's radio knows when one song ends and the next begins)
+// Songs uploaded to the old fixed radio slots (radio1…radio10) move into the playlist, once.
+(async () => {
+  for (let i = 1; i <= 10; i++) {
+    const m = sounds.manifest[`radio${i}`];
+    if (!m?.file) continue;
+    await radio.import(`${sounds.dir}${m.file}`, `Song ${i}`);
+    delete sounds.manifest[`radio${i}`];
+    sounds.saveManifest();
+    logger.info('radio song moved into the playlist', { slot: `radio${i}` });
+  }
+})().catch((err) => logger.warn('radio migration failed', { err: err.message }));
 
 function passwordMatches(given) {
   if (!config.adminPassword || typeof given !== 'string') return false;
@@ -188,6 +204,45 @@ const server = http.createServer(async (req, res) => {
     logger.info('sound changed', { slot, action: req.method === 'DELETE' ? 'reset' : volume ? 'volume' : 'upload' });
     rooms.broadcastAll({ t: ServerMsg.SOUNDS_CHANGED }); // everyone playing picks it up right away
     return json(200, { ok: true, ...sounds.list() });
+  }
+  // ---- radio playlist: list and stream for everyone; upload, rename / volume / move, delete (admin) ----
+  if (req.method === 'GET' && req.url === '/radio') return json(200, { songs: radio.list(), canSave: Boolean(config.adminPassword) });
+  if (req.method === 'GET' && req.url.startsWith('/radio/file/')) {
+    const f = radio.file(decodeURIComponent(req.url.slice('/radio/file/'.length).split('?')[0]));
+    if (!f) return json(404, { error: 'not_found' });
+    // Range requests, so the browser can stream and seek (everyone near a car joins the song mid-way).
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    const headers = { 'content-type': f.type, 'accept-ranges': 'bytes', 'cache-control': 'public, max-age=31536000, immutable' };
+    if (range) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, f.size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), f.size - 1) : f.size - 1;
+      if (start >= f.size || start > end) { res.writeHead(416, { 'content-range': `bytes */${f.size}` }); return res.end(); }
+      res.writeHead(206, { ...headers, 'content-range': `bytes ${start}-${end}/${f.size}`, 'content-length': end - start + 1 });
+      return createReadStream(f.path, { start, end }).pipe(res);
+    }
+    res.writeHead(200, { ...headers, 'content-length': f.size });
+    return createReadStream(f.path).pipe(res);
+  }
+  const radioRoute = req.url.match(/^\/radio(?:\/([a-f0-9]{12}))?(?:\?name=([^&]*))?$/);
+  if (radioRoute && ['POST', 'DELETE'].includes(req.method)) {
+    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
+    if (!passwordMatches(req.headers['x-admin-password'])) {
+      logger.warn('radio edit with wrong password', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'wrong password' });
+    }
+    const [, id, name] = radioRoute;
+    let error;
+    try {
+      if (req.method === 'DELETE') error = id ? radio.remove(id) : 'which song?';
+      else if (id) error = radio.update(id, JSON.parse(await readBody(req, 2000)));
+      else error = await radio.add(decodeURIComponent(name ?? ''), req.headers['content-type'], await readRaw(req, MAX_SOUND_BYTES));
+    } catch (err) {
+      error = err.message === 'too_large' ? `file is too big (max ${MAX_SOUND_BYTES / 1e6} MB)` : 'bad request';
+    }
+    if (error) return json(400, { error });
+    logger.info('radio playlist changed', { action: req.method === 'DELETE' ? 'delete' : id ? 'edit' : 'upload', songs: radio.songs.length });
+    rooms.broadcastAll({ t: ServerMsg.RADIO_CHANGED }); // everyone playing picks up the new playlist
+    return json(200, { ok: true, songs: radio.list() });
   }
   // ---- dialogue editor: what NPCs say (GET for everyone; change or reset a kind of line: admin) ----
   if (req.method === 'GET' && req.url === '/dialogue') return json(200, { ...dialogue.list(), canSave: Boolean(config.adminPassword) });

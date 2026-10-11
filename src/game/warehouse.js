@@ -10,7 +10,7 @@ import { WAREHOUSE_GRIDS, WAREHOUSE_SIZES, WAREHOUSE_TILE } from './buildings.js
 // Items ride belts one per tile. When an item reaches the end of its tile it's handed to the tile it
 // points at, which may refuse (full, wrong side, not wanted) — then it waits. "Moving in direction m"
 // means entering the next tile from its side opposite m.
-//   belt     takes items from behind or either side; passes them forward
+//   belt     takes items from behind only;           passes them out of the front
 //   turnL/R  takes items arriving from its left/right side (they turn left/right) and passes them forward
 //   merger   takes from behind and both sides;     passes forward
 //   splitter takes from behind;                    deals items out left, forward and right in turn (only ways
@@ -287,16 +287,12 @@ export class Warehouse {
     const d = target.dir;
     if (target.kind === 'turnL') return m === turn(d, 1);
     if (target.kind === 'turnR') return m === turn(d, -1);
-    if (target.kind === 'merger' || target.kind === 'belt') return m !== turn(d, 2); // from behind or either side
-    return m === d; // splitters and filters: from behind only
+    if (target.kind === 'merger') return m !== turn(d, 2); // from behind or either side
+    return m === d; // belts, splitters and filters: from behind only (out of the front)
   }
 
-  /**
-   * Offer `good`, moving in direction m, to whatever is at tile (x, y). True if it was taken.
-   * `fromStore`: it's coming out of a container, pallet or machine, which only put onto a plain belt
-   * pointing straight away from them (not one running past their side).
-   */
-  #handTo(x, y, m, good, fromStore = false) {
+  /** Offer `good`, moving in direction m, to whatever is at tile (x, y). True if it was taken. */
+  #handTo(x, y, m, good) {
     const target = this.at(x, y);
     if (!target) return false;
     if (target.kind === 'container') {
@@ -306,7 +302,6 @@ export class Warehouse {
     }
     if (target.w === 1) {
       if (target.item || !this.#entersFrom(target, m)) return false;
-      if (fromStore && target.kind === 'belt' && m !== target.dir) return false; // (a belt running past a container doesn't get loaded)
       target.item = { good, p: 0, from: m };
       target.item.to = this.#plan(target, good);
       return true;
@@ -347,7 +342,7 @@ export class Warehouse {
       const k = (piece.next + i) % (exits.length * goods.length);
       const exit = exits[k % exits.length];
       const good = goods[Math.floor(k / exits.length) % goods.length];
-      if (this.#handTo(exit.x, exit.y, exit.m, good, true)) {
+      if (this.#handTo(exit.x, exit.y, exit.m, good)) {
         add(bag, good, -1);
         piece.next = k + 1;
         return;

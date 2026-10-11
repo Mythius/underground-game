@@ -21,6 +21,7 @@ import { Roadblocks } from './roadblocks.js';
 import { Bodies, generateDumpsters } from './bodies.js';
 import { Hires } from './hires.js';
 import { Fishing } from './fishing.js';
+import { radioAt } from '../radio.js';
 import { Furnishings } from './furnishing.js';
 
 /**
@@ -72,6 +73,9 @@ export function trunkSlot(s) {
 }
 
 export class World {
+  /** Every radio song's length in playlist order (the server sets this from the radio playlist). */
+  static radioDurations = () => [];
+
   #near = new Set(); // (scratch set for car-grid lookups; never used by two loops at once)
   constructor(opts = config.world, playerOpts = config.player, weapons = config.weapons, map = null) {
     this.opts = map ? { ...opts, width: map.width, height: map.height } : opts;
@@ -618,13 +622,15 @@ export class World {
     const v = p.vehicle;
     if (!v) return 'not_in_car';
     const now = this.economy.time;
+    const durations = World.radioDurations();
     if (action === 'toggle') {
+      if (v.radio) v.lastSong = radioAt(v.radio.song, now - v.radio.since, durations).index; // (back on, it picks up from that song)
       v.radio = v.radio ? null : { song: v.lastSong ?? 0, since: now };
-      if (v.radio) v.lastSong = v.radio.song;
       return null;
     }
     if (action === 'next') {
-      const song = v.radio ? v.radio.song + 1 : v.lastSong ?? 0;
+      // The one after whatever it's on now (it's been playing through the playlist since it started).
+      const song = v.radio ? radioAt(v.radio.song, now - v.radio.since, durations).index + 1 : v.lastSong ?? 0;
       v.radio = { song, since: now };
       v.lastSong = song;
       return null;

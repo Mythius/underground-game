@@ -348,3 +348,21 @@ test('the car radio: V switches it on and off, N skips to the next song; others 
   world.radio(player, 'toggle');
   assert.equal(car.radio.song, 1, 'back on where it was');
 });
+
+test('with a playlist, N skips from whatever is playing now (the radio moves on by itself as songs end)', () => {
+  const { world, player } = town();
+  const before = World.radioDurations;
+  World.radioDurations = () => [5, 5, 5, 5];
+  try {
+    const car = new Vehicle(9021, 'sedan', 2000, 2000, 0);
+    world.vehicles.set(car.id, car);
+    Object.assign(player, { vehicle: car, x: car.x, y: car.y });
+    car.driver = player;
+    world.radio(player, 'toggle'); // song 0
+    for (let i = 0; i < 30 * 7; i++) world.step(1 / 30); // 7 s in: song 1 is playing
+    world.radio(player, 'next');
+    assert.equal(car.radio.song, 2, 'the one after the song that was playing');
+  } finally {
+    World.radioDurations = before;
+  }
+});

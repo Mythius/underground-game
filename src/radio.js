@@ -1,0 +1,135 @@
+import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { copyFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { AUDIO_TYPES } from './sounds.js';
+
+// The car radio's playlist: as many songs as you like, uploaded in the sound editor (admin password).
+// Files live in data/radio/ with a playlist.json listing them in order: { id, name, file, duration, volume }.
+// A car's radio plays through the playlist in order from the song it was on; clients stream the files
+// (they can be long) and everyone near the car hears the same point in the same song.
+
+export const RADIO_DIR = fileURLToPath(new URL('../data/radio/', import.meta.url));
+const FALLBACK_SEC = 180; // a song whose length couldn't be measured is taken to be this long
+const NAME_MAX = 80;
+
+/** How long an audio file is, in seconds (ffprobe), or null if it can't tell. */
+function probe(path) {
+  return new Promise((resolve) => {
+    execFile('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path], { timeout: 15000 }, (err, out) => {
+      const sec = Number.parseFloat(String(out ?? '').trim());
+      resolve(!err && Number.isFinite(sec) && sec > 0 ? Math.round(sec * 100) / 100 : null);
+    });
+  });
+}
+
+const cleanName = (name) => String(name ?? '').replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX) || 'Untitled';
+
+/**
+ * Which song is playing `elapsed` seconds after a radio started song number `song`, going through the
+ * playlist in order: { index, offset }. Keep in sync with radioAt() in public/index.html.
+ */
+export function radioAt(song, elapsed, durations) {
+  const n = durations.length;
+  if (!n) return { index: song, offset: elapsed }; // (no playlist yet: the song number stands)
+  const total = durations.reduce((a, b) => a + b, 0);
+  let i = ((song % n) + n) % n;
+  let t = total > 0 ? ((elapsed % total) + total) % total : 0;
+  for (let k = 0; k < n; k++) {
+    if (t < durations[i]) return { index: i, offset: t };
+    t -= durations[i];
+    i = (i + 1) % n;
+  }
+  return { index: i, offset: 0 };
+}
+
+export class RadioStore {
+  constructor(dir = RADIO_DIR) {
+    this.dir = dir;
+    mkdirSync(dir, { recursive: true });
+    try {
+      this.songs = JSON.parse(readFileSync(`${dir}playlist.json`, 'utf8'));
+    } catch {
+      this.songs = [];
+    }
+  }
+
+  #save() {
+    writeFileSync(`${this.dir}playlist.json.tmp`, JSON.stringify(this.songs, null, 2));
+    renameSync(`${this.dir}playlist.json.tmp`, `${this.dir}playlist.json`);
+  }
+
+  /** What clients need: the playlist in order, with where to stream each song from. */
+  list() {
+    return this.songs.map((s) => ({ id: s.id, name: s.name, url: `/radio/file/${s.file}`, duration: s.duration ?? FALLBACK_SEC, volume: s.volume ?? 1 }));
+  }
+
+  /** Every song's length, in playlist order (for working out what a radio is playing). */
+  durations() {
+    return this.songs.map((s) => s.duration ?? FALLBACK_SEC);
+  }
+
+  /** Add an uploaded song to the end of the playlist. Returns an error string, or null. */
+  async add(name, contentType, data) {
+    const ext = AUDIO_TYPES[(contentType ?? '').split(';')[0].trim().toLowerCase()];
+    if (!ext) return 'not an audio file (mp3, ogg, wav, m4a, webm or flac)';
+    if (!data?.length) return 'empty file';
+    const id = randomBytes(6).toString('hex');
+    const file = `${id}.${ext}`;
+    writeFileSync(`${this.dir}${file}`, data);
+    const duration = await probe(`${this.dir}${file}`);
+    this.songs.push({ id, name: cleanName(name), file, duration, volume: 1 });
+    this.#save();
+    return null;
+  }
+
+  /** Bring in a file already on disk (the old fixed radio slots). */
+  async import(path, name) {
+    const ext = path.split('.').pop().toLowerCase();
+    const id = randomBytes(6).toString('hex');
+    const file = `${id}.${ext}`;
+    copyFileSync(path, `${this.dir}${file}`);
+    this.songs.push({ id, name: cleanName(name), file, duration: await probe(`${this.dir}${file}`), volume: 1 });
+    this.#save();
+  }
+
+  /** Rename, set the volume of, or move (to position `to`) a song. */
+  update(id, { name, volume, to } = {}) {
+    const i = this.songs.findIndex((s) => s.id === id);
+    if (i < 0) return 'unknown song';
+    const s = this.songs[i];
+    if (name !== undefined) s.name = cleanName(name);
+    if (volume !== undefined) {
+      if (!(typeof volume === 'number' && volume >= 0 && volume <= 2)) return 'volume must be 0–2';
+      s.volume = volume;
+    }
+    if (to !== undefined) {
+      if (!Number.isInteger(to)) return 'bad position';
+      this.songs.splice(i, 1);
+      this.songs.splice(Math.max(0, Math.min(this.songs.length, to)), 0, s);
+    }
+    this.#save();
+    return null;
+  }
+
+  remove(id) {
+    const i = this.songs.findIndex((s) => s.id === id);
+    if (i < 0) return 'unknown song';
+    const [s] = this.songs.splice(i, 1);
+    try { unlinkSync(`${this.dir}${s.file}`); } catch {}
+    this.#save();
+    return null;
+  }
+
+  /** A song file to stream: { path, size, type }, or null. */
+  file(name) {
+    if (!/^[a-f0-9]{12}\.[a-z0-9]+$/.test(name) || !this.songs.some((s) => s.file === name)) return null;
+    const ext = name.split('.').pop();
+    const type = Object.entries(AUDIO_TYPES).find(([, e]) => e === ext)?.[0] ?? 'application/octet-stream';
+    try {
+      return { path: `${this.dir}${name}`, size: statSync(`${this.dir}${name}`).size, type };
+    } catch {
+      return null;
+    }
+  }
+}

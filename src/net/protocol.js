@@ -63,6 +63,7 @@ export const ServerMsg = Object.freeze({
   BODY: 'body', // { t, id, kind, name, cash, items } what's on a body you're looking at
   NEWS: 'news', // { t, kind: 'raid', building } something everyone hears about
   SOUNDS_CHANGED: 'sounds_changed', // { t } the sound editor changed a sound; fetch GET /sounds again
+  RADIO_CHANGED: 'radio_changed', // { t } the radio playlist changed; fetch GET /radio again
   DIALOGUE_CHANGED: 'dialogue_changed', // { t } the dialogue editor changed what NPCs say; fetch GET /dialogue again
   MAP_CHANGED: 'map_changed', // { t } the admin saved a new map; back to the menu (a new welcome follows)
   TEAM: 'team', // { t, members: [{id (client), name, player (player id, 0 if dead), me}], invites: [{id (client), name}], max } your team panel

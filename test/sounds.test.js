@@ -38,12 +38,3 @@ test('upload a sound, serve it, change its volume, reset it', () => {
   assert.equal(again.list().custom.rain.volume, 0.5);
 });
 
-test('car radio song slots (with a number in their name) upload and are served', () => {
-  const dir = `${mkdtempSync(join(tmpdir(), 'snd-'))}/`;
-  const store = new SoundStore(dir);
-  assert.equal(store.upload('radio3', 'audio/mpeg', Buffer.from('ID3fake')), null);
-  const url = store.list().custom.radio3.url;
-  const file = url.split('/').pop().split('?')[0];
-  assert.ok(store.read(file), 'served');
-  assert.equal(store.read('radio3.mp3/../x'), null);
-});

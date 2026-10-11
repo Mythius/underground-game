@@ -154,23 +154,18 @@ test('splitters deal left, forward and right in turn, filters sort, mergers join
   assert.deepEqual([sort('plastic'), sort('plastic')].sort(), ['north', 'south'], 'the chosen good: left and right in turn');
   assert.equal(sort('fuel'), 'east');
 
-  // Belts and mergers take items from the side too (not head-on, from the front).
+  // A plain belt only takes items from behind (out of its front); a merger takes them from the sides too.
   act({ action: 'place', kind: 'belt', x: 1, y: 1, dir: E });
   act({ action: 'place', kind: 'belt', x: 2, y: 0, dir: S }); // points down into (2,1)
   act({ action: 'place', kind: 'belt', x: 2, y: 1, dir: E });
   wh.at(2, 0).item = { good: 'logs', p: 1 };
   wh.step(0.01);
-  assert.equal(wh.at(2, 1).item?.good, 'logs', 'side-loaded onto a belt');
-  assert.equal(wh.at(2, 1).item.from, S, 'it remembers it came in from the side');
-  wh.at(2, 1).item = null;
-  act({ action: 'rotate', x: 2, y: 1 }); act({ action: 'rotate', x: 2, y: 1 }); act({ action: 'rotate', x: 2, y: 1 }); // now facing north, up into (2,0)
-  wh.at(2, 0).item = { good: 'logs', p: 1 };
-  wh.step(0.01);
-  assert.equal(wh.at(2, 1).item, null, 'never head-on');
+  assert.equal(wh.at(2, 1).item, null, 'belts refuse items from the side');
   act({ action: 'remove', x: 2, y: 1 });
   act({ action: 'place', kind: 'merger', x: 2, y: 1, dir: E });
   wh.step(0.01);
-  assert.equal(wh.at(2, 1).item?.good, 'logs');
+  assert.equal(wh.at(2, 1).item?.good, 'logs', 'a merger takes them');
+  assert.equal(wh.at(2, 1).item.from, S, 'it remembers it came in from the side');
 });
 
 test('the inverse filter sends its good straight on and everything else to the sides; items come off belts by hand', () => {

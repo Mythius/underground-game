@@ -806,6 +806,9 @@
         case 'dialogue_changed':
           loadDialogue();
           break;
+        case 'radio_changed':
+          loadPlaylist();
+          break;
         case 'owners':
           econ.owners = new Map(msg.list);
           buildMinimap();
@@ -2167,7 +2170,7 @@
         }
         const BELT_ICONS = { belt: '➡️', turnL: '↰', turnR: '↱', merger: '⤵', splitter: '⑂', filter: '⛛', invfilter: '⛉', container: '📦' };
         const BELT_TIPS = {
-          belt: 'Carries goods forward. Takes them from behind or from either side.',
+          belt: 'Carries goods forward: takes them in at the back, out of the front.',
           merger: 'Takes goods from behind and both sides, and sends them out of the front.',
           splitter: 'Takes goods from behind and deals them out left, forward and right in turn (only to ways where something can take them).',
           filter: 'Its chosen good goes out to the left and right in turn; everything else straight on.',
@@ -3713,7 +3716,6 @@
       pickpocket: (o) => { noiseBurst(o, { dur: 0.12, freq: 3500, q: 1, vol: 0.12 }); },
       bribe: (o) => { noiseBurst(o, { dur: 0.2, freq: 2500, q: 0.8, vol: 0.15 }); tone(o, { at: 0.15, dur: 0.1, type: 'square', freq: 1320, vol: 0.08 }); },
       hire: (o) => { tone(o, { dur: 0.15, freq: 196, vol: 0.2 }); tone(o, { at: 0.14, dur: 0.25, freq: 147, vol: 0.2 }); },
-      radio1: (o) => { const src = audio.ctx.createBufferSource(); src.buffer = (builtInSong ??= makeBuiltInSong(audio.ctx)); src.connect(o); src.start(); src.stop(audio.ctx.currentTime + 4); }, // the built-in tune
     };
 
     // ---- custom sounds from the sound editor (GET /sounds): uploaded files replace the built-in ones ----
@@ -3749,7 +3751,7 @@
       // Loops are rebuilt so they pick up new files.
       for (const l of Object.values(audio.loops)) if (l) { try { l.src?.stop(); l.o?.stop(); } catch {} l.g.disconnect(); }
       audio.loops = {};
-      for (const [id, r] of radios) { try { r.src.stop(); } catch {} r.g.disconnect(); radios.delete(id); } // (radios too: a new song may be in)
+
     }
 
     // ---- sound editor: every sound slot, with preview, upload, volume and reset (admin password) ----
@@ -3757,6 +3759,11 @@
     const soundsEl = document.getElementById('sounds');
     const LOOP_PREVIEWS = { // what the built-in loops sound like, for the preview button
       engine: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 70, endFreq: 140, vol: 0.15, attack: 0.1 }),
+      engineSedan: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 70, endFreq: 140, vol: 0.15, attack: 0.1 }),
+      engineSports: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 95, endFreq: 210, vol: 0.15, attack: 0.1 }),
+      enginePickup: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 58, endFreq: 115, vol: 0.16, attack: 0.1 }),
+      enginePolice: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 78, endFreq: 160, vol: 0.15, attack: 0.1 }),
+      engineTruck: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 42, endFreq: 85, vol: 0.18, attack: 0.1 }),
       skid: (o) => noiseBurst(o, { dur: 1.2, freq: 1400, q: 4, vol: 0.6 }),
       rain: (o) => noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 1800, q: 0.5, vol: 0.5 }),
       siren: (o) => { for (let i = 0; i < 4; i++) tone(o, { at: i * 0.5, dur: 0.5, type: 'triangle', freq: i % 2 ? 900 : 650, endFreq: i % 2 ? 650 : 900, vol: 0.25 }); },
@@ -3883,8 +3890,88 @@
           row.append(name, ctrls);
           inner.append(row);
         }
+        if (group.group === 'Vehicles') inner.append(radioPlaylistSection()); // the car radio's songs, with the car sounds
       }
+      if (!custom.slots.some((g) => g.group === 'Vehicles')) inner.append(radioPlaylistSection()); // (normally right after Vehicles)
       soundsEl.append(inner);
+    }
+
+    // ---- the car radio's playlist (in the sound editor): upload many songs at once, rename, reorder, delete ----
+    let radioUploading = null; // 'Uploading 3 of 40…' while a batch goes up
+    let radioPreview = null; // the <audio> playing a song's preview
+    async function radioRequest(path, method, body, headers = {}) {
+      const password = adminPassword();
+      if (!password) return null;
+      try {
+        const res = await fetch(path, { method, headers: { 'x-admin-password': password, ...headers }, body });
+        const data = await res.json();
+        if (res.status === 401) { sessionStorage.removeItem('ug-admin'); toast('Wrong password'); return null; }
+        if (!res.ok) { toast(`Couldn't save: ${data.error}`); return null; }
+        sessionStorage.setItem('ug-admin', password);
+        playlist.songs = data.songs;
+        return data;
+      } catch {
+        toast("Couldn't reach the server");
+        return null;
+      }
+    }
+    async function uploadSongs(files) {
+      let done = 0;
+      for (const file of files) {
+        radioUploading = `Uploading ${done + 1} of ${files.length}: ${file.name}…`;
+        renderSoundEditor();
+        const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+        if (!(await radioRequest(`/radio?name=${encodeURIComponent(name)}`, 'POST', file, { 'content-type': file.type || 'audio/mpeg' }))) break;
+        done++;
+      }
+      radioUploading = null;
+      renderSoundEditor();
+      if (done) toast(`📻 ${done} song${done === 1 ? '' : 's'} added to the radio`);
+    }
+    const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+    function radioPlaylistSection() {
+      const box = document.createElement('div');
+      box.append(Object.assign(document.createElement('h2'), { textContent: `📻 Car radio playlist (${playlist.songs.length} song${playlist.songs.length === 1 ? '' : 's'})` }));
+      const intro = document.createElement('div');
+      intro.className = 'sub';
+      intro.textContent = 'A car\'s radio (V on/off, N next song) plays these in order, one after another, and everyone near the car hears it. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.';
+      const upload = document.createElement('label');
+      upload.className = 'file';
+      upload.textContent = radioUploading ?? '⬆ Upload songs…';
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'audio/*', multiple: true });
+      input.onchange = () => input.files.length && !radioUploading && uploadSongs([...input.files]);
+      upload.append(input);
+      box.append(intro, upload);
+      playlist.songs.forEach((song, i) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const name = document.createElement('div');
+        name.className = 'name';
+        const title = Object.assign(document.createElement('input'), { type: 'text', value: song.name, maxLength: 80, title: 'Rename (Enter to save)' });
+        title.style.cssText = 'width:100%;font:inherit;background:#12151a;color:#eee;border:1px solid #3a3f48;border-radius:.3rem;padding:.2rem .4rem';
+        title.onchange = () => title.value.trim() && title.value.trim() !== song.name && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ name: title.value.trim() }), { 'content-type': 'application/json' });
+        name.append(title, Object.assign(document.createElement('small'), { textContent: `${i + 1}. · ${mmss(song.duration)}` }));
+        const ctrls = document.createElement('div');
+        ctrls.className = 'ctrls';
+        const btn = (label, tip, fn) => Object.assign(document.createElement('button'), { textContent: label, title: tip, onclick: fn });
+        ctrls.append(
+          btn(radioPreview?.dataset.id === song.id ? '⏹ Stop' : '▶ Play', 'Listen', () => {
+            const same = radioPreview?.dataset.id === song.id;
+            radioPreview?.pause();
+            radioPreview = null;
+            if (!same) { radioPreview = new Audio(song.url); radioPreview.dataset.id = song.id; radioPreview.volume = Math.min(1, song.volume); radioPreview.play().catch(() => {}); }
+            renderSoundEditor();
+          }),
+          btn('↑', 'Earlier in the playlist', () => i > 0 && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ to: i - 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
+          btn('↓', 'Later in the playlist', () => i < playlist.songs.length - 1 && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ to: i + 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
+        );
+        const vol = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 200, step: 5, value: Math.round(song.volume * 100), title: 'Volume' });
+        vol.onchange = () => radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ volume: vol.value / 100 }), { 'content-type': 'application/json' });
+        ctrls.append(vol, btn('🗑', 'Remove from the playlist', () => confirm(`Remove "${song.name}" from the radio?`) && radioRequest(`/radio/${song.id}`, 'DELETE').then(renderSoundEditor)));
+        row.append(name, ctrls);
+        box.append(row);
+      });
+      return box;
     }
 
     function openSoundEditor() {
@@ -3892,9 +3979,12 @@
       soundsEl.hidden = false;
       renderSoundEditor();
       loadSounds();
+      loadPlaylist();
     }
     function closeSoundEditor() {
       soundsEl.hidden = true;
+      radioPreview?.pause();
+      radioPreview = null;
       try { previewing?.stop(); } catch {}
     }
     document.getElementById('open-sounds').onclick = openSoundEditor;
@@ -3975,6 +4065,7 @@
     addEventListener('keydown', (e) => { if (e.code === 'Escape' && !soundsEl.hidden) closeSoundEditor(); });
     loadSounds();
     loadDialogue();
+    loadPlaylist();
 
     function sfx(name, at, volume = 1) {
       if (!audio.ctx || settings.mute || audio.ctx.state !== 'running') return;
@@ -4080,18 +4171,43 @@
       return (audio.loops[name] = made);
     }
     const loopGain = (l, name, value, now, smooth = 0.3) => l?.g.gain.setTargetAtTime(value * slotVolume(name), now, smooth);
+    /** The sound editor slot for a kind of car's engine: 'sedan' -> 'engineSedan'. */
+    const engineSlot = (type) => `engine${type[0].toUpperCase()}${type.slice(1)}`;
+    const ENGINE_PITCH = { sedan: 45, sports: 62, pickup: 38, police: 50, truck: 28 }; // the built-in drone's idle pitch (Hz)
 
     // ---- car radios: every car with its radio on plays its song; you hear the ones near you, fading with distance ----
     const RADIO_RANGE = 900;
     const radios = new Map(); // vehicle id -> { src, g, pan, key }
     let builtInSong = null;
-    /** The songs uploaded in the sound editor (Car radio slots), in slot order; with none, a built-in tune. */
-    function radioSongs() {
-      const up = [];
-      for (let i = 1; i <= 10; i++) if (custom.buffers.has(`radio${i}`)) up.push({ slot: `radio${i}`, buffer: custom.buffers.get(`radio${i}`) });
-      if (up.length) return up;
-      builtInSong ??= makeBuiltInSong(audio.ctx);
-      return [{ slot: 'radio1', buffer: builtInSong }];
+    const playlist = { songs: [], canSave: true }; // GET /radio: [{ id, name, url, duration, volume }] in order
+    async function loadPlaylist() {
+      try {
+        const data = await (await fetch('/radio')).json();
+        Object.assign(playlist, data);
+        if (!soundsEl.hidden) renderSoundEditor();
+      } catch {}
+    }
+    /** Which playlist song a radio is on, `elapsed` seconds after it started song `song`. Keep in sync with radioAt() in src/radio.js. */
+    function radioAt(song, elapsed) {
+      const d = playlist.songs.map((x) => x.duration);
+      const n = d.length;
+      if (!n) return { index: song, offset: elapsed };
+      const total = d.reduce((x, y) => x + y, 0);
+      let i = ((song % n) + n) % n;
+      let t = total > 0 ? ((elapsed % total) + total) % total : 0;
+      for (let k = 0; k < n; k++) {
+        if (t < d[i]) return { index: i, offset: t };
+        t -= d[i];
+        i = (i + 1) % n;
+      }
+      return { index: i, offset: 0 };
+    }
+    /** What a car's radio is playing right now: { song (or null: the built-in tune), offset }. */
+    function radioNow(v) {
+      const elapsed = v.radio.playing + (performance.now() - v.radio.at) / 1000;
+      if (!playlist.songs.length) return { song: null, offset: elapsed, index: 0 };
+      const { index, offset } = radioAt(v.radio.song, elapsed);
+      return { song: playlist.songs[index], offset, index };
     }
     /** A little looping tune (square lead over a bass line), so a radio plays something before any songs are uploaded. */
     function makeBuiltInSong(a) {
@@ -4111,6 +4227,20 @@
       }
       return buf;
     }
+    /** Stop and let go of a car's radio. */
+    function dropRadio(id) {
+      const r = radios.get(id);
+      if (!r) return;
+      try { r.src?.stop(); } catch {}
+      if (r.el) { r.el.pause(); r.el.removeAttribute('src'); r.el.load(); }
+      r.g.disconnect();
+      radios.delete(id);
+    }
+    /**
+     * Every car with its radio on within earshot plays: uploaded songs are streamed (an <audio> element
+     * through the mixer, so it can fade and pan), the built-in tune is a buffer. Everyone hears the same
+     * point in the same song; if a stream drifts too far it's nudged back.
+     */
     function updateRadios(now) {
       const a = audio.ctx;
       const ear = me && playing ? me : null;
@@ -4121,34 +4251,40 @@
           if (!v.radio) continue;
           const d = id === inCar ? 0 : Math.hypot(v.x - ear.x, v.y - ear.y);
           if (d > RADIO_RANGE) continue;
-          const songs = radioSongs();
-          const song = songs[((v.radio.song % songs.length) + songs.length) % songs.length];
-          const key = `${song.slot}:${v.radio.song}`;
+          const { song, offset } = radioNow(v);
+          const key = song ? song.id : `builtin:${v.radio.song}`;
           let r = radios.get(id);
-          if (!r || r.key !== key) { // (re)start it, at the point in the song everyone else is at
-            if (r) { try { r.src.stop(); } catch {} r.g.disconnect(); }
-            const src = a.createBufferSource(); src.buffer = song.buffer; src.loop = true;
+          if (r && r.key !== key) { dropRadio(id); r = null; }
+          if (!r) {
             const g = a.createGain(); g.gain.value = 0;
             const pan = a.createStereoPanner ? a.createStereoPanner() : null;
-            src.connect(g);
             if (pan) { g.connect(pan); pan.connect(audio.master); } else g.connect(audio.master);
-            const elapsed = v.radio.playing + (performance.now() - v.radio.at) / 1000;
-            src.start(0, elapsed % song.buffer.duration);
-            r = { src, g, pan, key };
+            r = { g, pan, key };
+            if (song) { // stream it, starting where everyone else is
+              const el = new Audio();
+              el.preload = 'auto';
+              el.src = song.url;
+              a.createMediaElementSource(el).connect(g);
+              el.addEventListener('loadedmetadata', () => { el.currentTime = Math.min(offset, Math.max(0, (el.duration || offset) - 0.5)); el.play().catch(() => {}); }, { once: true });
+              r.el = el;
+            } else {
+              builtInSong ??= makeBuiltInSong(a);
+              const src = a.createBufferSource(); src.buffer = builtInSong; src.loop = true;
+              src.connect(g);
+              src.start(0, offset % builtInSong.duration);
+              r.src = src;
+            }
             radios.set(id, r);
+          } else if (r.el && r.el.readyState >= 1 && !r.el.seeking && Math.abs(r.el.currentTime - offset) > 3) {
+            r.el.currentTime = offset; // drifted: back in step with everyone else
           }
           want.add(id);
           const fade = id === inCar ? 1 : Math.max(0, 1 - d / RADIO_RANGE) ** 1.6; // fades out with distance
-          r.g.gain.setTargetAtTime(0.55 * slotVolume(song.slot) * fade, now, 0.15);
+          r.g.gain.setTargetAtTime(0.55 * (song?.volume ?? 1) * fade, now, 0.15);
           if (r.pan) r.pan.pan.setTargetAtTime(id === inCar ? 0 : Math.max(-1, Math.min(1, (v.x - ear.x) / 600)), now, 0.15);
         }
       }
-      for (const [id, r] of radios) {
-        if (want.has(id)) continue;
-        try { r.src.stop(); } catch {}
-        r.g.disconnect();
-        radios.delete(id);
-      }
+      for (const id of [...radios.keys()]) if (!want.has(id)) dropRadio(id);
     }
 
     function updateLoops(dt) {
@@ -4161,13 +4297,19 @@
         src.connect(f); f.connect(g); g.connect(audio.master); src.start();
         return { src, g };
       };
-      const engine = loop('engine', () => {
+      // The engine: this kind of car's own sound if one's uploaded, else the general one, else a built-in
+      // drone pitched for the car (a Mercedes revs higher, a KAMAZ rumbles lower).
+      const carNow = me && playing ? me.car : null;
+      const typeSlot = carNow ? engineSlot(carNow.type) : 'engine';
+      const engineName = custom.buffers.has(typeSlot) ? typeSlot : custom.buffers.has('engine') ? 'engine' : typeSlot;
+      const engine = loop(engineName, () => {
         const o = a.createOscillator(); o.type = 'sawtooth';
         const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500;
         const g = a.createGain(); g.gain.value = 0;
         o.connect(f); f.connect(g); g.connect(audio.master); o.start();
         return { o, g };
       });
+      for (const [name, l] of Object.entries(audio.loops)) if (name.startsWith('engine') && name !== engineName) loopGain(l, name, 0, now, 0.1); // (the last car's engine falls quiet)
       const skid = loop('skid', noiseLoop('bandpass', 1400, 4));
       const rain = loop('rain', noiseLoop('lowpass', 1800, 0.5));
       const wind = loop('wind', null);
@@ -4190,8 +4332,8 @@
       const car = me && playing ? me.car : null;
       const speed = car ? Math.hypot(car.vx, car.vy) : 0;
       if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + Math.min(speed / 500, 1) * 0.9, now, 0.1); // revs with speed
-      else engine?.o.frequency.setTargetAtTime(45 + speed * 0.22, now, 0.1);
-      loopGain(engine, 'engine', car ? (engine?.file ? 0.35 : 0.05) + Math.min(speed / 500, 1) * (engine?.file ? 0.35 : 0.05) : 0, now, 0.15);
+      else engine?.o.frequency.setTargetAtTime((ENGINE_PITCH[carNow?.type] ?? 45) + speed * 0.22, now, 0.1);
+      loopGain(engine, engineName, car ? (engine?.file ? 0.35 : 0.05) + Math.min(speed / 500, 1) * (engine?.file ? 0.35 : 0.05) : 0, now, 0.15);
       const slip = car ? Math.abs(-car.vx * Math.sin(car.angle) + car.vy * Math.cos(car.angle)) : 0;
       loopGain(skid, 'skid', slip > 90 ? Math.min((slip - 90) / 200, 1) * (skid?.file ? 0.5 : 0.12) : 0, now, 0.05);
       const winter = season.main === 'winter';
@@ -7634,8 +7776,8 @@
         if (me?.car) {
           const boost = Math.round(me.car.boost ?? 0);
           const radio = snapshots.at(-1)?.vehicles.get(me.car.id)?.radio;
-          const songs = radio ? radioSongs() : [];
-          const radioText = radio ? `📻 Song ${(((radio.song % songs.length) + songs.length) % songs.length) + 1}/${songs.length} (N next · V off)` : '📻 V radio';
+          const on = radio ? radioNow({ radio }) : null;
+          const radioText = radio ? `📻 ${on.song ? `${on.song.name} (${on.index + 1}/${playlist.songs.length})` : 'Radio on'} — N next · V off` : '📻 V radio';
           const sirenText = me.car.type === 'police' ? (snapshots.at(-1)?.vehicles.get(me.car.id)?.siren ? '   ·   🚨 Siren ON — they know where you are (H off)' : '   ·   🚨 H siren') : '';
           fuelEl.textContent = `⛽ Fuel ${Math.round(me.car.fuel ?? 0)}%${(me.car.fuel ?? 0) <= 0 ? ' — empty! push to a gas station' : (me.car.fuel ?? 0) < 15 ? ' — low' : ''}   ·   🍾 Boost ${boost}%${me.car.boosting ? ' 🔥' : boost > 0 ? ' (Space)' : ' — pour vodka in'}   ·   ${radioText}${sirenText}`;
         }
