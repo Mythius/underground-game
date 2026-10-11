@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { segmentRectHit } from '../utils/math.js';
 import { Bullet } from './entities.js';
+import { hotbarOf } from './cargo.js';
 import { Vehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 
 // Hired muscle, from the barman at the БАР. Everything is paid from the bank.
@@ -18,7 +19,8 @@ import { Vehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 // own (the Militsiya chase and arrest them like anyone), but a witness sometimes traces it back to
 // whoever hired them. Hitmen are never traced.
 
-const ROLES = ['goon', 'guard', 'hitman'];
+const ROLES = ['goon', 'guard', 'hitman']; // the ones the barman hires out
+const ALL_ROLES = [...ROLES, 'gangster']; // (gangsters work for nobody: employer null)
 const inside = (b, x, y, m = 0) => x > b.x + m && x < b.x + b.w - m && y > b.y + m && y < b.y + b.h - m;
 
 export class Hires {
@@ -30,6 +32,9 @@ export class Hires {
     this.time = 0;
     this.wageTimer = 0;
     this.events = []; // { player | account, kind, … } for the room to tell people
+    this.gangsterTimers = []; // seconds until each missing gangster is replaced
+    for (let i = 0; i < config.gangsters.count; i++) this.#spawnGangster();
+    this.started = true;
   }
 
   // ---- who's who ----------------------------------------------------------------------
@@ -140,11 +145,23 @@ export class Hires {
   }
 
   /** What the bar panel shows p. */
+  /** A bottle of vodka from the barman: dear (cash), but no questions asked. */
+  buyVodka(p) {
+    if (!this.atBar(p)) return 'too_far';
+    const price = config.hires.barVodkaPrice;
+    if (p.cash < price) return 'not_enough_cash';
+    if (hotbarOf(p).room('vodka') < 1) return 'no_room';
+    p.cash -= price;
+    hotbarOf(p).add('vodka', 1);
+    return null;
+  }
+
   describe(p) {
     const r = config.hires;
     return {
       kind: 'bar',
       id: this.bar?.id ?? 0,
+      vodkaPrice: r.barVodkaPrice,
       prices: Object.fromEntries(ROLES.map((role) => [role, { fee: r[role].fee, wage: r[role].wagePerMin ?? 0, max: r[role].max, sec: r[role].contractSec ?? 0 }])),
       mine: this.mine(p.account).map((h) => ({
         id: h.id,
@@ -167,7 +184,8 @@ export class Hires {
   hitBy(ax, ay, bx, by, r, segmentDistSq, shooter) {
     for (const h of this.list) {
       if (h.vehicle || h === shooter) continue;
-      if (shooter && (shooter.kind === 'player' || shooter.kind === 'hire') && h.employer === (shooter.employer ?? shooter.account)) continue; // no shooting your own
+      if (shooter && (shooter.kind === 'player' || shooter.kind === 'hire') && h.employer && h.employer === (shooter.employer ?? shooter.account)) continue; // no shooting your own
+      if (h.role === 'gangster' && (shooter?.role === 'gangster' || shooter?.kind === 'officer')) continue; // (nor your own crew; and the Militsiya leave gangsters be)
       if (segmentDistSq(ax, ay, bx, by, h.x, h.y) < (h.radius + r) ** 2) return h;
     }
     return null;
@@ -176,11 +194,11 @@ export class Hires {
   /** Hurt hire h (armour soaks up part of it). Returns true if it killed them. */
   damage(h, amount, attacker) {
     if (!this.list.includes(h)) return false;
-    h.health -= amount * (1 - config.hires.armor);
+    h.health -= amount * (1 - (h.role === 'gangster' ? config.gangsters.armor : config.hires.armor));
     if (attacker) this.noteAttack(attacker, h);
     if (attacker?.kind === 'player' || attacker?.kind === 'hire') this.world.police.crime(attacker, h.health <= 0 ? 'murder' : 'assault');
     if (h.health > 0) return false;
-    this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items: [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }], killer: attacker?.kind === 'player' ? attacker : null });
+    this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items: [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }], cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     this.#tell(h, 'hire_died');
     this.#remove(h, true);
     return true;
@@ -211,8 +229,13 @@ export class Hires {
     if (i === -1) return;
     this.list.splice(i, 1);
     h.alive = false;
+    if (h.role === 'gangster') {
+      if (h.holdup?.p) h.holdup.p.heldUp = null;
+      if (h.vehicle) { h.vehicle.ai = null; h.vehicle.stolenBy = null; }
+      this.gangsterTimers.push(config.gangsters.respawnSec); // a new face, in a while
+    }
     if (h.vehicle) this.#leaveCar(h, false);
-    for (const c of [h.car, h.oldCar]) if (c && !c.driver && !c.passenger) this.world.vehicles.delete(c.id); // his car goes with him
+    if (h.role !== 'gangster') for (const c of [h.car, h.oldCar]) if (c && !c.driver && !c.passenger) this.world.vehicles.delete(c.id); // his car goes with him
     // A hitman who didn't finish the job: half the fee back.
     if (h.role === 'hitman' && h.target && !h.done) {
       const back = Math.floor(h.fee * config.hires.hitman.refundShare);
@@ -229,14 +252,16 @@ export class Hires {
   step(dt) {
     this.time += dt;
     this.#wages(dt);
+    for (let i = this.gangsterTimers.length - 1; i >= 0; i--) if ((this.gangsterTimers[i] -= dt) <= 0 && this.#spawnGangster()) this.gangsterTimers.splice(i, 1);
     for (const h of [...this.list]) {
       if (!this.list.includes(h)) continue;
       if (h.jailed) continue;
-      h.health = Math.min(h.maxHealth, h.health + config.hires.regenPerSec * dt);
+      if (h.role !== 'gangster') h.health = Math.min(h.maxHealth, h.health + config.hires.regenPerSec * dt); // (gangsters don't heal)
       h.fireCooldown = Math.max(0, h.fireCooldown - dt);
       if (h.reload > 0 && (h.reload -= dt) <= 0) h.ammo = config.weapons[h.weapon].magazineSize;
       if (h.role === 'goon') this.#goon(h, dt);
       else if (h.role === 'guard') this.#guard(h, dt);
+      else if (h.role === 'gangster') this.#gangster(h, dt);
       else this.#hitman(h, dt);
     }
   }
@@ -247,7 +272,7 @@ export class Hires {
     if (this.wageTimer < 60) return;
     this.wageTimer -= 60;
     const byEmployer = new Map();
-    for (const h of this.list) if (h.role !== 'hitman') byEmployer.set(h.employer, [...(byEmployer.get(h.employer) ?? []), h]);
+    for (const h of this.list) if (h.role !== 'hitman' && h.employer) byEmployer.set(h.employer, [...(byEmployer.get(h.employer) ?? []), h]);
     for (const [account, hires] of byEmployer) {
       const due = hires.reduce((sum, h) => sum + config.hires[h.role].wagePerMin, 0);
       if (account.bank >= due) {
@@ -595,7 +620,8 @@ export class Hires {
     for (const o of this.list) {
       if (o === h || o.vehicle || this.friendly(h, o)) continue;
       const intruder = post && inside(post, o.x, o.y);
-      consider(o, intruder || this.#isFoe(h, o) || (owner && this.#isFoe(owner, o)) || (o.role === 'hitman' && o.target === owner));
+      const hood = o.role === 'gangster' && (h.role === 'goon' || h.role === 'guard'); // goons and guards go for gangsters on sight
+      consider(o, intruder || hood || this.#isFoe(h, o) || (owner && this.#isFoe(owner, o)) || (o.role === 'hitman' && o.target === owner));
     }
     if (h.role === 'hitman') return best; // (the target is handled by the hunt)
     const hurtUs = (x) => this.#isFoe(h, x) || this.#isFoe(owner, x);
@@ -778,16 +804,262 @@ export class Hires {
     return fallback ?? { x: cx + 1200, y: cy };
   }
 
-  /** Snapshot rows for hires on foot near (x, y): [id, x, y, angle, role (0 goon, 1 guard, 2 hitman), mine, health %, aiming]. */
+  // ---- gangsters ---------------------------------------------------------------------------
+
+  /** A new gangster, somewhere along a road out of sight of everyone. Returns false if there's nowhere. */
+  #spawnGangster() {
+    const w = this.world, g = config.gangsters;
+    for (let i = 0; i < 60 && w.roads.length; i++) {
+      const road = w.roads[Math.floor(Math.random() * w.roads.length)];
+      const x = road.x + Math.random() * road.w, y = road.y + Math.random() * road.h;
+      if (w.isBlocked(x, y, 22) || w.isSwimming(x, y)) continue;
+      if ([...w.players.values()].some((p) => Math.hypot(p.x - x, p.y - y) < 900)) continue;
+      const r = config.hires;
+      const lonely = this.list.find((o) => o.role === 'gangster' && !this.#partner(o)); // they go about in pairs
+      const g2 = {
+        kind: 'hire', role: 'gangster', id: this.nextId++, employer: null, name: 'a gangster',
+        x, y, angle: 0, health: g.health, maxHealth: g.health, radius: r.radius,
+        weapon: g.weapon, fireCooldown: 0, ammo: config.weapons[g.weapon].magazineSize, reload: 0,
+        vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
+        foes: new Map(), offline: 0, pick: null, route: [], seen: new Map(), cash: 0, nextTheft: 0, look: 0, partner: null,
+      };
+      if (lonely) { // a mate for the one on his own (starting out together, or turning up to join him)
+        g2.partner = lonely;
+        lonely.partner = g2;
+        if (!this.started) Object.assign(g2, { x: lonely.x + 50, y: lonely.y });
+      }
+      this.list.push(g2);
+      return true;
+    }
+    return false;
+  }
+
+  /** His mate, if he has one still about. */
+  #partner(h) {
+    const m = h.partner;
+    return m && this.list.includes(m) ? m : null;
+  }
+
+  /** A gangster's turn: a fight if anyone's after him (or his mate); else a hold-up or a stolen car under way; else looking for trouble while he walks the town. The second of a pair just sticks with the first. */
+  #gangster(h, dt) {
+    const g = config.gangsters, w = this.world;
+    h.aiming = false;
+    const mate = this.#partner(h);
+    const threat = this.#threat(h, null, g.fightRange) ?? (mate ? this.#threat(mate, null, g.fightRange) : null); // (a fight with one is a fight with both)
+    if (threat) {
+      if (h.holdup?.p) h.holdup.p.heldUp = null;
+      h.holdup = null;
+      if (h.vehicle) h.vehicle.stolenBy === h ? this.#dumpCar(h) : this.#leaveCar(h);
+      return this.#fightThreat(h, threat, dt, 220);
+    }
+    if (mate && mate.id < h.id) return this.#tagAlong(h, mate, dt);
+    if (h.vehicle) return this.#joyride(h, dt);
+    if (h.holdup) return this.#holdUp(h, dt);
+    if (h.stealing) return this.#goSteal(h, dt);
+    // Looking around (now and then): someone to rob, a car to take.
+    if ((h.look -= dt) <= 0) {
+      h.look = 0.5;
+      for (const p of w.players.values()) {
+        if (!p.alive || p.vehicle || p.hidden || p.jailed || p.heldUp) continue;
+        if ((h.seen.get(p) ?? -Infinity) > this.time) continue;
+        if (Math.hypot(p.x - h.x, p.y - h.y) > g.sight || !w.lineOfSight(h.x, h.y, p.x, p.y)) continue;
+        h.seen.set(p, this.time + g.playerCooldownSec); // sized up: once in a while
+        if (Math.random() < g.robChance && p.cash > 0) {
+          h.holdup = { p, started: false };
+          h.route = [];
+          return;
+        }
+      }
+      if (this.time >= h.nextTheft) {
+        for (const v of w.vehicles.values()) {
+          if (!v.owner?.id || v.hitman || v.police || v.driver || v.passenger || v.stolenBy) continue;
+          if (Math.hypot(v.x - h.x, v.y - h.y) > g.sight || !w.lineOfSight(h.x, h.y, v.x, v.y)) continue;
+          const owner = [...w.players.values()].find((p) => p.account === v.owner);
+          if (owner && Math.hypot((owner.vehicle ?? owner).x - v.x, (owner.vehicle ?? owner).y - v.y) < g.ownerAwayRange) continue; // they're right there
+          h.stealing = v;
+          h.nextTheft = this.time + g.theftCooldownSec;
+          h.route = [];
+          return;
+        }
+      }
+    }
+    this.#wander(h, dt);
+  }
+
+  /** The second of a pair: rides along in his mate's stolen car, covers his hold-ups, otherwise walks at his shoulder. */
+  #tagAlong(h, lead, dt) {
+    const car = lead.vehicle;
+    if (h.vehicle && h.vehicle !== car) this.#leaveCar(h); // the car's been dumped: out
+    if (h.vehicle) { h.x = h.vehicle.x; h.y = h.vehicle.y; return; }
+    if (car) {
+      if (Math.hypot(car.x - h.x, car.y - h.y) < car.stats.length / 2 + 40) return this.#board(h, car);
+      return this.#walk(h, car.x, car.y, config.hires.runSpeed, dt, car);
+    }
+    const victim = lead.holdup?.started ? lead.holdup.p : null;
+    if (victim) { // rifle on them too
+      h.angle = Math.atan2(victim.y - h.y, victim.x - h.x);
+      h.aiming = true;
+      return;
+    }
+    const d = Math.hypot(lead.x - h.x, lead.y - h.y);
+    if (d > 60) this.#walk(h, lead.x - Math.cos(lead.angle) * 40, lead.y - Math.sin(lead.angle) * 40, d > 90 ? config.hires.runSpeed : config.gangsters.walkSpeed, dt); // (jogs to catch up)
+    else h.angle = lead.angle;
+  }
+
+  /** Walk the town: from road to road, somewhere new each time. */
+  #wander(h, dt) {
+    const graph = this.world.townsfolk.graph;
+    if (!h.route.length) {
+      const near = graph.nodes.filter((n) => Math.hypot(n.x - h.x, n.y - h.y) < 1800);
+      const node = near[Math.floor(Math.random() * near.length)];
+      if (!node) return;
+      h.route = graph.route({ x: h.x, y: h.y }, node);
+    }
+    const next = h.route[0];
+    if (Math.hypot(next.x - h.x, next.y - h.y) < 30) return void h.route.shift();
+    this.#walk(h, next.x, next.y, config.gangsters.walkSpeed, dt);
+  }
+
+  /** Walk up, rifle raised: hands up and stand still for holdupSec and they take your cash; run or shoot and it's a fight. */
+  #holdUp(h, dt) {
+    const g = config.gangsters, hu = h.holdup, p = hu.p;
+    const end = () => { p.heldUp = null; h.holdup = null; };
+    if (!p.alive || p.vehicle || p.hidden || p.jailed) return end();
+    const d = Math.hypot(p.x - h.x, p.y - h.y);
+    h.angle = Math.atan2(p.y - h.y, p.x - h.x);
+    h.aiming = true;
+    if (!hu.started) {
+      if (d > g.sight * 1.5) return end(); // got away before he got there
+      if (d > g.holdupRange) return this.#walk(h, p.x, p.y, config.hires.runSpeed, dt);
+      Object.assign(hu, { started: true, at: { x: p.x, y: p.y }, left: g.holdupSec });
+      p.heldUp = { by: h, left: g.holdupSec, of: g.holdupSec };
+      (p.foes ??= new Map()).set(h, this.time + config.hires.foeSec); // (your goons, if any, see the threat)
+      this.events.push({ player: p, kind: 'holdup', sec: g.holdupSec });
+      return;
+    }
+    hu.left -= dt;
+    p.heldUp.left = hu.left;
+    const ran = Math.hypot(p.x - hu.at.x, p.y - hu.at.y) > g.holdupMove || d > g.holdupRange * 2;
+    const drew = p.input?.fire && p.weapon && !config.weapons[p.weapon.type]?.melee;
+    if (ran || drew) { // resisting: he opens fire
+      end();
+      this.noteAttack(p, h);
+      this.events.push({ player: p, kind: 'holdup_resisted' });
+      return;
+    }
+    if (hu.left > 0) return;
+    const take = Math.floor(p.cash * g.take);
+    p.cash -= take;
+    h.cash += take;
+    end();
+    this.world.police.crime(h, 'mugging'); // (if anyone saw)
+    this.events.push({ player: p, kind: 'held_up', amount: take });
+    h.route = [];
+  }
+
+  /** Off to a parked car to steal it; in, and away. */
+  #goSteal(h, dt) {
+    const w = this.world, v = h.stealing;
+    if (!w.vehicles.has(v.id) || v.driver || v.passenger || v.stolenBy) return void (h.stealing = null);
+    const d = Math.hypot(v.x - h.x, v.y - h.y);
+    if (d > v.stats.length / 2 + 40) return this.#walk(h, v.x, v.y, config.hires.runSpeed, dt, v);
+    h.stealing = null;
+    v.stolenBy = h;
+    v.picked = false;
+    this.#board(h, v);
+    const graph = w.townsfolk.graph;
+    const far = graph.nodes.filter((n) => Math.hypot(n.x - v.x, n.y - v.y) > 1500);
+    const dest = far[Math.floor(Math.random() * far.length)];
+    h.joy = { until: this.time + config.gangsters.joyrideSec[0] + Math.random() * (config.gangsters.joyrideSec[1] - config.gangsters.joyrideSec[0]), stuck: 0, reverse: 0 };
+    h.route = dest && graph.nodes.length ? graph.route({ x: v.x, y: v.y }, dest) : [];
+    w.police.crime(h, 'steal_car'); // (if anyone saw)
+    const owner = [...w.players.values()].find((p) => p.account === v.owner);
+    if (owner) this.events.push({ player: owner, kind: 'car_stolen', type: v.type });
+  }
+
+  /** Driving the stolen car off across town; after a while (or at the end of the road) he parks it and walks away. */
+  #joyride(h, dt) {
+    const car = h.vehicle, j = h.joy;
+    if (!this.world.vehicles.has(car.id)) { this.#leaveCar(h, false); return; }
+    h.x = car.x;
+    h.y = car.y;
+    if (this.time > j.until || !h.route.length) {
+      const forward = vehicleMotion(car).forward;
+      car.ai = { gas: Math.abs(forward) > 30 ? -Math.sign(forward) : 0, steer: 0, drift: false };
+      if (car.speed < 40) this.#dumpCar(h);
+      return;
+    }
+    if (car.fuel <= 0) return this.#dumpCar(h); // out of petrol: he ditches it where it is
+    const partner = this.#partner(h);
+    if (partner && !partner.vehicle && Math.hypot(partner.x - car.x, partner.y - car.y) < 500 && (j.waited = (j.waited ?? 0) + dt) < 8) { // waiting for his mate to get in
+      const fw = vehicleMotion(car).forward;
+      car.ai = { gas: Math.abs(fw) > 20 ? -Math.sign(fw) : 0, steer: 0, drift: false };
+      return;
+    }
+    const next = h.route[0];
+    if (Math.hypot(next.x - car.x, next.y - car.y) < 110) h.route.shift();
+    const forward = vehicleMotion(car).forward;
+    const diff = Math.atan2(Math.sin(Math.atan2(next.y - car.y, next.x - car.x) - car.angle), Math.cos(Math.atan2(next.y - car.y, next.x - car.x) - car.angle));
+    if (j.reverse > 0) {
+      j.reverse -= dt;
+      car.ai = { gas: -1, steer: -Math.sign(diff) || 1, drift: false };
+      return;
+    }
+    j.stuck = Math.abs(forward) < 20 ? j.stuck + dt : 0;
+    if (j.stuck > 1.2) { j.stuck = 0; j.reverse = 0.9; }
+    car.ai = { gas: Math.abs(diff) > 1.2 && forward > 150 ? -0.6 : 0.7, steer: Math.max(-1, Math.min(1, diff * 2.2)), drift: false };
+  }
+
+  /** Done with the stolen car (or it's out of petrol): leave it where it is; its owner hears where. */
+  #dumpCar(h) {
+    const car = h.vehicle;
+    car.ai = null;
+    car.stolenBy = null;
+    this.#leaveCar(h);
+    const mate = this.#partner(h);
+    if (mate?.vehicle === car) this.#leaveCar(mate);
+    h.route = [];
+    const owner = [...this.world.players.values()].find((p) => p.account === car.owner);
+    if (owner) this.events.push({ player: owner, kind: 'car_dumped', x: Math.round(car.x), y: Math.round(car.y), type: car.type, id: car.id });
+  }
+
+  /** The gangster `id`, if he's near p and not at war with them. */
+  gangsterFor(p, id) {
+    const h = this.list.find((x) => x.id === id && x.role === 'gangster');
+    if (!h || h.vehicle || Math.hypot(h.x - p.x, h.y - p.y) > config.gangsters.tradeReach + p.radius + h.radius) return null;
+    return h;
+  }
+
+  /** Sell a gangster all the vodka you've got on you (and in your car): vodkaPrice × base a bottle. */
+  sellVodka(p, id) {
+    const h = this.gangsterFor(p, id);
+    if (!h) return 'too_far';
+    if (this.#isFoe(h, p) || h.holdup) return 'gangster_hostile';
+    const holder = this.world.economy.cargoOf(p);
+    const sold = {};
+    let total = 0;
+    for (const good of Object.keys(config.economy.visions)) {
+      const qty = holder.count(good);
+      if (!qty) continue;
+      holder.add(good, -qty);
+      sold[good] = qty;
+      total += qty * Math.round(config.goods[good].base * config.gangsters.vodkaPrice);
+    }
+    if (!total) return 'no_vodka';
+    p.cash += total;
+    return { sold, total };
+  }
+
+  /** Snapshot rows for hires on foot near (x, y): [id, x, y, angle, role (0 goon, 1 guard, 2 hitman, 3 gangster), mine, health %, aiming]. */
   visible(x, y, range, viewer) {
     const out = [];
     for (const h of this.list) {
       if (h.vehicle || Math.abs(h.x - x) > range || Math.abs(h.y - y) > range) continue;
-      out.push([h.id, Math.round(h.x), Math.round(h.y), Math.round(h.angle * 100) / 100, ROLES.indexOf(h.role), viewer && h.employer === viewer ? 1 : 0, Math.round((h.health / h.maxHealth) * 100), h.aiming ? 1 : 0]);
+      out.push([h.id, Math.round(h.x), Math.round(h.y), Math.round(h.angle * 100) / 100, ALL_ROLES.indexOf(h.role), viewer && h.employer && h.employer === viewer ? 1 : 0, Math.round((h.health / h.maxHealth) * 100), h.aiming ? 1 : 0]);
     }
     return out;
   }
 }
 
 // How their bodies look (indexes into config.looks: skin, shirt, pants, hat).
-const LOOKS = { goon: [2, 1, 1, 5], guard: [1, 0, 1, 4], hitman: [0, 0, 0, 3] };
+const LOOKS = { goon: [2, 1, 1, 5], guard: [1, 0, 1, 4], hitman: [0, 0, 0, 3], gangster: [1, 0, 0, 3] };

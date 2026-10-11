@@ -5,6 +5,8 @@ import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { makeWeapon } from '../src/game/entities.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 config.player.healthRegenPerSec = 0; // these tests count exact damage and healing
 
 // A small town with a police station, a shop, a bank and a road.
@@ -23,8 +25,8 @@ function town({ townsfolk = true } = {}) {
   });
   const world = new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
   if (!townsfolk) world.townsfolk.people.length = 0;
-  // Just the station's patrol cars: no checkpoints in the way (their own tests are further down).
-  for (const u of world.police.units.filter((x) => x.post)) world.vehicles.delete(u.car.id);
+  // Just the station's patrol cars: no checkpoints or bank guards in the way (their own tests are further down).
+  for (const u of world.police.units.filter((x) => x.post && x.car)) world.vehicles.delete(u.car.id);
   world.police.units = world.police.units.filter((x) => !x.post);
   for (const r of world.roadblocks.list) for (const id of r.cars) world.vehicles.delete(id);
   world.roadblocks.list.length = 0;
@@ -553,4 +555,98 @@ test('in a stolen Militsiya car, H toggles the siren: while it wails they always
   world.toggleSiren(p);
   world.leaveSeat(p);
   assert.equal(car.siren, false);
+});
+
+test('a baseball bat: hits harder the bigger you are, and smashes an ATM open (broken for a while)', () => {
+  const swing = (world, p, seq) => {
+    p.applyInput({ seq, angle: 0, throttle: 0, boost: false, aim: 0, fire: true });
+    world.step(1 / 30);
+    p.applyInput({ seq: seq + 1, angle: 0, throttle: 0, boost: false, aim: 0, fire: false });
+    for (let i = 0; i < 30; i++) world.step(1 / 30);
+  };
+  const hit = (mass) => {
+    const { world, p } = town({ townsfolk: false });
+    nobodyAround(world);
+    p.inventory[1] = makeWeapon('bat');
+    p.selected = 1;
+    p.mass = mass;
+    const other = world.spawnPlayer('victim');
+    Object.assign(p, { x: 3000, y: 3000 });
+    Object.assign(other, { x: 3000 + p.radius + other.radius + 10, y: 3000 });
+    const before = other.health;
+    swing(world, p, 1);
+    return before - other.health;
+  };
+  const small = hit(config.player.startMass), big = hit(config.player.startMass * 4);
+  assert.ok(small > 0, 'it hurts');
+  assert.ok(big > small * 1.8, `bigger hits harder (${small} vs ${big})`);
+
+  // The ATM.
+  const { world, p, police } = town({ townsfolk: false });
+  nobodyAround(world);
+  police.witnessed = () => false;
+  police.policeSee = () => false;
+  p.inventory[1] = makeWeapon('bat');
+  p.selected = 1;
+  const atm = world.atms[0];
+  Object.assign(p, { x: atm.x - 16 - p.radius - 20, y: atm.y });
+  const cash = p.cash;
+  for (let i = 0; i < config.robbery.atmSmash.hits; i++) swing(world, p, 10 + i * 2);
+  assert.ok(p.cash >= cash + config.robbery.atmSmash.min, 'it spilled its cash');
+  assert.ok(world.atmBroken(atm), 'broken');
+  assert.deepEqual(world.brokenAtmList().map(([x, y]) => [x, y]), [[Math.round(atm.x), Math.round(atm.y)]]);
+  p.account.bank = 1000;
+  assert.equal(world.bank(p, 'withdraw', 10), 'atm_broken', 'no banking at a smashed ATM');
+  assert.equal(police.startRobbery(p), 'nothing_to_rob', 'nothing left to rob');
+  const again = p.cash;
+  swing(world, p, 40);
+  assert.equal(p.cash, again, 'no more cash from it');
+  for (let i = 0; i < config.robbery.atmSmash.brokenSec + 1; i++) world.step(1);
+  assert.ok(!world.atmBroken(atm), 'mended after a while');
+});
+
+test('a bat made at a factory is taken up as a weapon with E', () => {
+  const { world, p } = town({ townsfolk: false });
+  p.inventory[2] = { good: 'bat', qty: 1 };
+  p.selected = 2;
+  assert.equal(world.eat(p), null);
+  assert.ok(p.inventory.some((s) => s?.type === 'bat'));
+  assert.ok(!p.inventory.some((s) => s?.good === 'bat'));
+  assert.equal(p.weapon.type, 'bat', 'in hand');
+});
+
+test('a guard stands inside the bank, goes for anyone robbing it, and walks back to his post after', () => {
+  const { map } = validateMap({ width: 6000, height: 4000, roads: [{ x: 0, y: 1800, w: 6000, h: 270 }], buildings: [{ type: 'police', x: 400, y: 1300, rot: 0 }, { type: 'bank', x: 3000, y: 1400, rot: 0 }] });
+  const world = new World({ ...config.world, foodCount: 0 }, config.player, config.weapons, map);
+  world.townsfolk.people.length = 0;
+  const bank = world.buildings.find((b) => b.type === 'bank');
+  const guard = world.police.bankGuardOf(bank.id);
+  assert.ok(guard, 'a guard');
+  const o = guard.officer;
+  assert.ok(o.onFoot && !guard.car, 'on foot');
+  assert.ok(o.x > bank.x && o.x < bank.x + bank.w && o.y > bank.y && o.y < bank.y + bank.h, 'inside the bank');
+  for (const u of world.police.units) if (u !== guard) u.officer.health = -1e9; // (just him)
+  const post = { x: o.x, y: o.y };
+  // Rob the bank.
+  const p = world.spawnPlayer('robber');
+  p.account = { id: 3, name: 'robber', bank: 0, guest: false };
+  p.inventory[1] = world.makeWeapon('pistol');
+  p.selected = 1;
+  const teller = world.tellers[0];
+  Object.assign(p, { x: teller.x, y: teller.y + 60 });
+  assert.equal(world.police.startRobbery(p), null);
+  assert.equal(guard.target, p, 'straight after the robber');
+  for (let i = 0; i < 30 * 2; i++) world.step(1 / 30);
+  assert.ok(Math.hypot(o.x - post.x, o.y - post.y) > 20 || guard.arrest > 0 || p.jailed, 'he went for them');
+  // Over (they got away): back to his post.
+  p.wanted = 0;
+  p.robbing = null;
+  Object.assign(p, { x: 5800, y: 3800 });
+  for (let i = 0; i < 30 * 20; i++) world.step(1 / 30);
+  assert.ok(Math.hypot(o.x - post.x, o.y - post.y) < 10, `back at his post (${Math.round(Math.hypot(o.x - post.x, o.y - post.y))} away)`);
+  // From out in the street too: in through the front door.
+  const door = guard.post.door;
+  Object.assign(o, { x: door.x + door.nx * 300 + 120, y: door.y + door.ny * 300 });
+  for (let i = 0; i < 30 * 25; i++) world.step(1 / 30);
+  assert.ok(Math.hypot(o.x - post.x, o.y - post.y) < 10, `back in from outside (${Math.round(Math.hypot(o.x - post.x, o.y - post.y))} away)`);
 });

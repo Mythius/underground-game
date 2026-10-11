@@ -5,6 +5,8 @@ import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 function site(type) {
   const { map, error } = validateMap({
     width: 6000, height: 6000,

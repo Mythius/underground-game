@@ -30,6 +30,7 @@ export const ClientMsg = Object.freeze({
   BODY: 'body', // { t, action: 'open' | 'loot' | 'carry' | 'drop', id?, slot? } (drop: the body you carry — into a dumpster, water, under a tree, or down)
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
+  GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
@@ -63,6 +64,7 @@ export const ServerMsg = Object.freeze({
   BODY: 'body', // { t, id, kind, name, cash, items } what's on a body you're looking at
   NEWS: 'news', // { t, kind: 'raid', building } something everyone hears about
   SOUNDS_CHANGED: 'sounds_changed', // { t } the sound editor changed a sound; fetch GET /sounds again
+  ATMS: 'atms', // { t, broken: [[x, y, seconds until it works again]] } ATMs smashed with a bat
   RADIO_CHANGED: 'radio_changed', // { t } the radio playlist changed; fetch GET /radio again
   DIALOGUE_CHANGED: 'dialogue_changed', // { t } the dialogue editor changed what NPCs say; fetch GET /dialogue again
   MAP_CHANGED: 'map_changed', // { t } the admin saved a new map; back to the menu (a new welcome follows)
@@ -188,7 +190,9 @@ const validators = {
       : null,
 
   [ClientMsg.HIRE]: (m) =>
-    ['goon', 'guard', 'hitman', 'dismiss'].includes(m.action) && (m.action === 'goon' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+    ['goon', 'guard', 'hitman', 'dismiss', 'vodka'].includes(m.action) && (m.action === 'goon' || m.action === 'vodka' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+
+  [ClientMsg.GANGSTER]: (m) => (Number.isInteger(m.id) && m.action === 'sell' ? { t: m.t, id: m.id, action: 'sell' } : null),
 
   [ClientMsg.RADIO]: (m) => (m.action === 'toggle' || m.action === 'next' ? { t: m.t, action: m.action } : null),
 

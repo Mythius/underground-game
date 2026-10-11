@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { config } from '../src/config.js';
 import { decodeClientMessage } from '../src/net/protocol.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 test('rejects malformed frames', () => {
   assert.equal(decodeClientMessage('not json').error, 'invalid_json');
   assert.equal(decodeClientMessage('[1,2]').error, 'invalid_shape');

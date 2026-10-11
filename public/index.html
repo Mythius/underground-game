@@ -220,7 +220,6 @@
     #jobhud { position: fixed; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 2; padding: .4rem .8rem; border-radius: .5rem;
       background: rgba(0, 0, 0, .65); color: #fff; font-size: .85rem; font-weight: 600; border: 1px solid #f4c430; max-width: calc(100vw - 30rem); text-align: center; }
     #game { transition: filter 1.5s ease; }
-    #game.drunk { filter: invert(1); }
     #fuel-gauge { position: fixed; left: 50%; bottom: 7.9rem; transform: translateX(-50%); z-index: 2; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000; font-size: .85rem; }
     #bankpanel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; width: min(380px, calc(100vw - 2rem));
       padding: 1.2rem; border-radius: .8rem; background: rgba(22, 22, 22, .96); border: 2px solid #3cb44b; text-align: left; box-shadow: 0 10px 40px rgba(0, 0, 0, .6); }
@@ -342,6 +341,7 @@
     }
     .slot.selected { border-color: #f4c430; background: rgba(60, 52, 20, .9); }
     .slot .key { position: absolute; top: .15rem; left: .3rem; font-size: .7rem; color: #888; }
+    .slot .illegal-badge { position: absolute; left: .2rem; bottom: .1rem; font-size: .75rem; }
     .slot img { width: 3.4rem; height: 3.4rem; margin-top: -.6rem; pointer-events: none; }
     .slot { border-bottom-width: 3px; }
     .slot .ammo {
@@ -561,9 +561,13 @@
     let coins = 0; // carried cash, in dollars
     let bankBalance = 0;
     let bankData = { atms: [], tellers: [], atmReach: 60, tellerReach: 120 };
+    const dumpedCars = new Map(); // my cars gangsters stole and left somewhere: vehicle id -> { x, y, type } (marked on the map until I find it)
+    let brokenAtms = new Map(); // 'x,y' -> performance.now() it works again (smashed with a bat)
+    const setBrokenAtms = (list) => { brokenAtms = new Map((list ?? []).map(([x, y, sec]) => [`${x},${y}`, performance.now() + sec * 1000])); };
+    const atmBroken = (a) => (brokenAtms.get(`${Math.round(a.x)},${Math.round(a.y)}`) ?? 0) > performance.now();
     let vehicleReach = 40;
     let homesCfg = { lockedTypes: [], garageReach: 140 };
-    let carBoost = { perVodka: 25, burnPerSec: 12, accel: 1.9, topSpeed: 1.35 }; // vodka in the boost tank (Space)
+    let carBoost = { perVodka: 25, burnPerSec: 6, accel: 1.9, topSpeed: 1.35 }; // vodka in the boost tank (Space); the server's figures replace these
     let knockDecay = 6; // how fast a player thrown by a car slows (config.vehicles.knockDecay)
     let fishCfg = { rodPrice: 150, pulls: 3, lineReach: 40, cast: [70, 240] };
     let myFish = null; // my line: { v: [x, y] waiting | [x, y, t, cycle, from, to, pulls] fighting, at: when it came }
@@ -602,6 +606,8 @@
       doorReach = msg.doorReach ?? doorReach;
       if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost, knockDecay = knockDecay } = msg.vehicles);
       if (msg.homes) homesCfg = msg.homes;
+      setBrokenAtms(msg.brokenAtms);
+      if (msg.visionSec) visionSec = msg.visionSec;
       if (msg.fishing) fishCfg = msg.fishing;
       if (msg.furnish) Object.assign(furn, msg.furnish);
       if (msg.shop) shop = msg.shop;
@@ -729,13 +735,21 @@
             toast(msg.jail ? `🚔 Busted! No money for ${money(msg.bail)} bail — ${msg.jail}s in jail` : `🚔 Busted! Paid ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
           }
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
+          if (msg.kind === 'illegal_gun_seen') toast('🚨 A cop saw the unregistered gun in your hand!');
+          if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. Run or shoot and he opens fire.`); }
+          if (msg.kind === 'held_up') { sfx('error'); toast(msg.amount ? `🕴️ He took ${money(msg.amount)} and walked off` : '🕴️ Your pockets were empty — he walked off'); }
+          if (msg.kind === 'holdup_resisted') toast('🔫 You didn\'t play along — he\'s shooting!');
+          if (msg.kind === 'car_stolen') { sfx('alarm'); toast(`🚗 A gangster just stole your ${vehicleTypes[msg.type]?.name ?? 'car'}!`); }
+          if (msg.kind === 'car_dumped') { dumpedCars.set(msg.id, { x: msg.x, y: msg.y, type: msg.type }); toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} was dumped across town — it's marked on your map`); }
+          if (msg.kind === 'atm_hit') { sfx('batHit'); addShake(2.5); toast(`🏏 Smash! ${msg.n}/${msg.of}`); }
+          if (msg.kind === 'atm_smashed') { sfx('atmSmash'); addShake(5); toast(`💥 The ATM burst open: +${money(msg.amount)} — it's broken for ${Math.round(msg.sec / 60)} min`); }
           if (msg.kind === 'fish_bite') { sfx('splash'); toast('🎣 Fish on! It fights the line — click to pull each time it tires (goes still in the gold rings)'); }
           if (msg.kind === 'fish_pull') sfx('splash');
           if (msg.kind === 'fish_caught') {
             sfx('catch');
             toast(msg.what === 'player' ? `🪝 You reeled in ${msg.name}'s ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!` : msg.what === 'fish' ? '🐟 You landed a fish!' : msg.what === 'food' ? `🎣 Not a fish… ${shop.menu[msg.item]?.name ?? 'something to eat'}, still wrapped` : `🎣 Not a fish… a ${weapons[msg.item]?.name ?? 'gun'} someone threw in the water!`);
           }
-          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them' }[msg.why] ?? 'It got away');
+          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
           if (msg.kind === 'hooked_by') { sfx('hooked'); toast(`🪝 ${msg.name} has hooked you with a fishing line! Walk away to snap it before they reel something in`); }
           if (msg.kind === 'hook_free') toast(msg.escaped ? '🪝 You pulled free of the line' : '🪝 The line came off you');
@@ -806,6 +820,9 @@
         case 'dialogue_changed':
           loadDialogue();
           break;
+        case 'atms':
+          setBrokenAtms(msg.broken);
+          break;
         case 'radio_changed':
           loadPlaylist();
           break;
@@ -826,8 +843,10 @@
           if (!shopEl.hidden) renderShop();
           break;
         case 'done':
-          sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
+          sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what === 'hire_vodka' ? 'coin' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
+          if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
+          if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
           if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
           if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
@@ -1061,6 +1080,10 @@
           R(g, 10, 14, 44, 5, '#3a3d42'); R(g, 10, 14, 12, 9, '#6b4a2b'); R(g, 34, 19, 4, 7, '#2a2a2a');
         },
         vodka: (g) => bottle(g, 32, 'rgba(225,238,245,.92)', '#c0392b', '#b0b6bc'),
+        jetvodka: (g) => { bottle(g, 32, 'rgba(150,220,255,.92)', '#f1c40f', '#2e86de'); P(g, [[36, 30], [28, 42], [33, 42], [29, 54], [38, 39], [33, 39]], '#fff'); }, // electric blue, a lightning bolt
+        firewater: (g) => { bottle(g, 32, 'rgba(255,170,90,.92)', '#7b241c', '#5d6d7e'); P(g, [[32, 28], [38, 40], [34, 38], [33, 46], [28, 38], [30, 36]], '#ffe08a'); }, // amber, a flame
+        blackvodka: (g) => { bottle(g, 32, 'rgba(40,36,34,.95)', '#a07a2a', '#1c1c1c'); E(g, 32, 41, 5, 4, 'rgba(255,255,255,.25)'); }, // black as crude
+        energy: (g) => { R(g, 10, 22, 44, 34, '#5d4a2c'); for (const x of [16, 28, 40]) { RR(g, x - 5, 12, 10, 22, 3, '#2e86de'); R(g, x - 5, 18, 10, 6, '#f1c40f'); } }, // a crate of cans
         counterfeit: (g) => {
           for (const [x, y, a] of [[8, 30, -0.15], [12, 22, 0.05], [10, 14, 0.12]]) {
             g.save(); g.translate(x + 22, y + 10); g.rotate(a);
@@ -1108,6 +1131,7 @@
         'm:furnace': (g) => { RR(g, 10, 12, 44, 44, 4, '#3a3d42', '#1a1a1a'); RR(g, 18, 26, 28, 22, 3, '#1a1a1a'); E(g, 32, 40, 9, 8, '#e67e22'); E(g, 32, 42, 5, 5, '#f1c40f'); R(g, 26, 4, 12, 10, '#4a4f55'); },
         'm:press': (g) => { R(g, 10, 50, 44, 8, '#4a4f55'); R(g, 12, 8, 6, 44, '#5d6d7e'); R(g, 46, 8, 6, 44, '#5d6d7e'); R(g, 12, 8, 40, 8, '#5d6d7e'); R(g, 22, 16, 20, 18, '#8c9197'); R(g, 26, 34, 12, 4, '#c0392b'); },
         'm:assembler': (g) => { R(g, 8, 48, 48, 10, '#e1b12c'); L(g, 20, 48, 26, 26, '#e67e22', 7); L(g, 26, 26, 44, 18, '#e67e22', 6); C(g, 26, 26, 5, '#4a4f55'); L(g, 44, 18, 48, 28, '#4a4f55', 3); L(g, 44, 18, 40, 28, '#4a4f55', 3); },
+        'm:mixer': (g) => { R(g, 8, 40, 48, 16, '#5b3a5e'); RR(g, 12, 14, 14, 28, 4, 'rgba(225,238,245,.9)'); RR(g, 38, 14, 14, 28, 4, 'rgba(255,170,90,.9)'); L(g, 19, 14, 32, 6, '#8e44ad', 3); L(g, 45, 14, 32, 6, '#8e44ad', 3); C(g, 32, 30, 6, '#f1c40f'); }, // two vessels into a shaker
         'm:still': (g) => { C(g, 26, 38, 18, '#c87533'); C(g, 22, 33, 5, '#e8a06a'); L(g, 26, 20, 26, 12, '#a85f25', 5); L(g, 26, 12, 50, 20, '#a85f25', 3); L(g, 50, 20, 50, 40, '#a85f25', 3); bottle(g, 50, 'rgba(225,238,245,.9)', '#c0392b', '#b0b6bc'); },
         'm:printer': (g) => { RR(g, 8, 26, 48, 26, 3, '#5d6d7e'); R(g, 14, 14, 36, 14, '#b8c9a4'); R(g, 8, 36, 48, 6, '#3a3d42'); C(g, 46, 32, 3, '#e74c3c'); },
         'm:gunsmith': (g) => { R(g, 6, 34, 52, 8, '#6b4a2b'); R(g, 10, 42, 5, 16, '#5a3e1f'); R(g, 49, 42, 5, 16, '#5a3e1f'); P(g, [[14, 22], [46, 22], [46, 28], [30, 28], [28, 34], [22, 34], [24, 28], [14, 28]], '#1e1f22'); },
@@ -1314,7 +1338,7 @@
     function nearestBanker() {
       if (!me) return null;
       const r = radiusOf(me.mass);
-      const atm = bankData.atms.find((a) => Math.hypot(a.x - me.x, a.y - me.y) < bankData.atmReach + r);
+      const atm = bankData.atms.find((a) => Math.hypot(a.x - me.x, a.y - me.y) < bankData.atmReach + r && !atmBroken(a));
       if (atm) return { ...atm, kind: 'atm' };
       const teller = bankData.tellers.find((t) => Math.hypot(t.x - me.x, t.y - me.y) < bankData.tellerReach + r);
       return teller ? { ...teller, kind: 'teller' } : null;
@@ -1366,15 +1390,30 @@
       ctx.fillRect(-12, -12, 24, 24);
       ctx.fillStyle = '#2b3038';
       ctx.fillRect(-12, -12, 7, 24);
-      // Screen faces outward (+x) and blinks gently.
-      ctx.fillStyle = 0.5 + 0.5 * Math.sin(now / 600) > 0.15 ? '#4fd17a' : '#2f9a55';
-      ctx.fillRect(6, -8, 5, 16);
+      const broken = atmBroken(a);
+      if (broken) { // smashed: a dead, cracked screen, a dent, and the odd spark
+        ctx.fillStyle = '#1a1d22'; ctx.fillRect(6, -8, 5, 16);
+        ctx.strokeStyle = '#8a9099'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(6, -6); ctx.lineTo(11, 2); ctx.moveTo(11, -7); ctx.lineTo(7, 6); ctx.stroke();
+        ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.arc(-2, 4, 5, 0, Math.PI * 2); ctx.fill();
+        if (Math.sin(now / 90 + a.x) > 0.93) { ctx.fillStyle = '#ffe08a'; for (let k = 0; k < 3; k++) ctx.fillRect(8 + Math.random() * 8, -6 + Math.random() * 12, 2, 2); }
+      } else {
+        // Screen faces outward (+x) and blinks gently.
+        ctx.fillStyle = 0.5 + 0.5 * Math.sin(now / 600) > 0.15 ? '#4fd17a' : '#2f9a55';
+        ctx.fillRect(6, -8, 5, 16);
+      }
       ctx.restore();
       ctx.font = '700 10px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#4fd17a';
-      ctx.fillText('ATM', a.x, a.y - 20);
+      if (broken) {
+        const left = Math.max(0, Math.ceil(((brokenAtms.get(`${Math.round(a.x)},${Math.round(a.y)}`) ?? 0) - performance.now()) / 1000));
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillText(`BROKEN ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`, a.x, a.y - 20);
+      } else {
+        ctx.fillStyle = '#4fd17a';
+        ctx.fillText('ATM', a.x, a.y - 20);
+      }
     }
 
     function drawCashBag(x, y, amount, now) {
@@ -1427,8 +1466,12 @@
       { skin: '#e0ac69', shirt: '#1f3a93', pants: '#1f3a93', hat: 'beanie' },
       { skin: '#c68642', shirt: '#1c1c1c', pants: '#2d2d2d', hat: 'cap' },
       { skin: '#f1c27d', shirt: '#2b2b2b', pants: '#151515', hat: 'tophat' },
+      { skin: '#e0ac69', shirt: '#3a3530', pants: '#1c1c1c', hat: 'fedora', coat: '#8a7355' }, // a gangster: trench coat and fedora
     ];
     const ECON_ERRORS = {
+      no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
+      gangster_hostile: '🕴️ He isn\'t in a talking mood',
+      atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
       one_per_size: 'You already own a warehouse this size — one of each size each',
       load_saved_instead: 'You have a saved factory this size — load it here instead of buying (📦 button)',
       no_water: '🎣 Aim at a river or lake, close to the bank, and click to cast',
@@ -1762,6 +1805,13 @@
       row('guard', `Stays inside your home or warehouse and shoots intruders. ${wage('guard')} · ${mine('guard').length}/${d.prices.guard.max}`, posts, () => send({ t: 'hire', action: 'guard', id: barChoice.post }));
       const targets = select(d.targets.map((t) => ({ id: t.id, label: t.name })), 'target', 'Nobody else is here');
       row('hitman', `Drives after one player and snipes them from a distance, for ${Math.round(d.prices.hitman.sec / 60)} min. Half back if he fails. The target gets a warning.`, targets, () => send({ t: 'hire', action: 'hitman', id: barChoice.target }));
+      if (d.vodkaPrice) { // the barman's vodka: dear, cash, no questions asked
+        const tr = table.insertRow();
+        tr.insertCell().innerHTML = `${iconHTML('vodka', 18)} Vodka`;
+        tr.insertCell().textContent = 'A bottle from under the counter. Dear — but no questions asked. (Contraband: the Militsiya seize it at checkpoints.)';
+        const act = tr.insertCell(); act.className = 'num';
+        act.append(button(`Buy ${money(d.vodkaPrice)}`, () => send({ t: 'hire', action: 'vodka' }), { disabled: coins < d.vodkaPrice, cls: 'go' }));
+      }
       const crew = document.createElement('table');
       crew.style.marginTop = '.6rem';
       if (d.mine.length) {
@@ -1792,10 +1842,10 @@
         const tr = table.insertRow();
         if (d.market === 'gunstore') {
           const w = weapons[item.type];
-          tr.insertCell().textContent = `🔫 ${w?.name ?? item.type}`;
-          const info = tr.insertCell(); info.className = 'num'; info.textContent = `${w?.magazineSize ?? '?'} rounds`;
+          tr.insertCell().textContent = `${w?.melee ? '🏏' : '🔫'} ${w?.name ?? item.type}`;
+          const info = tr.insertCell(); info.className = 'num'; info.textContent = w?.melee ? 'hits harder the bigger you are · smashes ATMs' : `${w?.magazineSize ?? '?'} rounds`;
           const buy = tr.insertCell(); buy.className = 'num';
-          const have = inv.some((x) => x?.[0] === item.type);
+          const have = false; // (you can carry several of the same gun)
           const total = item.price + (item.tax ?? 0);
           buy.title = `${money(item.price)} + ${money(item.tax ?? 0)} gun licence tax`;
           buy.append(`${money(item.price)} + ${money(item.tax ?? 0)} tax `, button(have ? 'Owned' : `Buy ${money(total)}`, () => send({ t: 'buygun', id: d.id, type: item.type }), { disabled: have || coins < total, cls: have ? '' : 'go' }));
@@ -1922,7 +1972,7 @@
 
     // Militsiya: grey-blue uniform; a fur ushanka in winter, the peaked furazhka the rest of the year.
     const POLICE_LOOK = { skin: '#e0ac69', shirt: '#4f5d6e', pants: '#2e3744', hat: 'furazhka' };
-    const CRIME_NAMES = { fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
+    const CRIME_NAMES = { illegal_gun: 'carrying an unregistered gun', mugging: 'mugging', fire: 'shots fired', steal_car: 'car theft', pickpocket: 'pickpocketing', assault: 'assault', rob_atm: 'ATM robbery', rob_shop: 'armed robbery', steal_police_car: 'stealing a Militsiya car', rob_bank: 'bank robbery', break_in: 'breaking in', carry_body: 'carrying a body', near_body: 'being seen with a body', sell_contraband: 'selling contraband', smuggling: 'smuggling', run_roadblock: 'running a checkpoint', murder: 'murder', attack_police: 'attacking the Militsiya' };
     const ROB_NAMES = { atm: 'Breaking into the ATM…', shop: 'Emptying the till…', bank: 'Robbing the bank…', lockpick: 'Picking the lock…', carpick: 'Picking the car lock…' };
     let crimeState = { wanted: 0, jail: 0, rob: null, arrest: 0 };
     const wantedEl = document.getElementById('wanted');
@@ -1948,7 +1998,8 @@
       if (wanted) wantedEl.innerHTML = `<span class="on">${'★'.repeat(wanted)}</span><span class="off">${'★'.repeat(5 - wanted)}</span>`;
       jailScreen.hidden = !jail;
       if (jail) document.getElementById('jail-time').textContent = `— ${jail}s`;
-      const [label, progress, arresting] = arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], robProgress(rob, at), false] : [null, 0, false];
+      const holdup = playing ? crimeState.holdup : null;
+      const [label, progress, arresting] = holdup ? [`🔫 HANDS UP — stand still (${Math.ceil(holdup[0])}s) or he shoots`, 1 - holdup[0] / holdup[1], true] : arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], robProgress(rob, at), false] : [null, 0, false];
       crimeBar.hidden = !label;
       if (label) {
         crimeBar.classList.toggle('arrest', arresting);
@@ -1965,7 +2016,7 @@
       if (!me) return null;
       const r = radiusOf(me.mass);
       const near = (list, reach) => list.find((s) => Math.hypot(s.x - me.x, s.y - me.y) < reach + r);
-      const atm = near(bankData.atms, bankData.atmReach);
+      const atm = near(bankData.atms.filter((a) => !atmBroken(a)), bankData.atmReach);
       if (atm) return { ...atm, kind: 'atm' };
       const teller = near(bankData.tellers, bankData.tellerReach);
       if (teller) return { ...teller, kind: 'bank' };
@@ -1988,7 +2039,7 @@
       account: null, // my account name (owners are shown by account name)
     };
     const whEl = document.getElementById('wh');
-    const MACHINE_COLORS = { saw: '#8b5a2b', mill: '#c9b27a', furnace: '#4a4f57', press: '#5d6d7e', assembler: '#34495e' };
+    const MACHINE_COLORS = { saw: '#8b5a2b', mill: '#c9b27a', furnace: '#4a4f57', press: '#5d6d7e', assembler: '#34495e', mixer: '#5b3a5e' };
     const WH_ERRORS = {
       nothing_stored: 'You have no saved factory of this size',
       already_owned: 'Someone already owns this warehouse',
@@ -2623,7 +2674,8 @@
     let riding = 0; // the car I'm a passenger in (0: not)
     let healLeft = 0; // health still to come from food I've eaten
     let buzzLeft = 0; // seconds of vodka buzz left (I take less damage)
-    let drunkUntil = 0; // vodka also turns the colours inside out until then
+    let visions = []; // vodka's effects on how I see, stacked: [{ kind: 'invert' | 'jet' | 'fire' | 'crude', left (s), at }]
+    let visionSec = 180; // how long one lasts (config.economy.visionSec)
     const bodyEl = document.getElementById('bodypanel');
     const BODY_REACH = 55;
     let bodyOpen = null; // { id, data }
@@ -2918,7 +2970,7 @@
     }
 
     /** What's in a trunk or cabinet slot, by name. */
-    const slotName = (stack) => !stack ? '' : stack[2] === 'rod' ? 'Fishing rod' : stack[2] === 'food' ? shop.menu[stack[0]]?.name ?? stack[0] : stack[2] ? weapons[stack[0]]?.name ?? stack[0] : econ.goods[stack[0]]?.name ?? stack[0];
+    const slotName = (stack) => !stack ? '' : stack[2] === 'rod' ? 'Fishing rod' : stack[2] === 'gun' && stack[3] ? 'Unregistered pistol' : stack[2] === 'food' ? shop.menu[stack[0]]?.name ?? stack[0] : stack[2] ? weapons[stack[0]]?.name ?? stack[0] : econ.goods[stack[0]]?.name ?? stack[0];
     let lastTrunkKey = '';
     /** The trunk bar: only while you're in the driver's seat, just right of the hotbar. */
     function renderTrunk() {
@@ -3280,6 +3332,13 @@
         mctx.fillText('🏠', hx, hy);
         const home = buildings[myHome[0] - 1];
         if (home) mapIconsDrawn.push([hx, hy, home]);
+      }
+      // My cars a gangster dumped somewhere: a 🚗 (pinned to the edge when it's off the small map) until I find it.
+      for (const [id, c] of dumpedCars) {
+        if (me && (me.car?.id === id || Math.hypot(c.x - me.x, c.y - me.y) < 150)) { dumpedCars.delete(id); continue; }
+        const cx = Math.min(Math.max((c.x - sx) * toMap, 10), px - 10), cy = Math.min(Math.max((c.y - sy) * toMap, 10), px - 10);
+        mctx.font = `${(expanded ? 15 : 17) * devicePixelRatio}px system-ui, sans-serif`;
+        mctx.fillText('🚗', cx, cy);
       }
       mctx.textBaseline = 'alphabetic';
       // Teammates: green dots (pinned to the edge when off the small map), named on the full map.
@@ -3716,6 +3775,9 @@
       pickpocket: (o) => { noiseBurst(o, { dur: 0.12, freq: 3500, q: 1, vol: 0.12 }); },
       bribe: (o) => { noiseBurst(o, { dur: 0.2, freq: 2500, q: 0.8, vol: 0.15 }); tone(o, { at: 0.15, dur: 0.1, type: 'square', freq: 1320, vol: 0.08 }); },
       hire: (o) => { tone(o, { dur: 0.15, freq: 196, vol: 0.2 }); tone(o, { at: 0.14, dur: 0.25, freq: 147, vol: 0.2 }); },
+      bat: (o) => { noiseBurst(o, { dur: 0.18, freq: 1200, endFreq: 400, q: 1, vol: 0.2 }); }, // the whoosh of a swing
+      batHit: (o) => { tone(o, { dur: 0.08, freq: 160, endFreq: 90, vol: 0.5 }); noiseBurst(o, { dur: 0.1, filter: 'lowpass', freq: 1500, vol: 0.5 }); tone(o, { at: 0.02, dur: 0.15, type: 'square', freq: 900, endFreq: 700, vol: 0.06 }); },
+      atmSmash: (o) => { noiseBurst(o, { dur: 0.5, freq: 3000, endFreq: 800, q: 0.7, vol: 0.5 }); for (let i = 0; i < 6; i++) tone(o, { at: 0.1 + i * 0.07, dur: 0.06, type: 'square', freq: 1800 + Math.random() * 900, vol: 0.06 }); },
     };
 
     // ---- custom sounds from the sound editor (GET /sounds): uploaded files replace the built-in ones ----
@@ -3934,7 +3996,7 @@
       box.append(Object.assign(document.createElement('h2'), { textContent: `📻 Car radio playlist (${playlist.songs.length} song${playlist.songs.length === 1 ? '' : 's'})` }));
       const intro = document.createElement('div');
       intro.className = 'sub';
-      intro.textContent = 'A car\'s radio (V on/off, N next song) plays these in order, one after another, and everyone near the car hears it. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.';
+      intro.textContent = 'A car\'s radio (V on/off, N next song) plays one of these on repeat, and everyone near the car hears it; N moves on to the next. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.';
       const upload = document.createElement('label');
       upload.className = 'file';
       upload.textContent = radioUploading ?? '⬆ Upload songs…';
@@ -4187,20 +4249,13 @@
         if (!soundsEl.hidden) renderSoundEditor();
       } catch {}
     }
-    /** Which playlist song a radio is on, `elapsed` seconds after it started song `song`. Keep in sync with radioAt() in src/radio.js. */
+    /** Which playlist song a radio is on and how far in (it repeats the song until N). Keep in sync with radioAt() in src/radio.js. */
     function radioAt(song, elapsed) {
-      const d = playlist.songs.map((x) => x.duration);
-      const n = d.length;
+      const n = playlist.songs.length;
       if (!n) return { index: song, offset: elapsed };
-      const total = d.reduce((x, y) => x + y, 0);
-      let i = ((song % n) + n) % n;
-      let t = total > 0 ? ((elapsed % total) + total) % total : 0;
-      for (let k = 0; k < n; k++) {
-        if (t < d[i]) return { index: i, offset: t };
-        t -= d[i];
-        i = (i + 1) % n;
-      }
-      return { index: i, offset: 0 };
+      const index = ((song % n) + n) % n;
+      const d = playlist.songs[index].duration > 0 ? playlist.songs[index].duration : 1;
+      return { index, offset: ((elapsed % d) + d) % d };
     }
     /** What a car's radio is playing right now: { song (or null: the built-in tune), offset }. */
     function radioNow(v) {
@@ -4263,6 +4318,7 @@
             if (song) { // stream it, starting where everyone else is
               const el = new Audio();
               el.preload = 'auto';
+              el.loop = true; // the same song over and over until someone skips
               el.src = song.url;
               a.createMediaElementSource(el).connect(g);
               el.addEventListener('loadedmetadata', () => { el.currentTime = Math.min(offset, Math.max(0, (el.duration || offset) - 0.5)); el.play().catch(() => {}); }, { once: true });
@@ -5184,7 +5240,7 @@
 
     // Filled from the server's welcome message; these defaults are only placeholders.
     let weapons = { knife: { name: 'Knife', melee: true, magazineSize: 0, reloadSec: 0, barrel: 1.1 }, pistol: { name: 'Pistol', magazineSize: 5, reloadSec: 1.5, barrel: 1.6 } };
-    const RARITY = { rod: '#c9a26a', knife: '#8a8f96', pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
+    const RARITY = { rod: '#c9a26a', bat: '#c69c6d', knife: '#8a8f96', pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
 
     let inv = [['knife', 0, 0], null, null, null, null]; // from the server: [type, ammo, reload seconds] per slot
     let reloadEnds = []; // performance.now() time each slot's reload finishes
@@ -5227,7 +5283,9 @@
     const slotKey = () => inv.map((w) => (!w ? '-' : w[0] === 'goods' ? `g:${w[1]}` : w[0])).join();
     const isGoods = (w) => w?.[0] === 'goods';
     const isFood = (w) => w?.[0] === 'food'; // ['food', item, qty] — bought at a shop, E eats one
-    const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'vodka')); // (bakery bread eats too; vodka drinks)
+    const VODKAS = new Set(['vodka', 'jetvodka', 'firewater', 'blackvodka']); // vodka and its mixes (config.economy.visions): they drink
+    const isVodka = (w) => isGoods(w) && VODKAS.has(w[1]);
+    const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'fish' || w[1] === 'bat' || w[1] === 'blackguns')) || isVodka(w); // (bakery bread and fish eat too; vodka drinks; a bat from the factory is taken up)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
     const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧' }; // drawn icons (see ICON_DRAW)
     const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod' };
@@ -5244,7 +5302,7 @@
           // A stack of goods: big icon and how many.
           const good = econ.goods[w[1]];
           slot.classList.add('goods');
-          slot.title = `${good?.name ?? w[1]} — carried goods (lost if you die)`;
+          slot.title = `${good?.name ?? w[1]} — carried goods (lost if you die)${w[1] === 'fish' || w[1] === 'bread' ? ' · select it and press E to eat one' : isVodka(w) ? ' · select it and press E to drink one' : ''}`;
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(w[1], 40)}</span><span class="goods-qty"></span>`);
         } else if (isFood(w)) {
           slot.classList.add('goods');
@@ -5256,8 +5314,9 @@
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`tool:${w[1]}`, 42)}</span>`);
         } else if (w) {
           const [type] = w;
-          slot.title = weapons[type]?.name ?? type;
-          slot.style.borderBottomColor = RARITY[type];
+          slot.title = w[3] ? 'Unregistered pistol — illegal: a cop who sees it in your hand reports you, and checkpoints seize it. The smuggler buys it.' : weapons[type]?.name ?? type;
+          slot.style.borderBottomColor = w[3] ? '#e74c3c' : RARITY[type];
+          if (w[3]) slot.insertAdjacentHTML('beforeend', '<span class="illegal-badge" title="Unregistered">🚫</span>');
           slot.insertAdjacentHTML('beforeend', `<span class="reload"></span><img src="${gunIcon(type)}" alt="">`);
           const ammo = document.createElement('span');
           ammo.className = 'ammo';
@@ -5370,7 +5429,7 @@
         else if (!bankEl.hidden) closeBank();
         else if (econ.open) closePlace();
         else if (fuelCar()) send({ t: 'refuel', can: true }); // fuel in hand beside a car: E pours it in
-        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding && !eTarget()) { send({ t: 'eat' }); sfx(inv[selectedSlot]?.[1] === 'vodka' ? 'drink' : 'eat'); } // food in hand (on foot): E eats it
+        else if (edible(inv[selectedSlot]) && !hiddenSelf && !me?.car && !riding && !eTarget()) { send({ t: 'eat' }); sfx(isVodka(inv[selectedSlot]) ? 'drink' : ['bat', 'blackguns'].includes(inv[selectedSlot]?.[1]) ? 'pickup' : 'eat'); } // food in hand (on foot): E eats it
         else {
           const t = eTarget(); // only the closest thing, the one with the prompt
           if (t?.kind === 'shop') openShop();
@@ -5379,6 +5438,7 @@
           else if (t?.kind === 'body') openBody(t.target);
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
+          else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him all of it
           else if (!t && placeableHere()) { send({ t: 'furnish', action: 'place', angle: aimAngle() }); sfx('furnish'); } // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
@@ -5414,7 +5474,8 @@
       if (whBuildMode()) return whClick(e); // building, not shooting
       if (e.button === 0 && playing && holdingRod() && !me?.car && !riding) return fishClick();
       if (e.button === 0) firing = true;
-      if (e.button === 0 && inv[selectedSlot]?.[0] === 'knife') stabAt = performance.now();
+      if (e.button === 0 && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat')) stabAt = performance.now();
+      if (e.button === 0 && inv[selectedSlot]?.[0] === 'bat' && playing) sfx('bat');
     });
     canvas.addEventListener('contextmenu', (e) => { if (whBuildMode()) e.preventDefault(); });
     addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; });
@@ -5792,11 +5853,11 @@
       hiddenSelf = Boolean(you.hidden);
       riding = ride;
       healLeft = you.heal ?? 0;
-      if ((you.buzz ?? 0) > buzzLeft + 2) drunkUntil = performance.now() + 120000; // just drank vodka: the world goes strange for 2 minutes
+      visions = (you.visions ?? []).map(([kind, left]) => ({ kind, left, at: performance.now() }));
       buzzLeft = you.buzz ?? 0;
       if (JSON.stringify(you.cabinet ?? null) !== JSON.stringify(cabinetView)) { cabinetView = you.cabinet ?? null; if (furnOpen) renderFurnish(); }
       myFish = you.fish ? { v: you.fish, at: performance.now() } : null; // (the fight's clock runs on from `at`)
-      crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0, at: performance.now() };
+      crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0, holdup: you.holdup ?? null, at: performance.now() };
       const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null]);
       if (trunkKey !== lastTrunkKey) renderTrunk(); // only on change, or clicks get lost
       lastTrunkKey = trunkKey;
@@ -5913,6 +5974,14 @@
           ctx.beginPath(); ctx.ellipse(0, 0, head * 0.85, head * 0.75, 0, 0, Math.PI * 2); ctx.fill();
           ctx.strokeStyle = '#5a3416'; ctx.beginPath(); ctx.moveTo(-head * 0.8, 0); ctx.lineTo(head * 0.8, 0); ctx.stroke();
           break;
+        case 'fedora': // a gangster's fedora: wide brim, pinched crown, a dark band
+          circle(0, 0, head * 1.45, '#2c2a28');
+          circle(0, 0, head * 0.9, '#3d3a36');
+          ctx.strokeStyle = '#141312'; ctx.lineWidth = 0.09;
+          ctx.beginPath(); ctx.arc(0, 0, head * 0.9, 0, Math.PI * 2); ctx.stroke();
+          ctx.strokeStyle = 'rgba(0, 0, 0, .35)'; ctx.lineWidth = 0.05;
+          ctx.beginPath(); ctx.moveTo(-head * 0.5, 0); ctx.lineTo(head * 0.5, 0); ctx.stroke(); // the crease
+          break;
         case 'tophat':
           circle(0, 0, head * 1.35, '#1a1a1a');
           circle(0, 0, head * 0.85, '#2b2b2b');
@@ -5997,6 +6066,12 @@
           g.beginPath(); g.ellipse(0.75, 0, 0.24, 0.32, 0, 0, Math.PI * 2); g.fill();
           rect(0.55, 0.62, -0.26, 0.26, '#4a1f1b'); // the clasp side
           rect(0.57, 0.61, -0.05, 0.05, '#d4a017'); // brass clasp
+          break;
+        case 'bat': // a wooden baseball bat: taped grip, swelling to a fat barrel
+          rect(0.15, 0.55, -0.05, 0.05, '#2c2c2c'); // tape
+          g.fillStyle = '#c69c6d';
+          g.beginPath(); g.moveTo(0.55, -0.05); g.lineTo(1.25, -0.11); g.quadraticCurveTo(1.75, -0.14, 1.75, 0); g.quadraticCurveTo(1.75, 0.14, 1.25, 0.11); g.lineTo(0.55, 0.05); g.closePath(); g.fill();
+          g.fillStyle = 'rgba(255, 255, 255, .25)'; g.fillRect(0.7, -0.07, 0.9, 0.03);
           break;
         case 'pickaxe':
           rect(0.4, 1.7, -0.06, 0.06, '#7a5a3a'); // handle
@@ -7066,10 +7141,16 @@
       }
       const usable = nearestUsable();
       if (usable) options.push({ kind: 'use', dist: usable.dist + (usable.door ? DOOR_LAST : 0), x: usable.x, y: usable.y });
+      // A gangster within reach: E offers him your vodka.
+      for (const [id, h] of snapshots.at(-1)?.crew ?? []) {
+        if (h.role !== 3) continue;
+        const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 18;
+        if (gd < 110) options.push({ kind: 'gangster', target: id, dist: gd - 20, x: h.x, y: h.y - 52 });
+      }
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
-      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish'].includes(o.kind))) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster'].includes(o.kind))) best = o;
       return best;
     }
 
@@ -7463,6 +7544,11 @@
             return null;
           }
           if (h.role === 1) return approach(s, d, 150, 220) === 'in' && !h.mine ? { text: pick(SPEECH.guard), urgent: true } : null;
+          if (h.role === 3) { // a gangster: a hold-up, or asking after vodka
+            if (h.aiming && !s.aimed) { s.aimed = true; return { text: pick(SPEECH.gangsterHoldup), urgent: true }; }
+            if (!h.aiming) s.aimed = false;
+            return approach(s, d, 160, 230) === 'in' ? { text: pick(SPEECH.gangster), urgent: true } : null;
+          }
           s.next ??= t + 10 + Math.random() * 20;
           if (h.mine && d < 250 && t > s.next) { s.next = t + 25 + Math.random() * 35; return { text: pick(SPEECH.goon) }; }
           return null;
@@ -7490,6 +7576,75 @@
       ctx.fillRect(x - 4.5, y - 8, 9, 3); // hide the box's edge where the tail joins
       ctx.fillStyle = '#1d1d1d';
       ctx.fillText(text, x, y - h / 2 - 6);
+      ctx.restore();
+    }
+
+    // ---- vodka visions: how the world looks for a couple of minutes after a drink ----------------------
+    // Gentle on purpose: colour and light, a slow drift at most — nothing that spins or strobes.
+    //   invert (vodka):            the colours turned inside out
+    //   jet (jet vodka):           bright, punchy colour drifting slowly round the rainbow; a soft glow breathing at the edges
+    //   fire (firewater):          warm firelight: an orange cast, flickering glow round the edges, embers rising
+    //   crude (black crude vodka): dark tunnel vision: washed-out grey-sepia, a dark ring closing in round the edges
+    const visionEmbers = [];
+    // Different kinds stack: each adds its colour and its light on top of the others.
+    /** How strongly a vision shows now: easing in over the first 2 s and out over the last 3. */
+    function visionStrength(vision, now) {
+      const left = vision.left - (now - vision.at) / 1000;
+      const age = visionSec - left;
+      return Math.max(0, Math.min(1, age / 2, left / 3));
+    }
+    function visionFilter(now) {
+      const parts = [];
+      for (const vision of visions) {
+        const k = visionStrength(vision, now);
+        if (k <= 0) continue;
+        const mix = (a, b) => a + (b - a) * k;
+        if (vision.kind === 'invert') parts.push(`invert(${k.toFixed(2)})`);
+        if (vision.kind === 'jet') parts.push(`saturate(${mix(1, 1.9).toFixed(2)}) brightness(${mix(1, 1.12).toFixed(2)}) contrast(${mix(1, 1.08).toFixed(2)}) hue-rotate(${Math.round(((now / 1000) * 9) % 360 * k)}deg)`);
+        if (vision.kind === 'fire') parts.push(`sepia(${mix(0, 0.35).toFixed(2)}) saturate(${mix(1, 1.7).toFixed(2)}) hue-rotate(${Math.round(-12 * k)}deg) brightness(${mix(1, 1.05).toFixed(2)})`);
+        if (vision.kind === 'crude') parts.push(`grayscale(${mix(0, 0.55).toFixed(2)}) sepia(${mix(0, 0.35).toFixed(2)}) contrast(${mix(1, 1.15).toFixed(2)}) brightness(${mix(1, 0.85).toFixed(2)})`);
+      }
+      return parts.join(' ');
+    }
+    /** The lighting part, over the whole screen: each active vision's in turn. */
+    function drawVision(now, dt, w, h) {
+      if (!visions.some((v) => v.kind === 'fire')) visionEmbers.length = 0;
+      for (const vision of visions) drawOneVision(vision, now, dt, w, h);
+    }
+    function drawOneVision(vision, now, dt, w, h) {
+      const k = visionStrength(vision, now);
+      if (k <= 0 || vision.kind === 'invert') return;
+      const t = now / 1000, cx = w / 2, cy = h / 2, R = Math.hypot(cx, cy);
+      ctx.save();
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      if (vision.kind === 'jet') { // a soft light breathing in and out round the edges
+        const pulse = 0.5 + 0.5 * Math.sin(t * Math.PI * 0.8);
+        const g = ctx.createRadialGradient(cx, cy, R * 0.45, cx, cy, R);
+        g.addColorStop(0, 'rgba(255, 255, 255, 0)');
+        g.addColorStop(1, `rgba(190, 240, 255, ${(0.1 + 0.12 * pulse) * k})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      } else if (vision.kind === 'fire') { // firelight flickering round the edges, embers drifting up
+        const flick = 0.75 + 0.15 * Math.sin(t * 7.3) + 0.1 * Math.sin(t * 13.1);
+        const g = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R);
+        g.addColorStop(0, 'rgba(255, 140, 40, 0)');
+        g.addColorStop(1, `rgba(255, 110, 30, ${0.28 * flick * k})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+        if (visionEmbers.length < 40 && Math.random() < dt * 25) visionEmbers.push({ x: Math.random() * w, y: h + 10, vy: -(30 + Math.random() * 50), sway: Math.random() * 6, r: 1 + Math.random() * 2 });
+        ctx.globalCompositeOperation = 'lighter';
+        for (let i = visionEmbers.length - 1; i >= 0; i--) {
+          const e = visionEmbers[i];
+          e.y += e.vy * dt;
+          if (e.y < -10) { visionEmbers.splice(i, 1); continue; }
+          ctx.fillStyle = `rgba(255, ${150 + Math.round(60 * Math.sin(t * 3 + e.sway))}, 60, ${0.6 * k})`;
+          ctx.beginPath(); ctx.arc(e.x + Math.sin(t * 1.5 + e.sway) * 10, e.y, e.r, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (vision.kind === 'crude') { // tunnel vision: dark closing in round the edges, breathing slowly
+        const breathe = 0.5 + 0.5 * Math.sin(t * 0.9);
+        const g = ctx.createRadialGradient(cx, cy, R * (0.28 + 0.05 * breathe), cx, cy, R * 0.95);
+        g.addColorStop(0, 'rgba(10, 8, 6, 0)');
+        g.addColorStop(1, `rgba(10, 8, 6, ${0.82 * k})`);
+        ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+      }
       ctx.restore();
     }
 
@@ -7656,7 +7811,7 @@
       // Arms reach forward to the gun (the front hand further out on long guns), or hang at the sides.
       const barrel = p.weapon ? weapons[p.weapon]?.barrel ?? 1.6 : 0;
       const front = Math.max(0.88, 0.6 + (barrel - 0.6) * 0.5);
-      const knife = p.weapon === 'knife' || p.weapon === 'purse';
+      const knife = p.weapon === 'knife' || p.weapon === 'purse' || p.weapon === 'bat';
       // A knife (or an angry townsperson's purse) is held in one hand, jabbing/swinging forward (p.thrust 0–1); the other arm hangs.
       const hands = knife ? [[0.25, -0.98], [0.62 + (p.thrust ?? 0) * 0.5, 0.45]] : p.weapon ? [[0.78, -0.2], [front, 0.14]] : [[0.25, -0.98], [0.25, 0.98]];
       ctx.lineCap = 'round';
@@ -7669,7 +7824,11 @@
         ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(hx, hy); ctx.stroke();
       }
 
-      if (knife) { ctx.save(); ctx.translate(hands[1][0] - 0.15, hands[1][1]); drawGun(ctx, p.weapon); ctx.restore(); }
+      if (knife) {
+        ctx.save(); ctx.translate(hands[1][0] - 0.15, hands[1][1]);
+        if (p.weapon === 'bat') ctx.rotate(-1.1 + 2 * (p.thrust ?? 0) - 0.4 * (1 - (p.thrust ?? 0))); // held back over the shoulder, swept across in a swing
+        drawGun(ctx, p.weapon); ctx.restore();
+      }
       else if (p.weapon) drawGun(ctx, p.weapon);
       circle(...hands[0], 0.15, skin);
       circle(...hands[1], 0.15, skin);
@@ -7680,10 +7839,21 @@
       ctx.lineWidth = 0.05;
       ctx.beginPath(); ctx.moveTo(-0.72, 0); ctx.lineTo(-0.42, 0); ctx.stroke();
 
+      // A long trench coat: its skirt trails out behind, belted at the waist, collar up.
+      if (look.coat) {
+        ctx.fillStyle = shade(look.coat, 0.8);
+        ctx.beginPath(); ctx.roundRect(-0.95, -0.98, 1.4, 1.96, 0.45); ctx.fill();
+        ctx.strokeStyle = shade(look.coat, 0.55); ctx.lineWidth = 0.06; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-0.95, 0); ctx.lineTo(-0.45, 0); ctx.stroke(); // the vent at the back
+      }
       // Shoulders / torso
-      ctx.fillStyle = color;
+      ctx.fillStyle = look.coat ?? color;
       ctx.beginPath(); ctx.roundRect(-0.42, -0.95, 0.84, 1.9, 0.4); ctx.fill();
-      ctx.strokeStyle = shade(color, 0.7); ctx.lineWidth = 0.06; ctx.stroke();
+      ctx.strokeStyle = shade(look.coat ?? color, 0.7); ctx.lineWidth = 0.06; ctx.stroke();
+      if (look.coat) {
+        ctx.fillStyle = shade(look.coat, 0.6); ctx.fillRect(-0.1, -0.95, 0.16, 1.9); // the belt round the middle
+        ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0.42, -0.35); ctx.lineTo(0.1, 0); ctx.lineTo(0.42, 0.35); ctx.fill(); // shirt under the lapels
+      }
 
       // Head and hat
       circle(0.05, 0, head, skin);
@@ -7751,7 +7921,7 @@
           if (!hiddenSelf) stepMove(me, angle, throttle, boost, dt); // in a dumpster you stay put
           me.x += me.cx * k; me.y += me.cy * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k;
-          if (firing && inv[selectedSlot]?.[0] === 'knife' && frameTime - stabAt > 550) stabAt = frameTime; // held: keep stabbing
+          if (firing && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat') && frameTime - stabAt > (inv[selectedSlot]?.[0] === 'bat' ? 700 : 550)) { stabAt = frameTime; if (inv[selectedSlot]?.[0] === 'bat') sfx('bat'); } // held: keep stabbing (swinging)
           const stabT = (frameTime - stabAt) / 180;
           shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null });
         }
@@ -7785,8 +7955,8 @@
       drawMinimap();
 
       // Drunk on vodka: the game's colours inverted (eased in and out by a CSS transition).
-      const drunk = playing && performance.now() < drunkUntil;
-      if (drunk !== canvas.classList.contains('drunk')) canvas.classList.toggle('drunk', drunk);
+      const filter = playing ? visionFilter(frameTime) : '';
+      if (canvas.style.filter !== filter) canvas.style.filter = filter;
       // Screen shake (gunfire, crashes): a jitter that dies away fast.
       shake.mag *= Math.exp(-dt * 9);
       const sx = shake.mag > 0.2 && !editing ? (Math.random() * 2 - 1) * shake.mag : 0, sy = shake.mag > 0.2 && !editing ? (Math.random() * 2 - 1) * shake.mag : 0;
@@ -8005,7 +8175,7 @@
         drawKeyPrompt(me.x - 22, me.y - 58);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const verb = isGoods(inv[selectedSlot]) && inv[selectedSlot][1] === 'vodka' ? 'drink' : 'eat';
+        const verb = isVodka(inv[selectedSlot]) ? 'drink' : inv[selectedSlot]?.[1] === 'bat' ? 'take up the bat' : inv[selectedSlot]?.[1] === 'blackguns' ? 'take up the pistol' : 'eat';
         ctx.strokeText(verb, me.x - 4, me.y - 57); ctx.fillText(verb, me.x - 4, me.y - 57);
       }
       if (me && playing && healLeft > 0) { // still healing from food
@@ -8013,6 +8183,14 @@
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
         const t = `+${healLeft} ❤`;
         ctx.strokeText(t, me.x + 34, me.y + 30); ctx.fillText(t, me.x + 34, me.y + 30);
+      }
+      if (me && playing && !me.car && inv[selectedSlot]?.[0] === 'bat') { // a bat by an ATM: what a click does
+        const a = bankData.atms.find((x) => Math.hypot(x.x - me.x, x.y - me.y) < 110 && !atmBroken(x));
+        if (a) {
+          ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffcf7a';
+          ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+          ctx.strokeText('🏏 click to smash it open', a.x, a.y - 34); ctx.fillText('🏏 click to smash it open', a.x, a.y - 34);
+        }
       }
       const toPlace = playing && !eNow ? placeableHere() : null;
       if (toPlace) { // a cabinet, bed or sofa in hand at my place: where E would put it
@@ -8150,6 +8328,7 @@
         drawEditorOverlay(w, h, z);
       } else {
         drawSky(frameTime, dt, w, h, cars);
+        drawVision(frameTime, dt, w, h);
         updateLoops(dt);
       }
     }

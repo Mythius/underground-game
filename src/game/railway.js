@@ -202,12 +202,23 @@ export class Railway {
     if (!this.#near(p, this.smuggler)) return 'too_far';
     if (!config.goods[good]?.illegal) return 'not_wanted';
     const holder = this.world.economy.cargoOf(p);
-    qty = Math.min(qty, holder.count(good));
+    const guns = good === 'blackguns' ? this.#unregistered(p) : [];
+    qty = Math.min(qty, holder.count(good) + guns.length);
     if (qty <= 0) return 'not_carrying';
     const price = this.blackPrice(good);
-    holder.add(good, -qty);
+    const boxed = Math.min(qty, holder.count(good));
+    holder.add(good, -boxed);
+    for (const [list, i] of guns.slice(0, qty - boxed)) list[i] = null; // then the ones taken up as pistols
     p.cash += qty * price;
     return { qty, paid: qty * price };
+  }
+
+  /** Unregistered pistols p has as guns (in the hotbar, and in the car they're with): [slots, index]. */
+  #unregistered(p) {
+    const out = [];
+    const v = this.world.economy.vehicleOf(p);
+    for (const list of [p.inventory, v?.cargo ?? []]) list.forEach((s, i) => s?.illegal && out.push([list, i]));
+    return out;
   }
 
   blackPrice(good) {
@@ -224,7 +235,7 @@ export class Railway {
       leavesIn: this.train.state === 'docked' ? Math.round(this.train.timer) : 0,
       contracts: this.contracts.map((c) => ({ ...c, have: holder?.count(c.good) ?? 0 })),
       freight: Object.entries(config.goods).filter(([, g]) => !g.illegal).map(([good]) => ({ good, price: this.freightPrice(good), have: holder?.count(good) ?? 0 })),
-      black: Object.entries(config.goods).filter(([, g]) => g.illegal).map(([good]) => ({ good, price: this.blackPrice(good), have: holder?.count(good) ?? 0 })),
+      black: Object.entries(config.goods).filter(([, g]) => g.illegal).map(([good]) => ({ good, price: this.blackPrice(good), have: (holder?.count(good) ?? 0) + (good === 'blackguns' && p ? this.#unregistered(p).length : 0) })),
     };
   }
 

@@ -183,7 +183,6 @@ export class Bodies {
       return null;
     }
     // A gun.
-    if (p.hasWeapon(item.type)) return 'already_have';
     if (!p.inventory.includes(null)) return 'no_room';
     p.addWeapon({ ...item, reloadTimer: 0 });
     b.items[slot] = null;

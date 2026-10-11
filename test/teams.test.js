@@ -5,6 +5,8 @@ import { Teams } from '../src/game/teams.js';
 import { World } from '../src/game/World.js';
 import { decodeClientMessage } from '../src/net/protocol.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 let nextId = 1;
 const client = (name) => ({ id: nextId++, name, room: {}, team: 0, player: null });
 

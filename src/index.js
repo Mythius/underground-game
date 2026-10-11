@@ -421,6 +421,9 @@ function handleMessage(client, msg) {
     case ClientMsg.RADIO:
       client.room?.radio(client, msg);
       break;
+    case ClientMsg.GANGSTER:
+      client.room?.gangster(client, msg);
+      break;
     case ClientMsg.INPUT:
       client.room?.handleInput(client, msg);
       break;

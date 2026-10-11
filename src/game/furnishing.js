@@ -186,7 +186,7 @@ export class Furnishings {
     } else {
       const free = it.slots.indexOf(null);
       if (free < 0) return 'no_room';
-      it.slots[free] = s.type === 'rod' ? { type: 'rod' } : { type: s.type, ammo: s.ammo };
+      it.slots[free] = s.type === 'rod' ? { type: 'rod' } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) };
       p.inventory[index] = null;
     }
     this.#touched(it);
@@ -211,10 +211,9 @@ export class Furnishings {
       if (left > 0) s.qty = left;
       else it.slots[slot] = null;
     } else {
-      if (p.hasWeapon(s.type)) return 'already_have';
       const free = p.inventory.indexOf(null);
       if (free < 0) return 'no_room';
-      p.inventory[free] = s.type === 'rod' ? { type: 'rod', tool: true } : { ...makeWeapon(s.type), ammo: s.ammo };
+      p.inventory[free] = s.type === 'rod' ? { type: 'rod', tool: true } : { ...makeWeapon(s.type), ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) };
       it.slots[slot] = null;
     }
     this.#touched(it);
@@ -301,7 +300,7 @@ function slotView(s) {
   if (s.good) return [s.good, s.qty];
   if (s.food) return [s.food, s.qty, 'food'];
   if (s.type === 'rod') return ['rod', 1, 'rod'];
-  return [s.type, s.ammo, 'gun'];
+  return [s.type, s.ammo, 'gun', s.illegal ? 1 : 0];
 }
 
 /** Saved cabinet slots back (anything no longer in the game is dropped). */
@@ -313,7 +312,7 @@ function cleanSlots(slots) {
     if (s?.good && config.goods[s.good] && qty(s.qty)) return { good: s.good, qty: s.qty };
     if (s?.food && config.economy.menu[s.food] && qty(s.qty)) return { food: s.food, qty: s.qty };
     if (s?.type === 'rod') return { type: 'rod' };
-    if (s?.type && config.weapons[s.type]) return { type: s.type, ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize) };
+    if (s?.type && config.weapons[s.type]) return { type: s.type, ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize), ...(s.illegal ? { illegal: true } : {}) };
     return null;
   });
 }

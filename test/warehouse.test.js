@@ -7,6 +7,8 @@ import { hotbarOf } from '../src/game/cargo.js';
 import { generateBuildings } from '../src/game/buildings.js';
 import { AccountStore } from '../src/accounts.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 // A medium warehouse (10×8 tiles, IN dock bottom-left at 0,6 and OUT dock bottom-right at 8,6) and a market.
 function town(type = 'warehouse') {
   const { map } = validateMap({
@@ -438,4 +440,21 @@ test('containers only load belts pointing away from them, not ones running past 
   assert.equal(wh.at(4, 2).item, null, 'the belt running past gets nothing');
   assert.equal(wh.at(3, 3).item, null, 'nor the one pointing in');
   assert.ok(box.stock.logs < 10, 'the belt pointing away does');
+});
+
+test('a mixing station mixes vodka with energy drinks, petrol or crude into contraband mixes', () => {
+  const { world, wh, act } = town();
+  act({ action: 'buy' });
+  wh.owner.bank = 1e6;
+  assert.equal(act({ action: 'place', kind: 'mixer', x: 4, y: 2, dir: E }), null);
+  const mixer = wh.at(4, 2);
+  assert.equal(config.machines.mixer.illegal, true);
+  for (const [recipe, other, out] of [['illegal:jetvodka', 'energy', 'jetvodka'], ['illegal:firewater', 'fuel', 'firewater'], ['illegal:blackvodka', 'crude', 'blackvodka']]) {
+    assert.equal(act({ action: 'configure', x: 4, y: 2, value: recipe }), null);
+    Object.assign(mixer, { in: { vodka: 1, [other]: 1 }, out: {}, progress: 0 });
+    for (let i = 0; i < 100; i++) wh.step(0.1);
+    assert.equal(mixer.out[out], 1, `${out} mixed`);
+    assert.ok(config.goods[out].illegal, 'contraband');
+  }
+  void world;
 });

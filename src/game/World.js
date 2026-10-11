@@ -6,7 +6,7 @@ import { generateLamps, generatePaths, generateTrees, makeTree } from './terrain
 import { SIDEWALK, cityBox, generateTownRoads, inBox, placeSites, placeTown } from './placement.js';
 import { Work } from './work.js';
 import { generateLakes, generateRails, generateRivers, isSwimming, onIce, pushOutOfWater, waterDistance } from './water.js';
-import { Bullet, Food, Pickup, Player, STARTER_WEAPON, makeWeapon } from './entities.js';
+import { Bullet, Food, Pickup, Player, STARTER_WEAPON, makeWeapon, massToRadius } from './entities.js';
 import { SpatialGrid } from './SpatialGrid.js';
 import { Vehicle, emptyTankGas, stepVehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 import { Economy } from './economy.js';
@@ -68,7 +68,7 @@ export function knockStep(p, dt) {
 export function trunkSlot(s) {
   if (s?.good && config.goods[s.good] && s.qty > 0) return { good: s.good, qty: s.qty };
   if (s?.type === 'rod') return { type: 'rod' };
-  if (s?.type && config.weapons[s.type]) return { type: s.type, ammo: Math.max(0, Math.min(Number(s.ammo) || 0, config.weapons[s.type].magazineSize)) };
+  if (s?.type && config.weapons[s.type]) return { type: s.type, ammo: Math.max(0, Math.min(Number(s.ammo) || 0, config.weapons[s.type].magazineSize)), ...(s.illegal ? { illegal: true } : {}) };
   return null;
 }
 
@@ -196,6 +196,8 @@ export class World {
     this.hires = new Hires(this); // goons, guards and hitmen from the БАР
     this.fishing = new Fishing(this);
     this.furnishings = new Furnishings(this); // cabinets, beds and sofas placed in homes and warehouses
+    this.brokenAtms = new Map(); // ATM key -> economy time it works again (smashed with a bat)
+    this.atmsChanged = false; // (the room tells everyone which ATMs are broken)
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.rebuildGrid();
@@ -440,8 +442,21 @@ export class World {
   /** E with food selected: eat one. It heals over the next few seconds (see #digest). */
   eat(p) {
     const slot = p.inventory[p.selected];
+    if (slot?.good === 'bat' || slot?.good === 'blackguns') { // a bat from the factory, or a boxed unregistered pistol: take it up as a weapon
+      slot.qty -= 1;
+      if (slot.qty <= 0) p.inventory[p.selected] = null;
+      const free = p.inventory.indexOf(null);
+      if (free < 0) { // (no room: it stays a good)
+        hotbarOf(p).add(slot.good, 1);
+        return 'no_room';
+      }
+      p.inventory[free] = slot.good === 'bat' ? makeWeapon('bat') : { ...makeWeapon('pistol'), illegal: true }; // (an unregistered pistol is still illegal in your hand)
+      p.selected = free;
+      return null;
+    }
     // Shop food, a stack of bread from the bakery (it eats like a shop loaf), or a bottle of vodka.
-    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : slot?.good === 'vodka' ? config.economy.vodka : slot?.good === 'fish' ? config.economy.fish : null;
+    const vision = config.economy.visions[slot?.good]; // vodka, or a mix of it
+    const food = slot?.food ? config.economy.menu[slot.food] : slot?.good === 'bread' ? config.economy.menu.bread : vision ? config.economy.vodka : slot?.good === 'fish' ? config.economy.fish : null;
     if (!food) return 'nothing_to_eat';
     if (p.jailed || p.hidden) return 'busy';
     slot.qty -= 1;
@@ -449,6 +464,7 @@ export class World {
     p.mass += food.mass;
     (p.digesting ??= []).push({ perSec: food.heal / food.healSec, left: food.healSec });
     if (food.buzzSec) p.buzz = food.buzzSec;
+    if (vision) (p.visions ??= {})[vision] = config.economy.visionSec; // how the world looks for a while — they stack: one of each kind at once
     if (food.stamina) {
       p.stamina = this.playerOpts.staminaMax;
       p.exhausted = false;
@@ -487,6 +503,7 @@ export class World {
     for (const p of this.players.values()) {
       if (p.alive && p.health > 0) p.heal((this.playerOpts.healthRegenPerSec ?? 0) * dt);
       if (p.buzz > 0) p.buzz = Math.max(0, p.buzz - dt);
+      if (p.visions) for (const k of Object.keys(p.visions)) if ((p.visions[k] -= dt) <= 0) delete p.visions[k];
       if (!p.digesting?.length) continue;
       for (const d of p.digesting) {
         const t = Math.min(dt, d.left);
@@ -506,6 +523,7 @@ export class World {
     const { bankReach, atmReach } = config.economy;
     const near = (list, reach) => list.some((s) => Math.hypot(s.x - p.x, s.y - p.y) < reach + p.radius);
     if (p.vehicle || !(near(this.atms, atmReach) || near(this.tellers, bankReach))) return 'too_far';
+    if (!near(this.tellers, bankReach) && !near(this.atms.filter((a) => !this.atmBroken(a)), atmReach)) return 'atm_broken'; // smashed: try another
     if (action === 'deposit') {
       if (amount > p.cash) return 'not_enough_cash';
       // Not straight back in at an ATM you've just robbed (a teller, or another ATM, is fine).
@@ -704,11 +722,10 @@ export class World {
     const rod = stack?.type === 'rod';
     if (rod || (stack?.type && config.weapons[stack.type] && !stack.tool)) {
       const into = action === 'take' ? p.inventory : v.cargo;
-      if (action === 'take' && p.hasWeapon(stack.type)) return 'already_have';
       const free = into.indexOf(null);
       if (free < 0) return 'no_room';
       if (rod) into[free] = action === 'take' ? { type: 'rod', tool: true } : { type: 'rod' };
-      else into[free] = action === 'take' ? { ...makeWeapon(stack.type), ammo: stack.ammo } : { type: stack.type, ammo: stack.ammo };
+      else into[free] = { ...(action === 'take' ? makeWeapon(stack.type) : { type: stack.type }), ammo: stack.ammo, ...(stack.illegal ? { illegal: true } : {}) };
       list[slot] = null;
       return null;
     }
@@ -966,6 +983,41 @@ export class World {
     return toCar + (side * Math.PI) / 2;
   }
 
+  /** The key an ATM goes by (robberies, breakages): 'atm:x,y'. */
+  atmKey(a) {
+    return `atm:${Math.round(a.x)},${Math.round(a.y)}`;
+  }
+
+  /** Is this ATM smashed (a bat) and not mended yet? */
+  atmBroken(a) {
+    return (this.brokenAtms.get(this.atmKey(a)) ?? -Infinity) > this.economy.time;
+  }
+
+  /** ATMs smashed and not mended yet: [x, y, seconds until they work again] (for everyone to see). */
+  brokenAtmList() {
+    const now = this.economy.time;
+    return this.atms.filter((a) => this.atmBroken(a)).map((a) => [Math.round(a.x), Math.round(a.y), Math.ceil(this.brokenAtms.get(this.atmKey(a)) - now)]);
+  }
+
+  /** A bat swung at an ATM: after enough hits it spills its cash and stays broken a while. A robbery (if seen). */
+  #smashAtm(p, atm) {
+    const rule = config.robbery.atmSmash;
+    const key = this.atmKey(atm);
+    if (this.atmBroken(atm)) return void this.police.events.push({ player: p, kind: 'error', code: 'atm_broken' });
+    if (p.atmHits?.key !== key) p.atmHits = { key, n: 0 };
+    p.atmHits.n++;
+    if (p.atmHits.n === 1) this.police.crime(p, 'rob_atm'); // (only if someone sees it)
+    if (p.atmHits.n < rule.hits) return void this.police.events.push({ player: p, kind: 'atm_hit', n: p.atmHits.n, of: rule.hits });
+    p.atmHits = null;
+    const take = Math.round(rule.min + Math.random() * (rule.max - rule.min));
+    p.cash += take;
+    this.brokenAtms.set(key, this.economy.time + rule.brokenSec);
+    this.police.robCooldown.set(key, this.economy.time + rule.brokenSec);
+    (p.robbedAtms ??= new Map()).set(key, this.economy.time + rule.brokenSec);
+    this.atmsChanged = true;
+    this.police.events.push({ player: p, kind: 'atm_smashed', amount: take, sec: rule.brokenSec });
+  }
+
   /** Distance from a point to the edge of a vehicle's body (negative = inside). */
   #vehicleDistance(v, x, y) {
     return Math.min(...vehicleCircles(v, v.stats).map((c) => Math.hypot(c.x - x, c.y - y) - c.r));
@@ -1164,7 +1216,7 @@ export class World {
       v.boosting = Boolean(d && !v.police && input.boost && v.boost > 0 && gas > 0);
       if (v.boosting) v.boost = Math.max(0, v.boost - config.vehicles.boost.burnPerSec * dt);
       stepVehicle(v, v.stats, gas, input?.steer ?? 0, input?.drift ?? false, dt, this, collide, this.gripScale * surface, v.boosting);
-      if (d && !v.police) v.fuel = Math.max(0, v.fuel - Math.hypot(v.x - fromX, v.y - fromY) * config.fuel.perUnit);
+      if ((d || v.stolenBy) && !v.police) v.fuel = Math.max(0, v.fuel - Math.hypot(v.x - fromX, v.y - fromY) * config.fuel.perUnit); // (a gangster joyriding burns it too)
       v.slipping = Math.abs(vehicleMotion(v).lateral) > 90;
       if (d) {
         d.x = v.x;
@@ -1334,7 +1386,10 @@ export class World {
    * A knife: stab whoever's nearest in front of you, within reach — a player, a townsperson or an
    * officer on foot. Each stab takes a share of their max health (three stabs kill).
    */
-  #stab(p, stats) {
+  #stab(p, base) {
+    // A bat hits harder the bigger you are.
+    const size = base.sizeScale ? clamp(p.radius / massToRadius(this.playerOpts.startMass), ...base.sizeRange) : 1;
+    const stats = { ...base, share: base.share * size };
     const aim = p.input.aim ?? 0;
     const inFront = (x, y, r) => {
       const dx = x - p.x, dy = y - p.y;
@@ -1352,6 +1407,11 @@ export class World {
     for (const t of this.townsfolk.people) if (t.inside <= 0) consider('npc', t, 17);
     for (const u of this.police.units) if (u.officer.onFoot && u.officer.health > 0) consider('officer', u.officer, 20);
     for (const h of this.hires.list) if (!h.vehicle && h.employer !== p.account) consider('hire', h, h.radius);
+    if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
+      const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
+      if (atm) this.#smashAtm(p, atm);
+      return;
+    }
     if (!best) return;
     const t = best.ref;
     if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
@@ -1403,7 +1463,7 @@ export class World {
       }
       // Officers on foot and townsfolk out walking.
       if (shooter.kind === 'player' || shooter.kind === 'hire') {
-        const officer = this.police.officerHit(px, py, b.x, b.y, b.radius, segmentDistSq);
+        const officer = shooter.role === 'gangster' ? null : this.police.officerHit(px, py, b.x, b.y, b.radius, segmentDistSq); // (gangsters and the Militsiya leave each other be)
         if (officer) {
           this.bullets.delete(b.id);
           this.police.damageOfficer(officer, b.damage, shooter);
@@ -1494,7 +1554,7 @@ export class World {
           } else if (other.cash) {
             p.cash += other.cash;
             this.pickups.delete(other.id);
-          } else if (!p.hasWeapon(other.weapon.type) && p.addWeapon(other.weapon)) {
+          } else if (p.addWeapon(other.weapon)) { // (you can carry several of the same gun)
             this.pickups.delete(other.id);
           }
           continue;

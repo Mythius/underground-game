@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { config } from '../src/config.js';
 import { Environment } from '../src/game/Environment.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 const opts = config.environment;
 
 test('20 minutes of day, then 5 of night, repeating', () => {

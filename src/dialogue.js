@@ -43,6 +43,10 @@ export const DIALOGUE = [
     { id: 'guard', name: 'Building guard', note: 'Someone walks up to the building they guard.', lines: ['Private property.', 'Keep walking.', 'Nobody gets in.', 'Not one step closer.'] },
     { id: 'hitman', name: 'Hitman taking aim', note: 'A hitman lining up his shot (the red laser).', lines: ['Nothing personal.', 'Hold still…', 'Contract\'s a contract.'] },
   ] },
+  { group: 'Gangsters', kinds: [
+    { id: 'gangster', name: 'Gangster — hello', note: 'You walk up to a gangster (he buys vodka: E to sell).', lines: ['Got any vodka? I pay well.', 'Vodka, friend? Good money.', 'You selling? I\'m buying.', 'Keep walking… unless you have vodka.'] },
+    { id: 'gangsterHoldup', name: 'Gangster — hold-up', note: 'A gangster holding you up at gunpoint.', lines: ['Wallet. Now.', 'Hands up. Don\'t be a hero.', 'Easy… give it here.', 'Nobody moves, nobody gets hurt.'] },
+  ] },
 ];
 const KINDS = new Map(DIALOGUE.flatMap((g) => g.kinds).map((k) => [k.id, k]));
 

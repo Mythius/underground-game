@@ -6,6 +6,8 @@ import { Vehicle } from '../src/game/vehicles.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { Slots, hotbarOf, trunkOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 // What a player carries on foot ({ good: qty }), and putting goods in their hotbar.
 const carried = (p) => hotbarOf(p).items;
 const carry = (p, goods) => {
@@ -349,7 +351,7 @@ test('the car radio: V switches it on and off, N skips to the next song; others 
   assert.equal(car.radio.song, 1, 'back on where it was');
 });
 
-test('with a playlist, N skips from whatever is playing now (the radio moves on by itself as songs end)', () => {
+test('with a playlist, N skips to the next song (the radio repeats a song until then)', () => {
   const { world, player } = town();
   const before = World.radioDurations;
   World.radioDurations = () => [5, 5, 5, 5];
@@ -359,9 +361,9 @@ test('with a playlist, N skips from whatever is playing now (the radio moves on 
     Object.assign(player, { vehicle: car, x: car.x, y: car.y });
     car.driver = player;
     world.radio(player, 'toggle'); // song 0
-    for (let i = 0; i < 30 * 7; i++) world.step(1 / 30); // 7 s in: song 1 is playing
+    for (let i = 0; i < 30 * 7; i++) world.step(1 / 30); // 7 s in: song 0 is on its second time round
     world.radio(player, 'next');
-    assert.equal(car.radio.song, 2, 'the one after the song that was playing');
+    assert.equal(car.radio.song, 1, 'the next one');
   } finally {
     World.radioDurations = before;
   }

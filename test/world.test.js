@@ -174,7 +174,7 @@ test('stamina refills after a short pause', () => {
   assert.equal(p.stamina, config.player.staminaMax);
 });
 
-test('walking over a gun picks it up into a free slot, but not a duplicate', () => {
+test('walking over a gun picks it up into a free slot — even one like a gun you have', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
   p.x = p.y = 500;
@@ -185,8 +185,8 @@ test('walking over a gun picks it up into a free slot, but not a duplicate', () 
 
   world.spawnPickup(500, 500, makeWeapon('shotgun'));
   world.step(0);
-  assert.equal(world.pickups.size, 1, 'already has a shotgun');
-  assert.equal(p.inventory[2], null);
+  assert.equal(world.pickups.size, 0, 'a second shotgun too');
+  assert.equal(p.inventory[2]?.type, 'shotgun');
 });
 
 test('the selected gun is the one that fires; the shotgun fires several pellets', () => {
@@ -422,6 +422,8 @@ test('a door will not close on a player standing in it, and is out of reach from
 // Vehicles ------------------------------------------------------------------
 
 import { Vehicle } from '../src/game/vehicles.js';
+
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
 
 const naturalHealing = config.player.healthRegenPerSec;
 config.player.healthRegenPerSec = 0; // these tests count exact damage and healing
@@ -846,4 +848,19 @@ test('a car hitting someone sends them flying — a short way, further the faste
   assert.ok(slow > 30 && slow < 200, `a slow car throws them a bit (${Math.round(slow)})`);
   assert.ok(fast > slow, `a fast one further (${Math.round(fast)} vs ${Math.round(slow)})`);
   assert.ok(fast < 260, `but not far (${Math.round(fast)})`);
+});
+
+test('vodka and its mixes drink like vodka, each changing how you see things for a while', () => {
+  const world = shopWorld();
+  const p = world.spawnPlayer('a');
+  for (const [good, kind] of Object.entries(config.economy.visions)) {
+    p.inventory[1] = { good, qty: 1 };
+    p.selected = 1;
+    assert.equal(world.eat(p), null, good);
+    assert.equal(p.visions[kind], config.economy.visionSec);
+    assert.equal(p.buzz, config.economy.vodka.buzzSec, 'the buzz too');
+  }
+  assert.deepEqual(Object.keys(p.visions).sort(), Object.values(config.economy.visions).sort(), 'they stack: all at once');
+  for (let i = 0; i < 30 * (config.economy.visionSec + 1); i++) world.step(1 / 30);
+  assert.deepEqual(p.visions, {}, 'wear off');
 });

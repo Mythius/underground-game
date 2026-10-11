@@ -4,6 +4,8 @@ import { config } from '../src/config.js';
 import { World, roughly } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 // A bar and two starter houses along a road.
 const MAP = {
   width: 4000,

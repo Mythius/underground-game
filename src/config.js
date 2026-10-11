@@ -110,6 +110,9 @@ export const config = Object.freeze({
   // barrel: where bullets leave the gun, in player radii from the centre (matches the drawing).
   weapons: {
     knife: { name: 'Knife', melee: true, share: 1 / 3, reach: 38, cooldownSec: 0.55, magazineSize: 0, reloadSec: 0, barrel: 1.1, spawnWeight: 0 },
+    // A baseball bat: hits harder the bigger you are (share × your size against a starting player's,
+    // within sizeRange), reaches further than the knife, and smashes ATMs open (robbery.atmSmash).
+    bat: { name: 'Baseball bat', melee: true, share: 0.2, sizeScale: true, sizeRange: [0.8, 3], reach: 52, cooldownSec: 0.7, magazineSize: 0, reloadSec: 0, barrel: 1.7, spawnWeight: 0 },
     pistol: { name: 'Pistol', damage: 20, cooldownSec: 0.2, magazineSize: 5, reloadSec: 1.5, bulletSpeed: 900, bulletLifetimeSec: 1.2, pellets: 1, spread: 0, barrel: 1.6, spawnWeight: 0 },
     smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
     shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
@@ -122,7 +125,7 @@ export const config = Object.freeze({
     fuelCanShare: 20, // one fuel poured in by hand fills this % of a tank
     // Vodka poured into a car fills its boost tank (a second gauge); Space burns it while you drive for
     // harder acceleration and a higher top speed.
-    boost: { perVodka: 25, burnPerSec: 12, accel: 1.9, topSpeed: 1.35 },
+    boost: { perVodka: 25, burnPerSec: 6, accel: 1.9, topSpeed: 1.35 }, // (a full tank: ~17 s of boost)
     count: 260,
     gravelGrip: 0.8, // grip outside the city (gravel roads, grass, snow) compared with city asphalt
     respawnSec: 20, // after one is destroyed
@@ -167,6 +170,11 @@ export const config = Object.freeze({
       feast: { name: 'Feast', icon: '🍗', price: 60, heal: 1000, healSec: 20, mass: 15, bread: 4 },
     },
     foodStack: 5,
+    // What drinking vodka (or a mix of it, from a mixing station) does to how you see the world, for
+    // `visionSec`: plain vodka turns the colours inside out; the mixes each light the world their own way.
+    // They drink like vodka otherwise (its healing and buzz).
+    visions: { vodka: 'invert', jetvodka: 'jet', firewater: 'fire', blackvodka: 'crude' },
+    visionSec: 180, // (3 minutes)
     // A fish (the good) eats like food too.
     fish: { name: 'Fish', icon: '🐟', heal: 20, healSec: 6, mass: 2 },
     // Vodka (the illegal good) drinks like food: middling healing, and while the buzz lasts you take
@@ -223,27 +231,36 @@ export const config = Object.freeze({
     cabinet: { name: 'Cabinet', icon: '🗄️', base: 200, weight: 3, tier: 'finished' }, // storage: place it, then keep 10 slots of anything in it
     bed: { name: 'Bed', icon: '🛏️', base: 180, weight: 3, tier: 'finished' },
     bread: { name: 'Bread', icon: '🍞', base: 30, weight: 1, tier: 'finished' },
+    bat: { name: 'Baseball bat', icon: '🏏', base: 60, weight: 1, tier: 'finished' }, // made from planks; E with it in hand to take it up as a weapon
+    energy: { name: 'Energy drinks', icon: '🥤', base: 14, weight: 1, tier: 'finished' }, // by the crate, from markets (a mixing station mixes them into vodka)
     car: { name: 'New car', icon: '🚗', base: 2500, weight: 10, tier: 'finished', vehicles: ['pickup', 'truck'] }, // only fits a pickup or truck
     guns: { name: 'Licensed guns', icon: '🔫', base: 600, weight: 2, tier: 'finished' },
     // Contraband: seized if the Militsiya search you, sold under the table (shops, kiosks) or to the
     // black-market buyer behind the freight station. Never bought or sold by markets.
     vodka: { name: 'Vodka', icon: '🍾', base: 60, weight: 1, tier: 'illegal', illegal: true },
+    // Vodka mixed on a mixing station (see economy.mixes for what they do when you drink them).
+    jetvodka: { name: 'Jet vodka', icon: '⚡', base: 120, weight: 1, tier: 'illegal', illegal: true }, // vodka + energy drink
+    firewater: { name: 'Firewater', icon: '🔥', base: 130, weight: 1, tier: 'illegal', illegal: true }, // vodka + petrol
+    blackvodka: { name: 'Black crude vodka', icon: '🛢️', base: 110, weight: 1, tier: 'illegal', illegal: true }, // vodka + crude oil
     counterfeit: { name: 'Counterfeit rubles', icon: '💸', base: 280, weight: 1, tier: 'illegal', illegal: true },
     hotparts: { name: 'Stolen car parts', icon: '🧰', base: 220, weight: 2, tier: 'illegal', illegal: true },
-    blackguns: { name: 'Unregistered guns', icon: '🔫', base: 1400, weight: 2, tier: 'illegal', illegal: true },
+    blackguns: { name: 'Unregistered pistol', icon: '🔫', base: 900, weight: 1, tier: 'illegal', illegal: true }, // boxed, from a gunsmith bench: E with one in hand takes it up as a (still illegal) pistol
   },
   // Recipes only illegal machines run (keys 'illegal:<name>').
   illegalRecipes: {
     vodka: { in: { wheat: 2 }, out: { vodka: 1 }, sec: 10 },
     counterfeit: { in: { plastic: 2 }, out: { counterfeit: 1 }, sec: 20 },
     blackguns: { in: { steel: 3, parts: 1 }, out: { blackguns: 1 }, sec: 30 },
+    jetvodka: { in: { vodka: 1, energy: 1 }, out: { jetvodka: 1 }, sec: 8 },
+    firewater: { in: { vodka: 1, fuel: 1 }, out: { firewater: 1 }, sec: 8 },
+    blackvodka: { in: { vodka: 1, crude: 1 }, out: { blackvodka: 1 }, sec: 8 },
   },
 
   // A factory turns inputs into outputs every `sec` seconds while it has the inputs and room for the outputs.
   // `recipes` are tried in order (the foundry takes ore or scrap). Warehouse machines run these recipes too.
   factories: {
     sawmill: { name: 'Sawmill', recipes: [{ in: { logs: 1 }, out: { planks: 1 } }], sec: 8 },
-    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }, { in: { planks: 3, steel: 1 }, out: { cabinet: 1 } }, { in: { planks: 3, plastic: 2 }, out: { bed: 1 } }], sec: 20 },
+    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }, { in: { planks: 3, steel: 1 }, out: { cabinet: 1 } }, { in: { planks: 3, plastic: 2 }, out: { bed: 1 } }, { in: { planks: 2 }, out: { bat: 1 } }], sec: 20 },
     flourmill: { name: 'Flour mill', recipes: [{ in: { wheat: 2 }, out: { flour: 1 } }], sec: 8 },
     bakery: { name: 'Bakery', recipes: [{ in: { flour: 1 }, out: { bread: 1 } }], sec: 6 },
     foundry: { name: 'Foundry', recipes: [{ in: { ore: 1 }, out: { steel: 1 } }, { in: { scrap: 2 }, out: { steel: 1 } }], sec: 12 },
@@ -298,9 +315,10 @@ export const config = Object.freeze({
     mill: { name: 'Mill', icon: '🌾', price: 700, recipes: ['flourmill:0'] },
     furnace: { name: 'Furnace', icon: '🔥', price: 3000, recipes: ['foundry:0', 'foundry:1', 'glassworks:0', 'bakery:0'] },
     press: { name: 'Press', icon: '🛢️', price: 4000, recipes: ['refinery:0', 'machineshop:0'] },
-    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'furniture:1', 'furniture:2', 'carfactory:0'] },
+    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'furniture:1', 'furniture:2', 'furniture:3', 'carfactory:0'] },
     // Illegal: their output is contraband, and running them draws the Militsiya (see `heat`).
     still: { name: 'Still', icon: '🍾', price: 1500, recipes: ['illegal:vodka'], illegal: true },
+    mixer: { name: 'Mixing station', icon: '🍸', price: 2500, recipes: ['illegal:jetvodka', 'illegal:firewater', 'illegal:blackvodka'], illegal: true }, // vodka + energy drink / petrol / crude
     printer: { name: 'Printing press', icon: '💸', price: 5000, recipes: ['illegal:counterfeit'], illegal: true },
     gunsmith: { name: 'Gunsmith bench', icon: '🔫', price: 6000, recipes: ['illegal:blackguns'], illegal: true },
   },
@@ -359,6 +377,7 @@ export const config = Object.freeze({
       shotgun: { price: 450, uses: 1 },
       rifle: { price: 350, uses: 1 },
       sniper: { price: 900, uses: 2 },
+      bat: { price: 150, uses: 0 }, // (not a gun: no licensed stock needed)
     },
   },
 
@@ -419,7 +438,7 @@ export const config = Object.freeze({
   // Each crime sets your wanted level to at least its stars — if the police see it, or a townsperson
   // nearby calls it in. Alarms (robberies) always report.
   crime: {
-    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, break_in: 1, carry_body: 2, near_body: 1, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
+    stars: { fire: 1, steal_car: 1, pickpocket: 1, assault: 2, rob_atm: 2, rob_shop: 2, steal_police_car: 2, rob_bank: 3, mugging: 2, illegal_gun: 1, break_in: 1, carry_body: 2, near_body: 1, sell_contraband: 2, smuggling: 2, run_roadblock: 3, murder: 3, attack_police: 4 },
     policeSees: 750, // police notice crimes this close
     witnessSees: 320, // townsfolk out walking notice (and phone it in) this close
     // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
@@ -430,6 +449,9 @@ export const config = Object.freeze({
     atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false, noDepositSec: 300 }, // noDepositSec: you can't pay the cash straight back in at the ATM you robbed
     shop: { sec: 4, min: 200, max: 600, cooldownSec: 300, needsGun: true },
     bank: { sec: 10, min: 1500, max: 4000, cooldownSec: 600, needsGun: true },
+    // A baseball bat on an ATM: `hits` swings and it spills its cash — and it's broken (no banking,
+    // nothing to rob) for brokenSec.
+    atmSmash: { hits: 3, min: 200, max: 500, brokenSec: 300 },
   },
   // Selling contraband over the counter at shops and kiosks: they pay the base price, but every sale
   // adds heat (value / heatPerValue); at 100 the place is raided and shut for raidClosedSec.
@@ -509,6 +531,8 @@ export const config = Object.freeze({
     responseSec: 8, // a reported crime takes this long before cars are sent
     chaseThrottle: 0.85, // how hard they drive after you
     searchRadius: 550, // hiding spots (trees, dumpsters, cars, buildings) they check round your last known spot
+    illegalGunEverySec: 15, // an unregistered gun seen in your hand is reported at most this often
+    guardRange: 700, // a bank guard deals with trouble this close to his post (and no further)
     postRange: 1800, // a checkpoint's own car answers calls this close to its checkpoint (and always chases whoever runs it)
     cruiseRadius: 1800, // lost in a car chase: they cruise the roads this far round where you were last seen
     inspectSec: 1.5, // looking into each one
@@ -530,7 +554,37 @@ export const config = Object.freeze({
   // Hired muscle from the БАР (the barman): goons follow you (and ride along in your car), guards hold
   // your home or a warehouse from the inside, a hitman hunts one player. Hiring is paid from the bank;
   // goons and guards also draw a wage every minute and walk off if you can't pay it.
+  // Gangsters: a few hard men in trench coats with rifles, walking the town (see src/game/hires.js).
+  //   They take armor less damage, don't heal on their own, and come back (new faces) a while after one's killed or arrested.
+  //   Spotting you on foot, there's a robChance they hold you up: holdupSec standing still with your hands up
+  //   and they take `take` of your carried cash; run off or pull a trigger and they open fire.
+  //   Spotting a player's parked car with its owner away, they steal it, drive it off and leave it
+  //   somewhere after joyrideSec (its owner is told where).
+  //   They also buy any vodka (and the mixes) for vodkaPrice × base. The Militsiya only go after them
+  //   for crimes they're seen doing.
+  gangsters: {
+    count: 4,
+    health: 160,
+    armor: 0.3,
+    weapon: 'rifle',
+    walkSpeed: 75,
+    sight: 520,
+    robChance: 0.2,
+    holdupRange: 120,
+    holdupSec: 4,
+    holdupMove: 45, // moving more than this during a hold-up counts as running off
+    take: 0.5,
+    playerCooldownSec: 180, // once he's sized you up, he leaves you be this long
+    theftCooldownSec: 240,
+    ownerAwayRange: 260, // a car's owner within this of it: he leaves it alone
+    joyrideSec: [40, 70],
+    fightRange: 700,
+    vodkaPrice: 3,
+    tradeReach: 110,
+    respawnSec: 120,
+  },
   hires: {
+    barVodkaPrice: 250, // a bottle of vodka from the barman (cash): dear — no questions asked
     reach: 130, // from the barman's centre to your edge (same as a market's, which the client's E prompt uses)
     radius: 18,
     health: 150,

@@ -7,6 +7,8 @@ import { config } from '../src/config.js';
 import { World } from '../src/game/World.js';
 import { loadSavedMap, saveMap, validateMap } from '../src/game/mapFile.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 const opts = { ...config.world, foodCount: 0, pickupStart: 0 };
 
 test('a generated world exports a map that rebuilds the same scenery', () => {

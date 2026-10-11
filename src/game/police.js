@@ -27,6 +27,29 @@ export class Police {
     if (!this.stations.length) return;
     const cars = Math.min(config.police.maxUnits, Math.max(1, Math.round(world.buildings.length * config.police.carsPerBuildings)));
     for (let i = 0; i < cars; i++) this.#replace(this.stations[i % this.stations.length]);
+    for (const b of world.buildings.filter((x) => x.type === 'bank')) this.#bankGuard(b);
+  }
+
+  /**
+   * An officer on foot posted just inside a bank's front door. He goes for anyone robbing the bank,
+   * and deals with trouble he sees in and around it like any cop — but never chases far — and walks
+   * back to his post after. Replaced there if he's killed.
+   */
+  #bankGuard(b) {
+    const door = b.doors.filter((d) => d.exterior).sort((a, c) => Math.max(c.w, c.h) - Math.max(a.w, a.h))[0];
+    if (!door) return;
+    const cx = door.x + door.w / 2, cy = door.y + door.h / 2;
+    for (let d = 50; d <= 200; d += 5) { // a clear spot a few steps in from the door, on the public side (in plain view of it)
+      const x = cx - door.nx * d, y = cy - door.ny * d;
+      if (this.world.isBlocked(x, y, 22) || !this.world.lineOfSight(cx - door.nx * 20, cy - door.ny * 20, x, y)) continue;
+      this.#newUnit(this.#nearestStation(cx, cy), { guard: b.id, x, y, angle: Math.atan2(door.ny, door.nx), range: config.police.guardRange, door: { x: cx, y: cy, nx: door.nx, ny: door.ny } });
+      return;
+    }
+  }
+
+  /** The (living) guard posted in bank building `id`, if any. */
+  bankGuardOf(id) {
+    return this.units.find((u) => u.post?.guard === id && u.officer.health > 0) ?? null;
   }
 
   /** The old cruiser of a replaced unit goes back to the depot, unless someone's in it (stolen ones stay out there). */
@@ -58,6 +81,11 @@ export class Police {
   }
 
   #newUnit(station, post = null) {
+    if (post?.guard) { // a bank guard: on foot, no car
+      const unit = { station, car: null, officer: { id: this.nextOfficerId++, kind: 'officer', name: 'Police', vehicle: null, x: post.x, y: post.y, angle: post.angle, health: config.police.officerHealth, onFoot: true, fireCooldown: 0 }, target: null, route: [], stuck: 0, reverse: 0, arrest: 0, respawn: 0, post };
+      this.units.push(unit);
+      return unit;
+    }
     let car;
     if (post) { // parked at its checkpoint (a new car turns up there)
       car = new Vehicle(this.world.nextEntityId++, 'police', post.x, post.y, post.angle);
@@ -123,6 +151,7 @@ export class Police {
    */
   crime(p, kind, alarm = false, except = null, stars = config.crime.stars[kind] ?? 1) {
     if (!p?.alive || (p.kind !== 'player' && p.kind !== 'hire')) return false;
+    if (p.role === 'gangster') return false; // the Militsiya and the gangsters leave each other be
     if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
@@ -146,7 +175,7 @@ export class Police {
 
   /** Everyone the Militsiya might be after: players and hired muscle. */
   #suspects() {
-    return [...this.world.players.values(), ...(this.world.hires?.list ?? [])];
+    return [...this.world.players.values(), ...(this.world.hires?.list ?? []).filter((h) => h.role !== 'gangster')];
   }
 
   /** The Militsiya know where p is right now: the trail starts again from here. */
@@ -175,7 +204,7 @@ export class Police {
     if (p.vehicle || p.robbing || p.jailed) return 'busy';
     const w = this.world;
     const near = (list, reach) => list.find((s) => Math.hypot(s.x - p.x, s.y - p.y) < reach + p.radius);
-    const atm = near(w.atms, config.economy.atmReach);
+    const atm = near(w.atms.filter((a) => !w.atmBroken(a)), config.economy.atmReach); // (a smashed one has nothing left)
     const teller = near(w.tellers, config.economy.bankReach);
     const keeper = near(w.shopkeepers.filter((k) => k.building), config.economy.shopReach);
     const [kind, target] = atm ? ['atm', atm] : teller ? ['bank', teller] : keeper ? ['shop', keeper] : [null, null];
@@ -201,6 +230,11 @@ export class Police {
     p.robbing = { kind, key, x: target.x, y: target.y, elapsed: 0, sec: rule.sec };
     // A shop or bank: the clerk is right there and calls it in. An ATM: only if someone sees you.
     this.crime(p, `rob_${kind}`, kind !== 'atm');
+    if (kind === 'bank') { // the guard inside comes straight for you
+      const bank = w.buildings.find((b) => b.type === 'bank' && target.x > b.x && target.x < b.x + b.w && target.y > b.y && target.y < b.y + b.h);
+      const guard = bank && this.bankGuardOf(bank.id);
+      if (guard) Object.assign(guard, { target: p, route: [] });
+    }
     return null;
   }
 
@@ -384,6 +418,14 @@ export class Police {
     }
     this.#robberies(dt);
     this.#jail();
+    // An officer who sees an unregistered gun in your hand reports it (now and then, not every tick).
+    for (const p of this.world.players.values()) {
+      if (!p.alive || p.vehicle || p.jailed || p.hidden || !p.weapon?.illegal) continue;
+      if ((p.illegalSeenAt ?? -Infinity) + config.police.illegalGunEverySec > this.time) continue;
+      if (!this.policeSee(p.x, p.y, p)) continue;
+      p.illegalSeenAt = this.time;
+      if (this.crime(p, 'illegal_gun', true)) this.events.push({ player: p, kind: 'illegal_gun_seen' });
+    }
     // Driving a stolen Militsiya car with its siren on: the whole force can hear (and track) you.
     const wailing = (p) => p.vehicle?.police && p.vehicle.siren && p.vehicle.driver === p && p.kind === 'player';
     for (const p of this.world.players.values()) {
@@ -418,7 +460,7 @@ export class Police {
     for (const p of wanted.sort((a, b) => b.wanted - a.wanted)) {
       const chasing = this.units.filter((u) => u.target === p).length;
       const free = this.units
-        .filter((u) => !u.target && u.officer.health > 0 && (!u.post || Math.hypot(u.post.x - p.x, u.post.y - p.y) < config.police.postRange)) // checkpoint cars only answer calls nearby
+        .filter((u) => !u.target && u.officer.health > 0 && (!u.post || Math.hypot(u.post.x - p.x, u.post.y - p.y) < (u.post.range ?? config.police.postRange))) // checkpoint cars and bank guards only answer calls nearby
         .sort((a, b) => Math.hypot(a.officer.x - p.x, a.officer.y - p.y) - Math.hypot(b.officer.x - p.x, b.officer.y - p.y));
       for (const u of free.slice(0, Math.max(0, p.wanted - chasing))) {
         u.target = p;
@@ -441,6 +483,7 @@ export class Police {
       return;
     }
     o.fireCooldown = Math.max(0, o.fireCooldown - dt);
+    if (u.post?.guard) return this.#guardDuty(u, dt);
     const t = u.target;
     const seen = t && t.lastSeen === this.time; // someone has eyes on them right now
     if (o.onFoot) {
@@ -512,6 +555,33 @@ export class Police {
       u.route = graph.route({ x: car.x, y: car.y }, node);
     }
     this.#followRoute(u, car, 0.55, dt);
+  }
+
+  /** A bank guard's turn: after whoever he's after (not far from the bank, and not a car), else back to his post. */
+  #guardDuty(u, dt) {
+    const o = u.officer, post = u.post;
+    const t = u.target;
+    if (t && Math.hypot(t.x - post.x, t.y - post.y) > post.range) u.target = null; // too far from the bank: not his job
+    const target = u.target;
+    if (target && !target.vehicle) {
+      const seen = target.lastSeen === this.time;
+      if (seen && Math.hypot(target.x - o.x, target.y - o.y) < 900) return this.#footChase(u, target, dt);
+      if (target.lastKnown) return this.#search(u, target, dt);
+    }
+    u.arrest = 0;
+    // Back to his post, in through the front door if he's outside.
+    const b = this.world.buildings[post.guard - 1];
+    const inside = b && o.x > b.x && o.x < b.x + b.w && o.y > b.y && o.y < b.y + b.h;
+    const d = post.door;
+    if (!inside && d) {
+      // To just outside the door first, then (once he's at the doorway) on in.
+      if (Math.hypot(d.x - o.x, d.y - o.y) > 60) return this.#walk(o, d.x + d.nx * 45, d.y + d.ny * 45, dt);
+      return this.#walk(o, d.x - d.nx * 45, d.y - d.ny * 45, dt);
+    }
+    if (Math.hypot(post.x - o.x, post.y - o.y) > 6) {
+      o.angle = Math.atan2(post.y - o.y, post.x - o.x);
+      this.#walk(o, post.x, post.y, dt);
+    } else o.angle = post.angle; // at his post, watching the door
   }
 
   /** A checkpoint car with nothing to do: drive back along the roads and park at its post. */

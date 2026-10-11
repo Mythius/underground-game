@@ -5,6 +5,8 @@ import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 function town() {
   const { map } = validateMap({
     width: 5000,
@@ -24,7 +26,7 @@ function town() {
   return { world, eco: world.economy, p, byType, standAt };
 }
 
-test('gun stores sell guns for cash, one of each, using their stock', () => {
+test('gun stores sell guns for cash (as many as you like), using their stock', () => {
   const { eco, p, byType, standAt } = town();
   const store = byType('gunstore');
   standAt(store);
@@ -39,11 +41,12 @@ test('gun stores sell guns for cash, one of each, using their stock', () => {
   assert.ok(p.hasWeapon('rifle'));
   assert.equal(p.cash, 5000 - price);
   assert.equal(market.goods.guns.stock, before - 1);
-  assert.equal(eco.buyGun(p, store.id, 'rifle'), 'already_have');
+  assert.equal(eco.buyGun(p, store.id, 'rifle'), null, 'a second one is fine');
+  assert.equal(p.inventory.filter((s) => s?.type === 'rifle').length, 2);
   // Gun factories restock the store by selling it crates of guns.
   hotbarOf(p).add('guns', 2);
   assert.equal(eco.trade(p, store.id, 'guns', 2, 'sell'), null);
-  assert.equal(market.goods.guns.stock, before + 1);
+  assert.equal(market.goods.guns.stock, before, '(two bought, two crates in)');
 });
 
 test('dealerships sell new vehicles from the bank, parked outside with your name', () => {

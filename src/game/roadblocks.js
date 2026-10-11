@@ -121,6 +121,12 @@ export class Roadblocks {
         holder.add(good, -qty);
         seized[good] = qty;
       }
+      // Unregistered pistols, in hand or in the trunk: taken (counted as boxed ones).
+      for (const list of [p.inventory, v.cargo]) list.forEach((s, i) => {
+        if (!s?.illegal) return;
+        list[i] = null;
+        seized.blackguns = (seized.blackguns ?? 0) + 1;
+      });
       if (Object.keys(seized).length) {
         this.world.police.crime(p, 'smuggling', true);
         this.events.push({ player: p, kind: 'roadblock_seized', seized });

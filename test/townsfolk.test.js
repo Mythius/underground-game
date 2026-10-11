@@ -6,6 +6,8 @@ import { RoadGraph } from '../src/game/townsfolk.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 config.player.healthRegenPerSec = 0; // these tests count exact damage and healing
 
 test('road routes follow the roads through junctions', () => {
@@ -146,7 +148,8 @@ test('a full-size map is capped at maxPopulation townsfolk and maxUnits police',
   assert.equal(world.townsfolk.people.length, config.townsfolk.maxPopulation);
   const patrols = world.police.units.filter((u) => !u.post).length + world.police.waiting.filter((w) => !w.post).length;
   assert.equal(patrols, config.police.maxUnits, 'patrol cars (checkpoints have their own on top)');
-  assert.equal(world.police.units.filter((u) => u.post).length, world.roadblocks.list.length, 'one crewed car at each checkpoint');
+  assert.equal(world.police.units.filter((u) => u.post?.roadblock).length, world.roadblocks.list.length, 'one crewed car at each checkpoint');
+  assert.equal(world.police.units.filter((u) => u.post?.guard).length, world.buildings.filter((b) => b.type === 'bank').length, 'and a guard in each bank');
   assert.equal(config.townsfolk.maxPopulation, 300);
   assert.equal(config.police.maxUnits, 20);
 });

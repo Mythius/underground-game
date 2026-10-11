@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
+import { carriedSlots } from '../src/game/Room.js';
 import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf, trunkOf } from '../src/game/cargo.js';
 import { Vehicle } from '../src/game/vehicles.js';
+
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
 
 // A small town on a railway: the station north of the track, a shop, a market, a warehouse and a shack.
 function town() {
@@ -241,4 +244,43 @@ test('most delivery jobs haul contract goods to the train', () => {
   const jobs = [...world.economy.jobs.values()];
   assert.ok(jobs.length > 0);
   assert.ok(jobs.some((j) => j.train && j.to === world.railway.station.id), 'train jobs');
+});
+
+test('unregistered pistols: taken up from the box, still illegal — the Militsiya report them, checkpoints seize them, the smuggler buys them', () => {
+  const { world, player, at } = town();
+  assert.equal(config.machines.gunsmith.recipes[0], 'illegal:blackguns', 'made on a gunsmith bench');
+  hotbarOf(player).add('blackguns', 2);
+  player.selected = player.inventory.findIndex((s) => s?.good === 'blackguns');
+  assert.equal(world.eat(player), null, 'E takes one up');
+  const gun = player.weapon;
+  assert.equal(gun.type, 'pistol');
+  assert.equal(gun.illegal, true);
+  assert.equal(hotbarOf(player).count('blackguns'), 1, 'one still boxed');
+  assert.equal(world.eat(Object.assign(player, { selected: player.inventory.findIndex((s) => s?.good === 'blackguns') })), null);
+  assert.equal(player.inventory.filter((s) => s?.type === 'pistol').length, 2, 'two of the same gun');
+  // Kept with your hotbar.
+  const back = JSON.parse(JSON.stringify(carriedSlots(player)));
+  assert.ok(back.some((s) => s?.type === 'pistol' && s.illegal));
+  // A cop who sees it in your hand.
+  player.selected = player.inventory.findIndex((s) => s?.illegal);
+  world.police.policeSee = () => true;
+  world.police.step(1 / 30);
+  assert.equal(player.wanted, config.crime.stars.illegal_gun);
+  world.police.policeSee = () => false;
+  player.wanted = 0;
+  // The smuggler buys them as guns.
+  const s = world.railway.smuggler;
+  at(s.x, s.y - 40);
+  const r = world.railway.sellBlack(player, 'blackguns', 1);
+  assert.equal(r.qty, 1);
+  assert.equal(player.inventory.filter((x) => x?.illegal).length, 1);
+  // A checkpoint takes the other.
+  const block = world.roadblocks.list[0];
+  const car = new Vehicle(9201, 'sedan', block.x, block.y, 0);
+  world.vehicles.set(car.id, car);
+  Object.assign(car, { driver: player });
+  Object.assign(player, { vehicle: car, lastVehicle: car, x: car.x, y: car.y, handledAt: {} });
+  for (let i = 0; i < 30 * 2; i++) world.roadblocks.step(1 / 30);
+  assert.equal(player.inventory.filter((x) => x?.illegal).length, 0, 'seized');
+  assert.equal(world.roadblocks.events.at(-1).seized.blackguns, 1);
 });

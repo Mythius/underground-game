@@ -6,7 +6,7 @@ import { AUDIO_TYPES } from './sounds.js';
 
 // The car radio's playlist: as many songs as you like, uploaded in the sound editor (admin password).
 // Files live in data/radio/ with a playlist.json listing them in order: { id, name, file, duration, volume }.
-// A car's radio plays through the playlist in order from the song it was on; clients stream the files
+// A car's radio plays one song over and over until someone skips (N); clients stream the files
 // (they can be long) and everyone near the car hears the same point in the same song.
 
 export const RADIO_DIR = fileURLToPath(new URL('../data/radio/', import.meta.url));
@@ -26,21 +26,15 @@ function probe(path) {
 const cleanName = (name) => String(name ?? '').replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, NAME_MAX) || 'Untitled';
 
 /**
- * Which song is playing `elapsed` seconds after a radio started song number `song`, going through the
- * playlist in order: { index, offset }. Keep in sync with radioAt() in public/index.html.
+ * Which song a radio that started song number `song` `elapsed` seconds ago is playing, and how far in:
+ * { index, offset }. It repeats that song until someone presses N. Keep in sync with radioAt() in public/index.html.
  */
 export function radioAt(song, elapsed, durations) {
   const n = durations.length;
   if (!n) return { index: song, offset: elapsed }; // (no playlist yet: the song number stands)
-  const total = durations.reduce((a, b) => a + b, 0);
-  let i = ((song % n) + n) % n;
-  let t = total > 0 ? ((elapsed % total) + total) % total : 0;
-  for (let k = 0; k < n; k++) {
-    if (t < durations[i]) return { index: i, offset: t };
-    t -= durations[i];
-    i = (i + 1) % n;
-  }
-  return { index: i, offset: 0 };
+  const index = ((song % n) + n) % n;
+  const d = durations[index] > 0 ? durations[index] : 1;
+  return { index, offset: ((elapsed % d) + d) % d };
 }
 
 export class RadioStore {

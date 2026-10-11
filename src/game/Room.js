@@ -10,7 +10,7 @@ import { makeWeapon } from './entities.js';
 
 /** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). */
 export function carriedSlots(p) {
-  return p.inventory.map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo }));
+  return p.inventory.map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
 }
 
 /** Saved hotbar slots back into a player's hotbar (anything no longer in the game is dropped). */
@@ -22,7 +22,7 @@ export function restoreSlots(p, slots) {
     if (s?.good && config.goods[s.good] && qty(s.qty)) return { good: s.good, qty: s.qty };
     if (s?.food && config.economy.menu[s.food] && qty(s.qty)) return { food: s.food, qty: s.qty };
     if (s?.type === 'rod') return { type: 'rod', tool: true };
-    if (s?.type && config.weapons[s.type]) return { ...makeWeapon(s.type), ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize) };
+    if (s?.type && config.weapons[s.type]) return { ...makeWeapon(s.type), ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize), ...(s.illegal ? { illegal: true } : {}) };
     return null;
   });
   if (!inv.some((s) => s?.type === p.inventory[0]?.type)) { // never without the starting knife
@@ -199,6 +199,11 @@ export class Room {
     }
     this.saveTimer += dt;
     if (this.saveTimer >= config.warehouses.saveEverySec || (warehouses.changed && this.saveTimer >= 2)) this.#saveWarehouses();
+    // ATMs smashed with a bat: everyone sees which (and they mend themselves; clients count down).
+    if (this.world.atmsChanged) {
+      this.world.atmsChanged = false;
+      this.broadcast({ t: ServerMsg.ATMS, broken: this.world.brokenAtmList() });
+    }
     // Furniture: everyone redraws when it moves; homes are saved with their accounts.
     const furnish = this.world.furnishings;
     if (furnish.changed) {
@@ -337,6 +342,8 @@ export class Room {
       doorReach: config.world.doorReach,
       vehicles: { reach: config.vehicles.reach, types: config.vehicles.types, boost: config.vehicles.boost, knockDecay: config.vehicles.knockDecay },
       homes: { lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach },
+      brokenAtms: this.world.brokenAtmList(),
+      visionSec: config.economy.visionSec,
       furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
@@ -569,6 +576,15 @@ export class Room {
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
+  /** A gangster: sell him all your vodka. */
+  gangster(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const result = this.world.hires.sellVodka(p, msg.id);
+    if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
+    client.send({ t: ServerMsg.DONE, what: 'vodka_sold', ...result, cash: p.cash });
+  }
+
   /** The car radio: on/off, next song. */
   radio(client, msg) {
     const p = client.player;
@@ -591,7 +607,7 @@ export class Room {
     const p = client.player;
     if (!p?.alive) return;
     const hires = this.world.hires;
-    const error = msg.action === 'dismiss' ? hires.dismiss(p, msg.id) : hires.hire(p, msg.action, { post: msg.id, target: msg.id });
+    const error = msg.action === 'dismiss' ? hires.dismiss(p, msg.id) : msg.action === 'vodka' ? hires.buyVodka(p) : hires.hire(p, msg.action, { post: msg.id, target: msg.id });
     if (error) return client.send({ t: ServerMsg.ERROR, code: error });
     client.send({ t: ServerMsg.DONE, what: `hire_${msg.action}`, bank: Math.floor(p.account?.bank ?? 0) });
     if (hires.bar) this.inspect(client, hires.bar.id);
@@ -722,7 +738,7 @@ export class Room {
       // The vehicle whose trunk counts as yours: [id, type, slots as [good, qty] | [gunType, ammo, 'gun'] | ['rod', 1, 'rod'] | null].
       trunk: (() => {
         const v = this.world.economy.vehicleOf(me);
-        return v ? [v.id, v.type, v.cargo.map((s) => (s?.good ? [s.good, s.qty] : s?.type === 'rod' ? ['rod', 1, 'rod'] : s?.type ? [s.type, s.ammo, 'gun'] : null))] : null;
+        return v ? [v.id, v.type, v.cargo.map((s) => (s?.good ? [s.good, s.qty] : s?.type === 'rod' ? ['rod', 1, 'rod'] : s?.type ? [s.type, s.ammo, 'gun', s.illegal ? 1 : 0] : null))] : null;
       })(),
       slot: me.selected,
       stored: this.world.warehouses.storedFor(me.account), // sizes of my saved factories waiting to be loaded
@@ -739,9 +755,11 @@ export class Room {
       // Guns: [type, ammo, reload seconds left]; goods: ['goods', good, qty].
       heal: Math.round((me.digesting ?? []).reduce((sum, d) => sum + d.perSec * d.left, 0)), // still to come from food
       buzz: Math.ceil(me.buzz ?? 0), // seconds of vodka buzz left (less damage taken)
+      visions: Object.entries(me.visions ?? {}).map(([kind, left]) => [kind, Math.ceil(left)]),
+      holdup: me.heldUp ? [Math.max(0, Math.round(me.heldUp.left * 10) / 10), me.heldUp.of] : null, // a gangster's got me at gunpoint: [seconds left, of] // vodka's (and the mixes') effects on how I see, stacked: [[kind, seconds left]]
       cabinet: me.openCabinet ? this.world.furnishings.contents(me, me.openCabinet) : null, // [id, slots] while I have one open
       fish: this.world.fishing.view(me), // my line: [x, y] waiting, or [x, y, t, cycle, from, to, pulls] while a fish fights
-      inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10] : null)),
+      inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10, s.illegal ? 1 : 0] : null)), // (a gun: [type, ammo, reload, unregistered])
     };
   }
 

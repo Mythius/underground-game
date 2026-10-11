@@ -29,6 +29,8 @@ export const SOUND_SLOTS = [
     { id: 'hit', name: 'Someone else gets hit' },
     { id: 'death', name: 'Death' },
     { id: 'explosion', name: 'Vehicle explosion' },
+    { id: 'bat', name: 'Swinging a baseball bat' },
+    { id: 'batHit', name: 'A bat smashing into an ATM' },
   ] },
   { group: 'Vehicles', slots: [
     { id: 'engine', name: 'Engine', loop: true, note: 'Pitch rises with speed. Used for any car without its own engine sound below.' },
@@ -75,6 +77,7 @@ export const SOUND_SLOTS = [
     { id: 'busted', name: 'Arrested' },
     { id: 'lockpick', name: 'Picking a lock (repeats)' },
     { id: 'pickpocket', name: 'Pickpocketing' },
+    { id: 'atmSmash', name: 'An ATM bursting open (bat)' },
     { id: 'bribe', name: 'Paying a bribe at a checkpoint' },
     { id: 'hire', name: 'Hiring muscle at the bar' },
   ] },

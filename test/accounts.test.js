@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { AccountStore } from '../src/accounts.js';
 import { config } from '../src/config.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 test('each browser gets its own account, reached by the token it keeps', () => {
   const store = new AccountStore(':memory:');
   const a = store.createDeviceAccount();

@@ -7,6 +7,8 @@ import { tiredAt } from '../src/game/fishing.js';
 import { carriedSlots, restoreSlots } from '../src/game/Room.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 config.player.healthRegenPerSec = 0;
 
 // A pond (centre 2000,1500, radius 300) and a shopkeeper by the road west of it.
@@ -197,4 +199,18 @@ test('a hooked player walks off and snaps the line', () => {
   assert.equal(f.p.fishing, null);
   assert.ok(f.fishing.events.some((e) => e.player === mark && e.kind === 'hook_free' && e.escaped));
   assert.equal(hotbarOf(mark).count('steel'), 3);
+});
+
+test('hooking a player reels in something they carry — even a gun like one you have', () => {
+  const f = pond();
+  onBank(f);
+  Object.assign(f.p, { x: 600, y: 2600 });
+  const mark = f.world.spawnPlayer('mark');
+  Object.assign(mark, { x: 750, y: 2600 });
+  mark.inventory[2] = f.world.makeWeapon('pistol');
+  f.p.inventory[3] = f.world.makeWeapon('pistol'); // you've a pistol already: you can still take theirs
+  f.fishing.cast(f.p, 0);
+  for (let i = 0; i < config.fishing.pulls; i++) pullAt(f, nextMoment(f, true));
+  assert.equal(f.fishing.events.find((e) => e.kind === 'fish_caught')?.item, 'pistol');
+  assert.equal(f.p.inventory.filter((s) => s?.type === 'pistol').length, 2);
 });

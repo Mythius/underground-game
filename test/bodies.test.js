@@ -4,6 +4,8 @@ import { config } from '../src/config.js';
 import { World } from '../src/game/World.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 function world() {
   const w = new World({ ...config.world, width: 4000, height: 4000, terrain: false, buildingCount: 0, foodCount: 0, pickupStart: 0, parkingLots: 0 });
   w.water = { rivers: [{ points: [[3000, 0], [3000, 4000]], width: 200 }], lakes: [] };

@@ -6,6 +6,8 @@ import { Vehicle } from '../src/game/vehicles.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
+config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+
 config.player.healthRegenPerSec = 0;
 
 // A house and a medium warehouse, each turned `rot` quarter turns.

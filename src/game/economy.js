@@ -388,7 +388,6 @@ export class Economy {
     if (!store || store.kind !== 'gunstore' || !item) return 'unknown';
     if (!this.#near(p, store, config.markets.reach)) return 'too_far';
     if (store.goods.guns.stock < item.uses) return 'sold_out';
-    if (p.hasWeapon(type)) return 'already_have';
     if (!p.inventory.includes(null)) return 'no_room';
     const price = this.gunPrice(store, type) + this.gunTax(store, type);
     if (p.cash < price) return 'not_enough_cash';

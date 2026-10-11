@@ -169,19 +169,21 @@ export class Fishing {
   /** Landed another player: one random thing from their hotbar is yours. That's theft. */
   #landPlayer(p, victim) {
     p.fishing = null;
-    const slots = victim.inventory.map((s, i) => [s, i]).filter(([s]) => s && s.type !== STARTER_WEAPON && !(s.tool && s.type !== 'rod'));
-    if (!slots.length) {
+    const w = this.world;
+    const worth = victim.inventory.map((s, i) => [s, i]).filter(([s]) => s && s.type !== STARTER_WEAPON && !(s.tool && s.type !== 'rod'));
+    if (!worth.length) {
       this.events.push({ player: p, kind: 'fish_escaped', why: 'empty' });
       return null;
     }
-    const [item, i] = slots[Math.floor(Math.random() * slots.length)];
-    const w = this.world;
-    // Into your hotbar if there's room for it.
-    let ok;
-    if (item.good) ok = hotbarOf(p).room(item.good) >= item.qty;
-    else if (item.food) ok = w.foodRoom(p, item.food);
-    else ok = p.inventory.includes(null) && !p.hasWeapon(item.type);
-    if (!ok) return this.#full(p);
+    // Only what you could take: room for it in your hotbar.
+    const fits = (item) => (item.good ? hotbarOf(p).room(item.good) >= item.qty : item.food ? w.foodRoom(p, item.food) : p.inventory.includes(null));
+    const takeable = worth.filter(([s]) => fits(s));
+    if (!takeable.length) {
+      // Their things are all ones you already have (a gun like yours, a rod) — or your hotbar really is full.
+      this.events.push({ player: p, kind: 'fish_escaped', why: p.inventory.includes(null) ? 'have_all' : 'full' });
+      return null;
+    }
+    const [item, i] = takeable[Math.floor(Math.random() * takeable.length)];
     victim.inventory[i] = null;
     if (item.good) hotbarOf(p).add(item.good, item.qty);
     else if (item.food) w.addFood(p, item.food, item.qty);
