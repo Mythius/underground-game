@@ -8119,6 +8119,7 @@
       ctx.stroke();
       for (const d of b.decor) drawDecor(d);
       drawHearthGlow(b, performance.now());
+      drawDisplays(b);
       drawFurnishings(b);
       if (b.pattern === 'none' && snowAmount > 0.02) { // open-air yards: snow lies on them too
         ctx.fillStyle = `rgba(232, 238, 244, ${0.65 * snowAmount})`;
@@ -8421,6 +8422,67 @@
         ctx.restore();
       }
       ctx.restore();
+    }
+
+    /**
+     * What a shop shows (just to look at): its wares along the shelves, guns on the rack, goods on the
+     * market stalls and crates, and the showroom cars (drawn like the real thing, but nothing you can touch).
+     */
+    function drawDisplays(b, racks = false) {
+      for (const d of b.displays ?? []) {
+        if ((d.kind === 'rack') !== racks) continue; // (gun racks hang on a wall: drawn over it)
+        if (d.x > viewBox.r || d.x + d.w < viewBox.l || d.y > viewBox.b || d.y + d.h < viewBox.t) continue;
+        if (d.kind === 'car') {
+          drawVehicle({ type: d.car, color: d.color, x: d.x + d.w / 2, y: d.y + d.h / 2, angle: d.angle ?? 0 });
+          continue;
+        }
+        const horizontal = d.w >= d.h;
+        const len = horizontal ? d.w : d.h, depth = horizontal ? d.h : d.w;
+        if (d.kind === 'rack') { // guns on pegs, side by side, each pointing along the rack
+          const n = d.show.length, slot = len / n;
+          d.show.forEach((type, i) => {
+            const barrel = weapons[type]?.barrel ?? 1.6, scale = Math.min(depth * 1.1, (slot * 0.86) / (barrel + 0.2));
+            // A pale wooden pegboard behind each, so the dark steel shows up.
+            const bx = horizontal ? d.x + slot * i + 2 : d.x + 2, by = horizontal ? d.y + 2 : d.y + slot * i + 2;
+            const [bw, bh] = horizontal ? [slot - 4, d.h - 4] : [d.w - 4, slot - 4];
+            ctx.fillStyle = '#a8875c'; ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 2); ctx.fill();
+            ctx.fillStyle = 'rgba(60, 40, 20, .45)';
+            for (let k = 0; k < 3; k++) { const t = (k + 0.5) / 3; ctx.beginPath(); ctx.arc(horizontal ? bx + bw * t : bx + bw / 2 - 4, horizontal ? by + bh / 2 - 5 : by + bh * t, 0.9, 0, Math.PI * 2); ctx.fill(); } // pegs
+            const along = slot * (i + 0.5) - (barrel * scale) / 2;
+            ctx.save();
+            if (horizontal) ctx.translate(d.x + along, d.y + d.h / 2); else { ctx.translate(d.x + d.w / 2, d.y + along); ctx.rotate(Math.PI / 2); }
+            ctx.scale(scale, scale);
+            ctx.filter = 'brightness(1.35)';
+            drawGun(ctx, type);
+            ctx.filter = 'none';
+            ctx.restore();
+          });
+          continue;
+        }
+        // Shelves (a row of wares, repeated), stalls (a little heap of each), crates (one good each).
+        const icon = d.kind === 'stall' ? Math.min(22, Math.min(d.w, d.h) * 0.42) : Math.max(10, Math.min(22, depth * 0.85));
+        if (d.kind === 'stall') {
+          d.show.forEach((key, i) => {
+            const cx = d.x + d.w * (0.27 + 0.46 * (i % 2)), cy = d.y + d.h * (0.28 + 0.44 * Math.floor(i / 2));
+            drawIcon(ctx, key, cx, cy, icon);
+          });
+          continue;
+        }
+        const step = d.kind === 'crates' ? len / d.show.length : icon * 1.15;
+        const count = Math.floor(len / step);
+        for (let i = 0; i < count; i++) {
+          const key = d.show[i % d.show.length];
+          const at = (len - count * step) / 2 + step * (i + 0.5);
+          const cx = horizontal ? d.x + at : d.x + d.w / 2, cy = horizontal ? d.y + d.h / 2 : d.y + at;
+          if (d.kind === 'crates') { // an open crate with the good showing
+            const cs = Math.min(step * 0.82, depth * 0.85);
+            ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(cx - cs / 2 + 2, cy - cs / 2 + 3, cs, cs);
+            ctx.fillStyle = '#9c7444'; ctx.fillRect(cx - cs / 2, cy - cs / 2, cs, cs);
+            ctx.strokeStyle = '#5e4124'; ctx.lineWidth = 1.5; ctx.strokeRect(cx - cs / 2 + 1, cy - cs / 2 + 1, cs - 2, cs - 2);
+            drawIcon(ctx, key, cx, cy, cs * 0.78);
+          } else drawIcon(ctx, key, cx, cy, icon);
+        }
+      }
     }
 
     /** The warm light a fire throws across the floor in front of it (flickering a little). */
@@ -9564,7 +9626,7 @@
       drawDumpsters();
       drawLampArms(1 - daylight(clockNow(frameTime))); // (over the cars and people, under the roofs and trees)
 
-      for (const b of visibleBuildings) { drawWalls(b); drawDoors(b, dt); if (b.pumps) drawPumps(b, frameTime); }
+      for (const b of visibleBuildings) { drawWalls(b); drawDisplays(b, true); drawDoors(b, dt); if (b.pumps) drawPumps(b, frameTime); }
       drawPlaceKeepers();
       drawRoadblocks();
       drawTrain(performance.now());

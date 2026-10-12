@@ -344,6 +344,12 @@ export const BUILDING_TYPES = {
       { x: 200, y: 70, w: 22, h: 100, c: '#9a8a6a' },
       { x: 250, y: 70, w: 22, h: 100, c: '#9a8a6a' },
     ],
+    // What it sells, out on the shelves (just to look at: you buy from the shopkeeper).
+    displays: [
+      { x: 20, y: 20, w: 260, h: 22, kind: 'shelf', show: ['food:bread', 'food:burger', 'food:drink', 'food:feast', 'tool:rod'] },
+      { x: 200, y: 70, w: 22, h: 100, kind: 'shelf', show: ['food:drink', 'food:bread'] },
+      { x: 250, y: 70, w: 22, h: 100, kind: 'shelf', show: ['food:burger', 'food:feast'] },
+    ],
     roofDecor: [],
     npc: { x: 85, y: 88, angle: Math.PI / 2, role: 'shop' }, // behind the counter, facing the door
     floor: '#c9c1b4', wall: '#e8e2d6', roof: '#2f6f8f', pattern: 'flat', label: 'МАГАЗИН',
@@ -814,9 +820,9 @@ export const BUILDING_TYPES = {
       { x: 30, y: 30, w: 220, h: 20, c: '#2a2a2a' }, // gun racks
     ],
     decor: [
-      ...[0, 1, 2, 3, 4].map((i) => ({ x: 44 + i * 42, y: 34, w: 30, h: 12, c: '#6b7078' })),
       { x: 60, y: 150, w: 160, h: 40, c: '#5a2a2a' }, // target-range mat
     ],
+    displays: [{ x: 30, y: 30, w: 220, h: 20, kind: 'rack', show: ['smg', 'shotgun', 'rifle', 'sniper', 'bat'] }], // the guns on the rack behind the counter
     roofDecor: [{ x: 120, y: 90, w: 40, h: 40, c: '#8b0000', round: true }],
     npc: { x: 140, y: 80, angle: Math.PI / 2, role: 'gunshop' },
     floor: '#6b6258', wall: '#3d3d3d', roof: '#2d2d2d', pattern: 'flat', label: 'ОРУЖИЕ',
@@ -828,11 +834,11 @@ export const BUILDING_TYPES = {
       { x: 300, y: 40, w: 90, h: 18, c: '#c9c9c9' }, // sales desk
     ],
     decor: [
-      { x: 40, y: 40, w: 60, h: 100, c: '#c0392b' }, // showroom cars
-      { x: 130, y: 40, w: 60, h: 100, c: '#2e86de' },
-      { x: 220, y: 40, w: 60, h: 100, c: '#f1c40f' },
+      ...[40, 130, 220].map((x) => ({ x: x - 4, y: 36, w: 68, h: 108, c: '#cfd3d8' })), // a raised plinth for each
       { x: 40, y: 170, w: 240, h: 90, c: '#d8d8d8' }, // polished floor
     ],
+    // Three Mercedes 600s in the showroom: just to look at (they're no cars: walk right over them).
+    displays: [['#a3161a', 40], ['#15171c', 130], ['#c3c8cf', 220]].map(([color, x]) => ({ x, y: 40, w: 60, h: 100, kind: 'car', car: 'sports', color, angle: Math.PI / 2 })),
     roofDecor: [{ x: 20, y: 20, w: 380, h: 10, c: '#ecf0f1' }],
     npc: { x: 345, y: 80, angle: Math.PI / 2, role: 'dealer' },
     floor: '#e8e8e8', wall: '#aeb6bf', roof: '#5d6d7e', pattern: 'flat', label: 'АВТОСАЛОН',
@@ -848,6 +854,12 @@ export const BUILDING_TYPES = {
     decor: [
       ...[0, 1, 2, 3].map((i) => ({ x: 30 + i * 85, y: 30, w: 70, h: 50, c: ['#c0392b', '#2980b9', '#27ae60', '#f39c12'][i] })), // stalls
       { x: 30, y: 200, w: 320, h: 40, c: '#7a5a3a' }, // crates
+    ],
+    // Its goods laid out on the stalls and the crates (to look at: you trade with the man at the counter).
+    displays: [
+      ...[['bread', 'fish', 'wheat', 'flour'], ['logs', 'planks', 'ore', 'sand'], ['steel', 'glass', 'plastic', 'parts'], ['vodka', 'fuel', 'energy', 'scrap']]
+        .map((show, i) => ({ x: 30 + i * 85, y: 30, w: 70, h: 50, kind: 'stall', show })),
+      { x: 30, y: 200, w: 320, h: 40, kind: 'crates', show: ['furniture', 'cabinet', 'table', 'chair', 'bed', 'crude', 'guns', 'car'] },
     ],
     roofDecor: [{ x: 170, y: 110, w: 40, h: 40, c: '#e1b12c', round: true }],
     npc: { x: 220, y: 105, angle: Math.PI / 2, role: 'market' },
@@ -945,6 +957,8 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     work: layout.work ? move(layout.work) : null, // work sites: where the rocks / trees / wheat are
     roofs: (layout.roofs ?? []).map(move), // separate roofs over buildings inside an open-air site
     rooms: layout.rooms ? layout.rooms.map(move) : null, // rooms to rent (panelka flats, garage boxes)
+    // What a shop shows on its shelves (and the showroom cars): drawn only, nothing to touch or bump into.
+    displays: (layout.displays ?? []).map((d) => ({ ...move(d), ...(d.angle !== undefined ? { angle: d.angle + (rot * Math.PI) / 2 } : {}) })),
     furnish: layout.furnish ?? null, // the furniture it comes with, in layout coordinates (see Furnishings.loadIn)
     size: size ? { w: layout.w, h: layout.h } : null, // work sites are sized to their block
     docks: layout.docks ? { in: move(layout.docks.in), out: move(layout.docks.out) } : null,
