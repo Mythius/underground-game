@@ -4968,7 +4968,11 @@
       prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, fading in and out, with 1–6 minutes of silence between songs. With none, prisoners hear the normal background music.' },
     };
     const songList = (kind) => (kind === 'radio' ? playlist : musicLists[kind]);
-    let songsUploading = null; // { kind, text: 'Uploading 3 of 40…' } while a batch goes up
+    // The upload queue: songs picked for any playlist wait here, and up to UPLOAD_AT_ONCE go up together, each
+    // showing how far it's got. More can be added any time. Items: { kind, file, name, state: 'waiting'|'uploading'|'failed', pct, xhr, el }.
+    const UPLOAD_AT_ONCE = 3;
+    const uploadQueue = [];
+    let uploadsDone = {}; // kind -> songs added since the queue was last empty (for the toast)
     let radioPreview = null; // the <audio> playing a song's preview
     async function radioRequest(path, method, body, headers = {}) {
       const password = adminPassword();
@@ -4986,18 +4990,87 @@
         return null;
       }
     }
-    async function uploadSongs(kind, files) {
-      let done = 0;
-      for (const file of files) {
-        songsUploading = { kind, text: `Uploading ${done + 1} of ${files.length}: ${file.name}…` };
-        renderSoundEditor();
-        const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
-        if (!(await radioRequest(`/${kind}?name=${encodeURIComponent(name)}`, 'POST', file, { 'content-type': file.type || 'audio/mpeg' }))) break;
-        done++;
-      }
-      songsUploading = null;
+    function queueSongs(kind, files) {
+      if (!adminPassword()) return;
+      for (const file of files) uploadQueue.push({ kind, file, name: file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' '), state: 'waiting', pct: 0 });
+      pumpUploads();
       renderSoundEditor();
-      if (done) toast(PLAYLIST_INFO[kind].added.replace('{n}', `${done} song${done === 1 ? '' : 's'}`));
+    }
+    /** Start waiting uploads while fewer than UPLOAD_AT_ONCE are going. */
+    function pumpUploads() {
+      while (uploadQueue.filter((u) => u.state === 'uploading').length < UPLOAD_AT_ONCE) {
+        const u = uploadQueue.find((q) => q.state === 'waiting');
+        if (!u) break;
+        uploadSong(u);
+      }
+      if (!uploadQueue.some((u) => u.state !== 'failed') && Object.keys(uploadsDone).length) {
+        for (const [kind, n] of Object.entries(uploadsDone)) toast(PLAYLIST_INFO[kind].added.replace('{n}', `${n} song${n === 1 ? '' : 's'}`));
+        uploadsDone = {};
+      }
+    }
+    function uploadSong(u) {
+      const password = adminPassword();
+      if (!password) { uploadQueue.length = 0; renderSoundEditor(); return; }
+      u.state = 'uploading';
+      const xhr = (u.xhr = new XMLHttpRequest()); // (XHR, not fetch, so we can show progress)
+      xhr.open('POST', `/${u.kind}?name=${encodeURIComponent(u.name)}`);
+      xhr.setRequestHeader('x-admin-password', password);
+      xhr.setRequestHeader('content-type', u.file.type || 'audio/mpeg');
+      xhr.upload.onprogress = (e) => {
+        if (!e.lengthComputable) return;
+        u.pct = Math.round((e.loaded / e.total) * 100);
+        if (u.el) u.el.textContent = u.pct < 100 ? `⬆ ${u.pct}%` : '⏳ saving…';
+      };
+      const finish = (error) => {
+        u.xhr = null;
+        if (error === null) {
+          uploadQueue.splice(uploadQueue.indexOf(u), 1);
+          uploadsDone[u.kind] = (uploadsDone[u.kind] ?? 0) + 1;
+        } else if (error === 'wrong password') { // no point trying the rest
+          sessionStorage.removeItem('ug-admin');
+          toast('Wrong password');
+          for (const q of [...uploadQueue]) { q.xhr?.abort(); uploadQueue.splice(uploadQueue.indexOf(q), 1); }
+        } else Object.assign(u, { state: 'failed', error });
+        pumpUploads();
+        renderSoundEditor();
+      };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch {}
+        if (xhr.status === 401) return finish('wrong password');
+        if (xhr.status !== 200) return finish(data.error ?? `server said ${xhr.status}`);
+        sessionStorage.setItem('ug-admin', password);
+        songList(u.kind).songs = data.songs;
+        finish(null);
+      };
+      xhr.onerror = () => finish("couldn't reach the server");
+      xhr.onabort = () => {}; // (cancelled: already taken out of the queue)
+      xhr.send(u.file);
+    }
+    /** The queued uploads for one playlist, as rows: name, progress, and ✕ to cancel (or clear a failed one). */
+    function uploadQueueRows(kind) {
+      return uploadQueue.filter((u) => u.kind === kind).map((u) => {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.append(Object.assign(document.createElement('b'), { textContent: u.name }));
+        u.el = Object.assign(document.createElement('small'), {
+          textContent: u.state === 'failed' ? `✖ failed: ${u.error}` : u.state === 'uploading' ? (u.pct < 100 ? `⬆ ${u.pct}%` : '⏳ saving…') : '🕒 waiting',
+        });
+        name.append(u.el);
+        const ctrls = document.createElement('div');
+        ctrls.className = 'ctrls';
+        const btns = [];
+        if (u.state === 'failed') btns.push(Object.assign(document.createElement('button'), { textContent: '↻ Retry', onclick: () => { Object.assign(u, { state: 'waiting', pct: 0 }); pumpUploads(); renderSoundEditor(); } }));
+        btns.push(Object.assign(document.createElement('button'), {
+          textContent: '✕', title: u.state === 'failed' ? 'Clear' : 'Cancel this upload',
+          onclick: () => { uploadQueue.splice(uploadQueue.indexOf(u), 1); u.xhr?.abort(); pumpUploads(); renderSoundEditor(); },
+        }));
+        ctrls.append(...btns);
+        row.append(name, ctrls);
+        return row;
+      });
     }
     const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
     function radioPlaylistSection(kind = 'radio') {
@@ -5009,11 +5082,12 @@
       intro.textContent = info.intro;
       const upload = document.createElement('label');
       upload.className = 'file';
-      upload.textContent = songsUploading?.kind === kind ? songsUploading.text : '⬆ Upload songs…';
+      const queued = uploadQueue.filter((u) => u.kind === kind && u.state !== 'failed').length;
+      upload.textContent = queued ? `⬆ Add more songs… (${queued} uploading / waiting)` : '⬆ Upload songs…';
       const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'audio/*', multiple: true });
-      input.onchange = () => input.files.length && !songsUploading && uploadSongs(kind, [...input.files]);
+      input.onchange = () => input.files.length && queueSongs(kind, [...input.files]);
       upload.append(input);
-      box.append(intro, upload);
+      box.append(intro, upload, ...uploadQueueRows(kind));
       list.songs.forEach((song, i) => {
         const row = document.createElement('div');
         row.className = 'row';
