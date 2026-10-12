@@ -608,9 +608,9 @@ export class World {
    * the car pad outside their home. If it's already out somewhere with nobody in it, it's brought back here.
    */
   bringCar(p, saved) {
-    const home = this.homes.homeOf(p.account);
-    if (!home) return 'no_home';
-    if (!this.homes.atGarage(p)) return 'too_far';
+    const at = this.homes.garageAt(p);
+    if (!at) return this.homes.garageSpots(p.account).length ? 'too_far' : 'no_home';
+    const home = at.b;
     if (!config.vehicles.types[saved.type]) return 'unknown';
     const out = [...this.vehicles.values()].find((v) => v.carId === saved.id);
     if (out?.driver || out?.passenger) return 'car_in_use';
@@ -618,7 +618,7 @@ export class World {
       Object.assign(saved, { fuel: out.fuel, cargo: out.cargo.map((s) => s && { ...s }) });
       this.vehicles.delete(out.id);
     }
-    const v = this.#parkOnPad(saved.type, this.homes.padOf(home), p) ?? this.parkNewVehicle(saved.type, home.id, p.account);
+    const v = this.#parkOnPad(saved.type, at.pad, p) ?? (at.starter ? this.parkNewVehicle(saved.type, home.id, p.account) : null); // (in a garage: on its spot, or not at all)
     if (!v) {
       if (out) this.vehicles.set(out.id, out); // nowhere to put it: leave it where it was
       return 'no_parking';
@@ -1098,6 +1098,10 @@ export class World {
       if (!p.input.use) continue;
       p.input.use = false;
       if (p.jailed && !p.jailed.prison) continue; // (in the prison you get about inside the wire)
+      if (p.sleeping) { // E gets you out of bed
+        p.sleeping = null;
+        continue;
+      }
       if (p.hidden) {
         this.unhide(p);
         continue;
@@ -1178,6 +1182,13 @@ export class World {
     const { massShrinkPerSec, startMass } = o;
 
     for (const p of this.players.values()) {
+      if (p.sleeping) { // in bed: lie still (setting off walking gets you up)
+        if (p.input.throttle > 0.1 && !p.vehicle) p.sleeping = null;
+        else {
+          Object.assign(p, { x: p.sleeping.x, y: p.sleeping.y, vx: 0, vy: 0 });
+          continue;
+        }
+      }
       const { angle, boost } = p.input;
       const throttle = p.vehicle || (p.jailed && !p.jailed.prison) || p.hidden ? 0 : p.input.throttle; // drivers use gas/steer instead; prisoners and the hidden stay put
       const swimming = !p.vehicle && this.isSwimming(p.x, p.y);

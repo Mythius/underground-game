@@ -397,28 +397,28 @@ export const BUILDING_TYPES = {
     floor: '#6b5536', wall: '#4b3a24', roof: '#7b2f2f', pattern: 'tiles',
   }),
 
+  // An open-plan mansion (no inner walls): beds and a cabinet in one corner, a dining table, a sitting
+  // area round the fire with sofas, and a pool table.
   mansion: () => ({
     w: 520, h: 420,
     walls: [
       ...perimeter(520, 420, 14, { s: door(0.5, 80), n: door(0.8) }),
-      ...wallLine(false, 250, 14, 406, 12, [{ at: 0.25, width: 60 }, { at: 0.8, width: 60 }]),
-      ...wallLine(true, 200, 14, 250, 12, door(0.5)),
-      ...wallLine(true, 200, 262, 506, 12, door(0.3)),
-      fireplace(30, 212, 44, 20, 0, 1), // in the sitting room
+      fireplace(14, 188, 20, 44, 1, 0), // on the west wall
     ],
     decor: [
       { x: 320, y: 280, w: 120, h: 80, c: '#3f6b4a' }, // pool table
-      { x: 262, y: 214, w: 244, h: 14, c: '#8b2232' }, // rug
-      { x: 22, y: 236, w: 60, h: 40, c: '#8b2232' }, // a rug before the fire
+      { x: 36, y: 176, w: 72, h: 68, c: '#8b2232' }, // a rug before the fire
+      { x: 200, y: 150, w: 120, h: 100, c: '#6b3a3a' }, // a big rug in the middle
     ],
     roofDecor: [
-      chimney(41, 208),
+      chimney(13, 199),
       { x: 430, y: 330, w: 26, h: 26, c: '#2a2a33' },
     ],
     furnish: furnish([
-      ['bed', 30, 24, 3], ['bed', 100, 24, 3], ['cabinet', 158, 24, 3], // the bedroom
-      ['table', 300, 70, 1], ['chair', 306, 40, 3], ['chair', 306, 116, 1], ['chair', 370, 78, 0], // the dining room
-      ['furniture', 30, 330, 1], ['chair', 130, 290, 0], // by the fire
+      ['bed', 30, 24, 3], ['bed', 100, 24, 3], ['cabinet', 158, 24, 3], // the beds
+      ['table', 300, 70, 1], ['chair', 306, 40, 3], ['chair', 306, 116, 1], ['chair', 370, 78, 0], // dining
+      ['furniture', 120, 172, 0], ['furniture', 40, 290, 1], ['chair', 60, 150, 3], // round the fire
+      ['furniture', 342, 236, 3], // by the pool table
       ['cabinet', 440, 370, 1],
     ]),
     floor: '#7d5a3c', wall: '#efe6d2', roof: '#3b3b46', pattern: 'shingle',
@@ -888,6 +888,7 @@ export const BUILDING_TYPES = {
     floor: '#9aa3ad', wall: '#b7c0c9', roof: '#4f5862', pattern: 'flat',
   }),
 
+  // A single garage: buy it and E at the spot inside brings out any of your cars (as at your home's pad).
   garage: () => ({
     w: 260, h: 200,
     walls: [
@@ -895,10 +896,11 @@ export const BUILDING_TYPES = {
       { x: 30, y: 30, w: 70, h: 26, c: '#6b6f75' }, // workbench
     ],
     decor: [
-      { x: 140, y: 40, w: 80, h: 130, c: '#2f5b8a' }, // car
-      { x: 150, y: 70, w: 60, h: 50, c: '#9fc2e0' },
-      { x: 40, y: 100, w: 40, h: 40, c: '#3a3a3a', round: true }, // oil stain
+      { x: 152, y: 52, w: 56, h: 108, c: '#4e5156' }, // the bay, worn smooth by tyres
+      { x: 60, y: 128, w: 34, h: 30, c: '#3a3a3a', round: true }, // oil stain
     ],
+    carSpot: { x: 180, y: 106, angle: Math.PI / 2 }, // where your car's parked, nose to the door
+    furnish: furnish([['cabinet', 106, 14, 3], ['cabinet', 20, 70, 2]]),
     roofDecor: [],
     floor: '#5a5d61', wall: '#9b8f7e', roof: '#6a6f75', pattern: 'metal',
   }),
@@ -957,6 +959,7 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     work: layout.work ? move(layout.work) : null, // work sites: where the rocks / trees / wheat are
     roofs: (layout.roofs ?? []).map(move), // separate roofs over buildings inside an open-air site
     rooms: layout.rooms ? layout.rooms.map(move) : null, // rooms to rent (panelka flats, garage boxes)
+    carSpot: layout.carSpot ? { ...(({ x: cx, y: cy }) => ({ x: cx, y: cy }))(move({ x: layout.carSpot.x, y: layout.carSpot.y, w: 0, h: 0 })), angle: layout.carSpot.angle + (rot * Math.PI) / 2 } : null, // a garage's parking spot
     // What a shop shows on its shelves (and the showroom cars): drawn only, nothing to touch or bump into.
     displays: (layout.displays ?? []).map((d) => ({ ...move(d), ...(d.angle !== undefined ? { angle: d.angle + (rot * Math.PI) / 2 } : {}) })),
     furnish: layout.furnish ?? null, // the furniture it comes with, in layout coordinates (see Furnishings.loadIn)

@@ -31,7 +31,7 @@ export const ClientMsg = Object.freeze({
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
-  FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
+  FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot) | 'sleep' (in your bed, at night)
   HOME: 'home', // { t, id, action: 'buy' | 'bring' (load your saved one of this type in) | 'sell' | 'rent' | 'leave', room? } homes for sale, rooms to rent
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   PRISON: 'prison', // { t, action: 'bail', id (prisoner: yourself or anyone inside) } at the prison warden
@@ -222,7 +222,7 @@ const validators = {
   [ClientMsg.FURNISH]: (m) => {
     if (m.action === 'place') return isFiniteNumber(m.angle) ? { t: m.t, action: 'place', angle: m.angle } : null;
     if (m.action === 'close') return { t: m.t, action: 'close' };
-    if (!['pickup', 'open', 'put', 'take'].includes(m.action) || !Number.isInteger(m.id)) return null;
+    if (!['pickup', 'open', 'put', 'take', 'sleep'].includes(m.action) || !Number.isInteger(m.id)) return null;
     if ((m.action === 'put' || m.action === 'take') && !(Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 20)) return null;
     return { t: m.t, action: m.action, id: m.id, slot: m.slot ?? 0 };
   },

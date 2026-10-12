@@ -645,6 +645,16 @@
     let furnOpen = null; // the placed thing whose panel is open (a row of furn.list)
     let cabinetView = null; // [id, slots] of the cabinet I have open, from the server
     let myHome = null; // [building id, garage x, y]
+    let myGarages = []; // garages I've bought: [building id, spot x, y] (E there brings out my cars, as at home)
+    /** Where I can bring my cars out: my home's pad and the spot inside each garage I own. */
+    const garagePoints = () => [...(myHome ? [myHome] : []), ...myGarages];
+    /** The nearest of those to me, with its distance. */
+    function nearestGarage() {
+      if (!me) return null;
+      let best = null;
+      for (const g of garagePoints()) { const d = Math.hypot(g[1] - me.x, g[2] - me.y); if (!best || d < best.d) best = { x: g[1], y: g[2], d }; }
+      return best;
+    }
     let storedFactories = []; // sizes of my saved factories waiting to be loaded into a free warehouse (after a restart)
     let storedHomes = { own: [], rent: [] }; // types of my homes (and rented rooms' things) waiting from before a restart
     let homeCfg = { prices: {}, rent: {}, sellBack: 0.5, npcRent: 0, buyReach: 260 };
@@ -887,6 +897,7 @@
           if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
           if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the outer fence (north side) opens with it', 5000); }
           if (msg.kind === 'prison_wall') prisonWall.hits = msg.hits;
+          if (msg.kind === 'slept') toast('☀️ Everyone slept through the night — good morning', 4000);
           if (msg.kind === 'rent_paid') toast(`🔑 Rent paid for your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}: ${money(msg.amount)}`);
           if (msg.kind === 'rent_in') toast(msg.from ? `🏢 ${msg.from} paid you ${money(msg.amount)} rent (${HOME_NAMES[msg.type] ?? 'home'})` : `🏢 Rent from the tenants in your ${HOME_NAMES[msg.type]?.toLowerCase() ?? 'building'}: ${money(msg.amount)}`);
           if (msg.kind === 'evicted') { sfx('error'); toast(msg.why === 'unpaid' ? `🔑 You couldn't pay the rent — you're out of your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}. What you stored waits for your next one.` : `🔑 The building was sold — you're out of your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}. What you stored waits for your next one.`, 6000); }
@@ -1020,7 +1031,7 @@
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
-          if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
+          if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked and ready`);
           if (msg.what?.startsWith('home_')) {
             const b = buildings[msg.id - 1], name = HOME_NAMES[b?.type] ?? 'home', room = ROOM_NAMES[b?.type] ?? 'room';
             if (msg.what === 'home_buy') { sfx('coin'); toast(`🏠 The ${name.toLowerCase()} is yours — furnished. Pick up and put down furniture to move it.`, 5000); }
@@ -2435,14 +2446,13 @@
           if (!d.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
         }
       }
-      // Homes that aren't mine: their outside doors are locked (from outside).
+      // Homes that aren't mine (and flats and garage boxes I don't rent): their outside doors are locked.
       for (const b of buildings) {
-        if (!homesCfg.lockedTypes.includes(b.type) || b.id === myHome?.[0]) continue;
-        if (me.x > b.x && me.x < b.x + b.w && me.y > b.y && me.y < b.y + b.h) continue;
+        if (!homesCfg.lockedTypes.includes(b.type)) continue;
         for (const d of b.doors) {
           const door = doorById.get(d.id) ?? d;
           const x = d.x + d.w / 2, y = d.y + d.h / 2;
-          if (d.exterior && !door.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
+          if (!door.open && Math.hypot(x - me.x, y - me.y) < 90 + r && homeDoorLocked(b, d)) return { x, y, kind: 'lockpick' };
         }
       }
       // Someone else's car, nobody in it.
@@ -3019,6 +3029,8 @@
 
     let carrying = 0; // the body I'm carrying (from the server)
     let hiddenSelf = false; // in a dumpster
+    let sleepInfo = null; // asleep (in bed, or in a dumpster) at night: [how many are asleep, how many players]
+    let inBed = false; // asleep in a bed (lying still)
     let riding = 0; // the car I'm a passenger in (0: not)
     let healLeft = 0; // health still to come from food I've eaten
     let buzzLeft = 0; // seconds of vodka buzz left (I take less damage)
@@ -3088,7 +3100,7 @@
     // ---- homes: buy one (one of each type), load a saved one in, sell it; rent a flat or garage box ----
 
     const homeEl = document.getElementById('homepanel');
-    const HOME_NAMES = { cabin: 'Cabin', house: 'House', mansion: 'Mansion', panelka: 'Panelka', garages: 'Lock-up garages' };
+    const HOME_NAMES = { garage: 'Garage', cabin: 'Cabin', house: 'House', mansion: 'Mansion', panelka: 'Panelka', garages: 'Lock-up garages' };
     const ROOM_NAMES = { panelka: 'Flat', garages: 'Garage box' };
     const HOME_ERRORS = {
       already_owned: 'Someone already owns it',
@@ -3168,6 +3180,7 @@
         sub.textContent = `★ Yours · sells back for ${money(Math.floor(price * homeCfg.sellBack))}`;
         const s = section();
         s.append('Furnish it how you like: select a cabinet, bed, sofa, table or chair in your hotbar inside and press E to set it down; E on one of yours picks it back up to move it.');
+        if (b.carSpot) note(s, '🚗 E at the bay inside brings out any of your cars, parked there.');
         if (rooms) note(s, `Tenants pay you ${money(homeCfg.rent[b.type])} a day each, and NPC tenants about ${money(homeCfg.npcRent)} a day for the ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}s no player rents.`);
         homeEl.append(button(`Sell for ${money(Math.floor(price * homeCfg.sellBack))}`, () => { if (confirm('Sell it? Furniture you leave in it stays with it, and any tenants have to move out.')) homeSend('sell'); }));
       } else if (owner) {
@@ -3175,7 +3188,9 @@
       } else {
         sub.textContent = `For sale: ${money(price)} from your bank`;
         const s = section();
-        s.append('Comes furnished, with a fire going. Place and move furniture in it as you like; it is locked to everyone else. You can own one of each kind of home, on top of your starter home.');
+        s.append(b.carSpot
+          ? 'Comes with two cabinets, and a bay for your car: E there brings out any car you\'ve bought, just like at home. Locked to everyone else. You can own one of each kind of home, on top of your starter home.'
+          : 'Comes furnished, with a fire going. Place and move furniture in it as you like; it is locked to everyone else. You can own one of each kind of home, on top of your starter home.');
         if (saved) {
           note(section(), `📦 You have a saved ${HOME_NAMES[b.type].toLowerCase()} from before the restart — load its furniture in here, cabinets and all, free.`);
           homeEl.append(button(`📦 Load my saved ${HOME_NAMES[b.type].toLowerCase()} here`, () => homeSend('bring'), { cls: 'big go' }));
@@ -3214,6 +3229,10 @@
       no_space: 'No room for it there — try facing another way, or somewhere else',
       empty_it_first: 'Empty the cabinet first',
       rented_out: "That's a tenant's cabinet — it's theirs while they rent the room",
+      not_night: '💤 You can only sleep at night',
+      not_your_bed: "💤 That's not your bed",
+      bed_taken: '💤 Someone is already asleep in it',
+      someone_asleep: "Someone's asleep in it",
     };
     const furnRect = (f) => ({ x: f[2], y: f[3], w: f[4], h: f[5] });
     const mineFurn = (f) => Boolean(f[8]) && f[8] === wh.account;
@@ -3263,11 +3282,36 @@
           furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Click a slot to take it; drag from your hotbar (or select it and press the button) to put it in. Anything goes: goods, food, guns, your rod. E or Esc to close.' }));
         }
       } else {
+        if (f[1] === 'bed') {
+          const isNight = clockNow() >= env.daySec;
+          furnEl.append(act(isNight ? '💤 Sleep' : '💤 Sleep (only at night)', () => { send({ t: 'furnish', action: 'sleep', id: f[0] }); closeFurnish(); }));
+          furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'When everyone on the server is asleep — in a bed, or in a dumpster — the night skips to morning. Move or press E to get up.' }));
+        }
         furnEl.append(act(`🫳 Pick up the ${FURN_WORDS[f[1]] ?? 'furniture'}`, () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
         furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Back into your hotbar, to put down somewhere else. E or Esc to close.' }));
       }
     }
     dropTarget(furnEl, (from, i) => { if (from === 'hot' && furnOpen?.[1] === 'cabinet') send({ t: 'furnish', action: 'put', id: furnOpen[0], slot: i }); });
+
+    /**
+     * Is a home's outside door locked to me (as the server decides, but for picked locks)? A rented
+     * flat or garage box opens for its tenant; the rest of a home for its owner; nobody's, for nobody.
+     */
+    function homeDoorLocked(b, d) {
+      if (!d.exterior || !me || !homesCfg.lockedTypes.includes(b.type)) return false;
+      if (me.x > b.x && me.x < b.x + b.w && me.y > b.y && me.y < b.y + b.h) return false; // (inside: you can always get out)
+      const [, owner, starter, tenants] = homeProps.get(b.id) ?? [];
+      if (b.rooms) {
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+        const room = b.rooms.findIndex((r) => cx > r.x - 30 && cx < r.x + r.w + 30 && cy > r.y - 30 && cy < r.y + r.h + 30);
+        const tenant = room >= 0 ? tenants?.[room] : null;
+        if (tenant) return tenant !== wh.account;
+        if (owner && !starter) return owner !== wh.account;
+        return true;
+      }
+      if (myHome?.[0] === b.id) return false;
+      return !(owner && owner === wh.account);
+    }
 
     /** Is the selected slot a cabinet, bed or sofa I could put down, and am I in my own home or warehouse? */
     function placeableHere() {
@@ -6919,7 +6963,7 @@
       clockOffset = clockOffset === null || offset < clockOffset ? offset : clockOffset + (offset - clockOffset) * 0.02;
 
       const players = new Map();
-      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted });
+      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping });
       const bullets = new Map();
       for (const [id, x, y] of msg.bullets ?? []) bullets.set(id, { x, y });
       const vehicles = new Map();
@@ -7001,6 +7045,7 @@
       setInventory(you.inv, now);
       econ.trunk = you.trunk ?? null;
       myHome = you.home ?? null;
+      myGarages = you.garages ?? [];
       storedFactories = you.stored ?? [];
       storedHomes = you.storedHomes ?? storedHomes;
       if (storedFactories.length && !storedReminded) {
@@ -7011,6 +7056,8 @@
       myJob = you.job ?? null;
       carrying = you.carry ?? 0;
       hiddenSelf = Boolean(you.hidden);
+      sleepInfo = you.sleep ?? null;
+      inBed = Boolean(sleepInfo) && !hiddenSelf;
       riding = ride;
       healLeft = you.heal ?? 0;
       visions = (you.visions ?? []).map(([kind, left]) => ({ kind, left, at: performance.now() }));
@@ -7050,7 +7097,7 @@
       for (const [id, pb] of b.players) {
         const pa = a.players.get(id);
         players.set(id, pa
-          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon, cop: pb.cop, wanted: pb.wanted }
+          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon, cop: pb.cop, wanted: pb.wanted, sleeping: pb.sleeping }
           : pb);
       }
       const bullets = new Map();
@@ -8542,6 +8589,16 @@
       ctx.stroke();
     }
 
+    /** A padlock hanging on a door (seen from above, just outside it). */
+    function drawPadlock(d) {
+      const x = d.x + d.w / 2 + (d.nx ?? 0) * 9, y = d.y + d.h / 2 + (d.ny ?? 0) * 9;
+      ctx.strokeStyle = '#8a8f96'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y - 3, 3.2, Math.PI, 0); ctx.stroke(); // the shackle
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x - 4, y - 2, 9, 8);
+      ctx.fillStyle = '#c9a227'; ctx.beginPath(); ctx.roundRect(x - 4.5, y - 3, 9, 7.5, 1.5); ctx.fill(); // brass body
+      ctx.fillStyle = '#5a4510'; ctx.fillRect(x - 0.6, y - 0.5, 1.2, 2.6); // keyhole
+    }
+
     function drawDoors(b, dt) {
       for (const d of b.doors) {
         if (d.id === prisonWall.door) { drawPrisonWall(doorById.get(d.id) ?? d); continue; }
@@ -8568,6 +8625,7 @@
           circle(hx + dx * leaf * 0.85, hy + dy * leaf * 0.85, 2.2, '#e0c060'); // handle
           circle(hx, hy, 4, '#2a2a2a'); // hinge
         }
+        if (b.type === 'garages' && !d.open && d.anim < 0.05 && homeDoorLocked(b, d)) drawPadlock(d); // a lock-up: padlocked unless it's yours
       }
     }
 
@@ -8629,11 +8687,8 @@
       if (place) options.push({ kind: 'place', target: place, dist: d(place), x: place.x, y: place.y - 66 });
       const body = nearestBody();
       if (body) options.push({ kind: 'body', target: body, dist: d(body), x: body.x - 16, y: body.y - 40 });
-      if (myHome) {
-        const g = { x: myHome[1], y: myHome[2] };
-        const gd = Math.hypot(g.x - me.x, g.y - me.y);
-        if (gd < homesCfg.garageReach + radiusOf(me.mass)) options.push({ kind: 'garage', dist: gd, x: g.x, y: g.y - 46 });
-      }
+      const g = nearestGarage(); // my home's pad, or a garage of mine
+      if (g && g.d < homesCfg.garageReach + radiusOf(me.mass)) options.push({ kind: 'garage', dist: g.d, x: g.x, y: g.y - 46 });
       const usable = nearestUsable();
       if (usable) options.push({ kind: 'use', dist: usable.dist + (usable.door ? DOOR_LAST : 0), x: usable.x, y: usable.y });
       // A gangster within reach: E offers him your vodka.
@@ -9323,6 +9378,24 @@
       }
     }
 
+    /** Someone asleep in bed: just their head on the pillow (the blanket's over the rest), and a drift of Z's. */
+    function drawSleeper(p, look, id, now) {
+      ctx.fillStyle = 'rgba(0, 0, 0, .18)';
+      ctx.beginPath(); ctx.ellipse(p.x + 1.5, p.y + 2, 9, 8, 0, 0, Math.PI * 2); ctx.fill();
+      circle(p.x, p.y, 7.5, look.skin);
+      ctx.fillStyle = shade(look.shirt ?? '#555555', 0.55); // hair, tousled
+      ctx.beginPath(); ctx.arc(p.x, p.y, 7.5, Math.PI * 0.9, Math.PI * 2.1); ctx.fill();
+      ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let k = 0; k < 3; k++) {
+        const t = ((now / 1800 + k / 3 + (id % 7) / 7) % 1);
+        ctx.globalAlpha = Math.sin(t * Math.PI) * 0.85;
+        ctx.fillStyle = '#dfe9ff';
+        ctx.font = `700 ${9 + t * 6}px system-ui, sans-serif`;
+        ctx.fillText('z', p.x + 8 + t * 14 + Math.sin(t * 6) * 2, p.y - 10 - t * 26);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     function drawPerson(p, look) {
       ctx.save();
       ctx.translate(p.x, p.y);
@@ -9447,12 +9520,12 @@
           stepMove(body, angle, 0, boost, dt);
           ({ stamina: me.stamina, staminaDelay: me.staminaDelay, exhausted: me.exhausted } = body);
         } else {
-          if (!hiddenSelf) stepMove(me, angle, throttle, boost, dt); // in a dumpster you stay put
+          if (!hiddenSelf && !inBed) stepMove(me, angle, throttle, boost, dt); // in a dumpster (or in bed) you stay put
           me.x += me.cx * k; me.y += me.cy * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k;
           if (firing && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat') && frameTime - stabAt > (inv[selectedSlot]?.[0] === 'bat' ? 700 : 550)) { stabAt = frameTime; if (inv[selectedSlot]?.[0] === 'bat') sfx('bat'); } // held: keep stabbing (swinging)
           const stabT = (frameTime - stabAt) / 180;
-          shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null, cop: prisonState ? 2 : amCop ? 1 : 0 });
+          shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null, cop: prisonState ? 2 : amCop ? 1 : 0, sleeping: inBed ? 1 : 0 });
         }
         // The camera locks to my player, so there's nothing to smooth twice.
         camera.x = me.x;
@@ -9592,6 +9665,7 @@
           ctx.font = '700 16px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText('🚨', p.x, p.y - p.r - 18);
         }
+        if (p.sleeping) { drawSleeper(p, lookOf(id), id, frameTime); continue; } // tucked up in bed
         drawPerson(p, p.cop === 1 ? { ...POLICE_LOOK, skin: lookOf(id).skin, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' } : p.cop === 2 ? { ...PRISONER_LOOK, skin: lookOf(id).skin } : lookOf(id)); // Militsiya players wear the uniform; prisoners the camp's black
       }
       drawCats(view, shown, frameTime, true);
@@ -9704,12 +9778,13 @@
         ctx.fillStyle = '#f4c430';
         ctx.fillText('🛒 Food', k.x, k.y - 34);
       }
-      if (myHome && playing) { // my home: a label over the garage (the car pad outside)
+      if (playing) for (const [, gx, gy] of garagePoints()) { // my home's pad and my garages: a label where E brings out my cars
+        if (gx < viewBox.l || gx > viewBox.r || gy < viewBox.t || gy > viewBox.b) continue;
         ctx.font = '700 13px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillStyle = '#c9a46a';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        ctx.strokeText('🚗 Garage', myHome[1], myHome[2] - 60); ctx.fillText('🚗 Garage', myHome[1], myHome[2] - 60);
+        ctx.strokeText('🚗 Garage', gx, gy - 92); ctx.fillText('🚗 Garage', gx, gy - 92); // (above a car parked there, and its 🔑 owner tag)
       }
       if (playing) drawSpeech(view, frameTime);
       const keeper = me && playing && !me.car ? nearestShopkeeper() : null; // for closing panels I walk away from
@@ -9773,6 +9848,13 @@
         const t = myFish ? '🎣 waiting for a bite… (click to reel in)' : '🎣 click the water to cast (or a player, to hook them)';
         ctx.strokeText(t, me.x, me.y - 52); ctx.fillText(t, me.x, me.y - 52);
       }
+      if (me && playing && sleepInfo) { // asleep: who else is, and how to get up
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#dfe9ff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        const [n, all] = sleepInfo;
+        const t = `💤 ${n}/${all} asleep${n < all ? ' — the night skips when everyone is' : ' — morning soon…'}${inBed ? ' · move or E to get up' : ''}`;
+        ctx.strokeText(t, me.x, me.y + 44); ctx.fillText(t, me.x, me.y + 44);
+      }
       if (me && playing && buzzLeft > 0) { // vodka: tougher for a while
         ctx.font = '800 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#9ad0ff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
@@ -9797,7 +9879,7 @@
         ctx.fillText('🗑 Hiding in the dumpster — E to climb out', me.x, me.y - 40);
       }
       if (furnOpen && (!me || me.car || !playing || furnGap(furnOpen) > furn.reach + 40)) closeFurnish();
-      if (garageCars !== null && (!me || me.car || !myHome || Math.hypot(myHome[1] - me.x, myHome[2] - me.y) > homesCfg.garageReach + 80)) closeGarage();
+      if (garageCars !== null && (!me || me.car || !nearestGarage() || nearestGarage().d > homesCfg.garageReach + 80)) closeGarage();
       if (bodyOpen && !latestBodies().has(bodyOpen.id)) closeBody(); // gone (taken, carried off)
       else if (bodyOpen && me) { const b = latestBodies().get(bodyOpen.id); if (b && Math.hypot(b.x - me.x, b.y - me.y) > 120) closeBody(); }
       if (me && playing && checkDueUntil > performance.now()) { // the countdown to stop at the checkpoint

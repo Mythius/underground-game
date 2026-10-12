@@ -157,7 +157,29 @@ export class Furnishings {
     if (owner && w.areTeammates(owner, p)) return true;
     const wh = w.warehouses.all.get(it.building);
     if (wh) return wh.unlockedUntil >= w.warehouses.time;
-    return (w.homes.unlockedUntil.get(it.building) ?? -Infinity) >= w.homes.time;
+    const b = this.#building(it.building);
+    return w.homes.picked(b, b?.rooms ? w.homes.roomAt(b, it.x + it.w / 2, it.y + it.h / 2) : -1); // (a flat's or box's cabinet: that one's lock)
+  }
+
+  /**
+   * Into bed (your own, or a teammate's), at night: you lie with your head on the pillow until you move,
+   * press E, get hurt, or it's morning. When everyone's asleep the night's skipped (see the room).
+   */
+  sleep(p, id) {
+    const it = this.items.get(id);
+    if (it?.kind !== 'bed' || !this.near(p, it)) return 'too_far';
+    if (!this.world.night) return 'not_night';
+    if (p.vehicle || p.hidden || p.jailed || p.carrying || p.holdingCat || !p.alive) return 'busy';
+    const w = this.world;
+    const owner = [...w.players.values()].find((o) => o.account && o.account === it.owner);
+    if (it.owner !== p.account && !(owner && w.areTeammates(owner, p))) return 'not_your_bed';
+    if ([...w.players.values()].some((o) => o !== p && o.sleeping?.bed === it.id)) return 'bed_taken';
+    // The head of the bed is the way its placer faced (its foot, the front, faces back toward them).
+    const a = (it.rot * Math.PI) / 2, depth = it.rot % 2 ? it.h : it.w;
+    const along = depth / 2 - 16;
+    p.sleeping = { bed: it.id, x: it.x + it.w / 2 + Math.cos(a) * along, y: it.y + it.h / 2 + Math.sin(a) * along };
+    Object.assign(p, { x: p.sleeping.x, y: p.sleeping.y, vx: 0, vy: 0 });
+    return null;
   }
 
   /** E on a bed, sofa or (empty) cabinet of yours: back into your hotbar. */
@@ -165,6 +187,7 @@ export class Furnishings {
     const it = this.items.get(id);
     if (!it || !this.near(p, it)) return 'too_far';
     if (it.owner !== p.account) return 'not_yours';
+    if ([...this.world.players.values()].some((o) => o.sleeping?.bed === it.id)) return 'someone_asleep';
     if (this.world.homes.tenantOf(it)) return 'rented_out'; // (the tenant's storage)
     if (it.slots?.some(Boolean)) return 'empty_it_first';
     if (hotbarOf(p).room(it.kind) < 1) return 'no_room';

@@ -8,6 +8,9 @@ import { Teams } from './teams.js';
 import { createWorld } from './World.js';
 import { makeWeapon } from './entities.js';
 
+/** Asleep, as far as skipping the night goes: in bed, or in a dumpster. */
+const asleep = (p) => Boolean(p.sleeping || p.hidden?.dumpster);
+
 /** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). In prison: what the warden's keeping. */
 export function carriedSlots(p) {
   return (p.jailed?.stash ?? p.inventory).map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
@@ -115,6 +118,11 @@ export class Room {
     if (elapsed > this.stepMs) logger.warn('slow tick', { room: this.id, ms: round1(elapsed) });
   }
 
+  /** One fixed step of the game (the loop's, and tests'). */
+  step(dt) {
+    this.#step(dt);
+  }
+
   #step(dt) {
     this.env.step(dt);
     this.world.gripScale = 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain');
@@ -128,6 +136,7 @@ export class Room {
     }
     this.world.onBankChange = this.onBankChange;
     const { deaths, doorChanges, explosions } = this.world.step(dt);
+    this.#sleep(dt);
     // Tell players about arrests, releases, robberies and new stars.
     // Roadblock searches, raids on warehouses (to their owner) and on shops (everyone hears), the train.
     // Work sites: what changed at the rock face / in the fields, and what happened to whom.
@@ -261,6 +270,32 @@ export class Room {
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: victim.id });
     }
     if (this.teams.changed.size) this.#sendTeams();
+  }
+
+  /**
+   * Everyone's up at dawn; at night, once every player's been asleep a little while — in a bed, or
+   * curled up in a dumpster — it's morning. (Those in a dumpster stay in it.)
+   */
+  #sleep(dt) {
+    const alive = [...this.world.players.values()].filter((p) => p.alive);
+    if (!this.env.isNight) {
+      for (const p of alive) p.sleeping = null;
+      this.allAsleepFor = 0;
+      return;
+    }
+    if (!alive.length || !alive.every(asleep)) {
+      this.allAsleepFor = 0;
+      return;
+    }
+    this.allAsleepFor = (this.allAsleepFor ?? 0) + dt;
+    if (this.allAsleepFor < config.homes.sleepSkipSec) return;
+    this.allAsleepFor = 0;
+    this.env.time += this.env.cycle - this.env.clock; // to the first moment of the next day
+    for (const p of alive) p.sleeping = null;
+    this.lastEnvBroadcast = this.env.time;
+    this.broadcast({ t: ServerMsg.ENV, ...this.env.state() });
+    this.broadcast({ t: ServerMsg.POLICE, kind: 'slept' });
+    logger.info('night skipped: everyone slept', { room: this.id, players: alive.length });
   }
 
   /** Hooks from the world to this room: teams, and saving homes and bought cars. */
@@ -649,6 +684,7 @@ export class Room {
     let error = null;
     if (msg.action === 'place') error = f.place(p, msg.angle);
     else if (msg.action === 'pickup') error = f.pickUp(p, msg.id);
+    else if (msg.action === 'sleep') error = f.sleep(p, msg.id);
     else if (msg.action === 'open') {
       const it = f.items.get(msg.id);
       error = !it?.slots || !f.near(p, it) ? 'too_far' : !f.mayOpen(p, it) ? 'locked' : null;
@@ -878,6 +914,8 @@ export class Room {
         const at = this.world.homes.garagePoint(b);
         return [b.id, Math.round(at.x), Math.round(at.y)];
       })(),
+      sleep: asleep(me) && this.env.isNight ? [[...this.world.players.values()].filter((o) => o.alive && asleep(o)).length, [...this.world.players.values()].filter((o) => o.alive).length] : null, // asleep (bed or dumpster) at night: [asleep, everyone]
+      garages: this.world.homes.garageSpots(me.account).filter((g) => !g.starter).map((g) => [g.b.id, Math.round(g.x), Math.round(g.y)]), // the garages I've bought: [building id, spot x, y]
       // While driving: the car's exact state, so the client can predict it.
       ride: me.vehicle && me.vehicle.driver !== me ? me.vehicle.id : 0, // a passenger: the car you're riding in
       car: me.vehicle?.driver === me ? [round1(me.vehicle.x), round1(me.vehicle.y), Math.round(me.vehicle.angle * 1000) / 1000, round1(me.vehicle.vx), round1(me.vehicle.vy), me.vehicle.id, me.vehicle.type, Math.round(me.vehicle.fuel * 10) / 10, Math.round(me.vehicle.boost * 10) / 10] : null,
@@ -924,7 +962,7 @@ export class Room {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
-          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0]); // (in Militsiya uniform; wanted — only officers are told)
+          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0, e.sleeping ? 1 : 0]); // (in Militsiya uniform; wanted — only officers are told; asleep in bed)
           if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.victim ? 2 : e.fishing.phase === 'bite' ? 1 : 0]); // 2: hooked onto a player
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];

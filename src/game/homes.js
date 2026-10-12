@@ -24,7 +24,7 @@ export class Homes {
     this.time = 0;
     this.owners = new Map(); // building id -> account
     this.byAccount = new Map(); // account id -> building
-    this.unlockedUntil = new Map(); // building id -> a picked lock lasts until this (world time)
+    this.unlockedUntil = new Map(); // building id (or "<id>:<room>", a flat or garage box) -> a picked lock lasts until this (world time)
     this.locked = new Set(world.buildings.filter((b) => config.homes.lockedTypes.includes(b.type)).map((b) => b.id));
     this.onAssign = null; // (account, slot) -> void: save who lives where
     this.bought = new Map(); // building id -> { owner (account), ownerId, spent }
@@ -347,39 +347,65 @@ export class Homes {
     return pad ? { x: pad.x + pad.w / 2, y: pad.y + pad.h / 2 } : this.spawnPoint(b);
   }
 
-  /** Is p standing by their garage (the car pad outside their home)? */
+  /** Every spot `account` can bring a car out at: their home's pad, and the spot inside each garage they've bought. [{ b, x, y, pad, starter }] */
+  garageSpots(account) {
+    const out = [];
+    const home = this.homeOf(account);
+    if (home) out.push({ b: home, ...this.garagePoint(home), pad: this.padOf(home), starter: true });
+    for (const b of this.boughtBy(account)) {
+      const s = b.carSpot;
+      if (!s) continue;
+      const along = Math.abs(Math.cos(s.angle)) > 0.5; // (the car lies along x)
+      const [w, h] = along ? [100, 50] : [50, 100];
+      out.push({ b, x: s.x, y: s.y, pad: { x: s.x - w / 2, y: s.y - h / 2, w, h, angle: s.angle }, starter: false });
+    }
+    return out;
+  }
+
+  /** The spot p's standing at to bring out a car, or null. */
+  garageAt(p) {
+    if (p.vehicle) return null;
+    return this.garageSpots(p.account).find((g) => Math.hypot(g.x - p.x, g.y - p.y) < config.homes.garageReach + p.radius) ?? null;
+  }
+
+  /** Is p standing by one of their garages (the car pad outside their home, or a garage they've bought)? */
   atGarage(p) {
-    const b = this.homeOf(p.account);
-    if (!b || p.vehicle) return false;
-    const at = this.garagePoint(b);
-    return Math.hypot(at.x - p.x, at.y - p.y) < config.homes.garageReach + p.radius;
+    return Boolean(this.garageAt(p));
   }
 
   /**
    * Is `door` a locked home door, as far as player p is concerned? A rented room's door opens for its
-   * tenant; the rest of a home's for its owner. Unowned garages stand open.
+   * tenant; the rest of a home's for its owner (nobody's: locked to all, short of picking it).
    */
   lockedFor(door, p) {
     if (!door.exterior) return false;
     const b = this.world.buildings[door.building - 1];
     if (!b || (!this.locked.has(b.id) && !b.rooms)) return false;
-    if ((this.unlockedUntil.get(b.id) ?? -Infinity) >= this.time) return false;
     if (inside(b, p.x, p.y)) return false; // anyone inside can always get out
     if (b.rooms) {
       const room = this.roomAt(b, door.x + door.w / 2, door.y + door.h / 2, 30);
+      if (this.picked(b, room)) return false;
       const rental = room >= 0 ? this.rentals.get(`${b.id}:${room}`) : null;
       if (rental) return rental.tenant !== p.account;
       const owner = this.bought.get(b.id)?.owner;
       if (owner) return owner !== p.account;
       return this.locked.has(b.id);
     }
+    if (this.picked(b)) return false;
     const owner = this.ownerOf(b);
     return !(owner && owner === p.account);
   }
 
-  /** A picked lock: anyone can open the doors for a while. */
+  /** A picked lock: anyone can open the door for a while (a flat's or garage box's: just that one). */
   unlock(door) {
-    this.unlockedUntil.set(door.building, this.time + config.homes.unlockedSec);
+    const b = this.world.buildings[door.building - 1];
+    const room = b?.rooms ? this.roomAt(b, door.x + door.w / 2, door.y + door.h / 2, 30) : -1;
+    this.unlockedUntil.set(room >= 0 ? `${door.building}:${room}` : door.building, this.time + config.homes.unlockedSec);
+  }
+
+  /** Is b's lock picked just now (room: one flat's or garage box's)? */
+  picked(b, room = -1) {
+    return (this.unlockedUntil.get(room >= 0 ? `${b.id}:${room}` : b.id) ?? -Infinity) >= this.time;
   }
 
   /** [buildingId, ownerName] for every owned home. */

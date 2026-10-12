@@ -19,6 +19,7 @@ function town() {
       { type: 'panelka', x: 2000, y: 600, rot: 0 },
       { type: 'garages', x: 3200, y: 600, rot: 0 },
       { type: 'house', x: 600, y: 1600, rot: 2 },
+      { type: 'garage', x: 2000, y: 1600, rot: 1 },
     ],
   });
   const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, config.player, config.weapons, map);
@@ -198,19 +199,61 @@ test('after a restart: load your saved home (its furniture) into a free one of t
   assert.deepEqual(next.homes.storedFor(acc).own, []);
 });
 
-test('garage boxes: unowned ones stand open; a rented box is locked to everyone but its tenant', () => {
+test('garage boxes are locked: a rented one opens for its tenant, the rest for the owner (nobody, if unowned)', () => {
   const world = town();
   const row = of(world, 'garages');
   const tenant = account(2);
   const tp = player(world, tenant, row);
   const stranger = player(world, account(3), row);
   const doorOf = (room) => row.doors.find((d) => d.exterior && world.homes.roomAt(row, d.x + d.w / 2, d.y + d.h / 2, 30) === room);
-  assert.equal(world.lockedFor(doorOf(3), stranger), false);
+  assert.equal(world.lockedFor(doorOf(3), stranger), true, 'locked, even with nobody renting it');
+  assert.equal(world.lockedFor(doorOf(3), tp), true);
   assert.equal(world.homes.action(tp, { id: row.id, action: 'rent', room: 3 }), null);
   assert.equal(tenant.bank, 1e6 - config.homes.rent.garages);
   assert.equal(world.lockedFor(doorOf(3), stranger), true);
   assert.equal(world.lockedFor(doorOf(3), tp), false);
-  assert.equal(world.lockedFor(doorOf(2), stranger), false);
+  assert.equal(world.lockedFor(doorOf(2), tp), true, 'not the other boxes');
   assert.equal(world.homes.action(tp, { id: row.id, action: 'leave', room: 3 }), null);
-  assert.equal(world.lockedFor(doorOf(3), stranger), false);
+  assert.equal(world.lockedFor(doorOf(3), tp), true, 'gave it up: locked to them again');
+  // The owner of the row has the keys to every box nobody rents.
+  const owner = player(world, account(4), row);
+  assert.equal(world.homes.action(owner, { id: row.id, action: 'buy' }), null);
+  assert.equal(world.lockedFor(doorOf(3), owner), false);
+  assert.equal(world.lockedFor(doorOf(3), stranger), true);
+  // A picked lock: open to anyone for a while (that box only).
+  world.homes.unlock(doorOf(1));
+  assert.equal(world.lockedFor(doorOf(1), stranger), false);
+  assert.equal(world.lockedFor(doorOf(2), stranger), true, 'the box next door is still locked');
+});
+
+test('a single garage: locked, two cabinets; buy it and bring your cars out at the spot inside', () => {
+  const world = town();
+  const g = of(world, 'garage');
+  const cabs = itemsIn(world, g).filter((it) => it.kind === 'cabinet');
+  assert.equal(cabs.length, 2, 'two cabinets');
+  assert.ok(cabs.every((it) => world.furnishings.fits(g, it, it)), 'clear of the walls and the door');
+  const acc = account(1);
+  const p = player(world, acc, g);
+  const door = g.doors.find((d) => d.exterior);
+  assert.equal(world.lockedFor(door, p), true, 'locked before you buy it');
+  assert.equal(world.homes.action(p, { id: g.id, action: 'buy' }), null);
+  assert.equal(acc.bank, 1e6 - config.homes.prices.garage);
+  assert.equal(world.lockedFor(door, p), false, 'yours');
+  assert.equal(world.lockedFor(door, player(world, account(2), g)), true);
+  // At the spot inside: one of your saved cars comes out, parked there.
+  const saved = { id: 77, type: 'sedan', color: '#2f5b8a', fuel: 60, cargo: [] };
+  Object.assign(p, { x: g.x + g.w + 600, y: g.y });
+  assert.equal(world.bringCar(p, saved), 'too_far');
+  Object.assign(p, { x: g.carSpot.x + 70, y: g.carSpot.y });
+  if (world.isBlocked(p.x, p.y, p.radius)) Object.assign(p, { x: g.carSpot.x - 70, y: g.carSpot.y });
+  assert.ok(world.homes.atGarage(p), 'at the garage');
+  assert.equal(world.bringCar(p, saved), null);
+  const car = [...world.vehicles.values()].find((v) => v.carId === 77);
+  assert.ok(car, 'out');
+  assert.ok(Math.hypot(car.x - g.carSpot.x, car.y - g.carSpot.y) < 1, 'parked on the spot');
+  assert.ok(car.x > g.x && car.x < g.x + g.w && car.y > g.y && car.y < g.y + g.h, 'inside the garage');
+  assert.equal(car.fuel, 60);
+  // One garage each.
+  const other = world.buildings.filter((x) => x.type === 'garage')[1];
+  if (other) assert.equal(world.homes.action(player(world, acc, other), { id: other.id, action: 'buy' }), 'one_per_type');
 });

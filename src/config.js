@@ -453,7 +453,7 @@ export const config = Object.freeze({
   // owner; hold F at a door to pick it (a break-in).
   homes: {
     starterTypes: ['house', 'cabin'], // what can be handed out as a starter house
-    lockedTypes: ['house', 'cabin', 'mansion', 'panelka'], // whose outside doors are locked
+    lockedTypes: ['house', 'cabin', 'mansion', 'panelka', 'garages', 'garage'], // whose outside doors are locked (a lock-up garage box opens for its tenant, else the owner)
     lockpickSec: 5,
     unlockedSec: 90, // a picked lock stays open this long
     garageReach: 140, // from the middle of the car pad outside
@@ -461,7 +461,7 @@ export const config = Object.freeze({
     // Buying homes (on top of your free starter home): one of each type, from your bank. Like a factory,
     // what you own is saved, and after a restart (the map is new) you load its furniture into a free home
     // of the same type. Selling gives back sellBack of the price.
-    prices: { cabin: 8000, house: 15000, garages: 25000, panelka: 40000, mansion: 60000 },
+    prices: { garage: 6000, cabin: 8000, house: 15000, garages: 25000, panelka: 40000, mansion: 60000 }, // (a garage: E at the spot inside brings out your cars)
     sellBack: 0.5,
     buyReach: 260, // from the building's edge (or inside it)
     // Renting: a flat in a panelka or a box in a row of lock-up garages, as locked storage (its cabinet).
@@ -470,6 +470,9 @@ export const config = Object.freeze({
     // a day from NPC tenants, less each room a player rents.
     rent: { panelka: 100, garages: 60 },
     npcRent: 300,
+    // Sleeping in your bed at night (E on it) — or in a dumpster: once every player on the server has been
+    // asleep this long, the night's skipped and it's morning.
+    sleepSkipSec: 3,
   },
 
   // ---- crime and police (stage 4) -------------------------------------------------

@@ -76,6 +76,7 @@ export class Player {
   /** Take damage: less of it with a vodka buzz on. */
   hurt(amount) {
     this.health -= this.buzz > 0 ? amount * config.economy.vodka.damageTaken : amount;
+    this.sleeping = null; // (that wakes you up)
   }
 
   /** The gun in the selected slot, or null (empty hand, or a stack of goods). */
