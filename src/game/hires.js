@@ -695,7 +695,8 @@ export class Hires {
    */
   #viaDoor(h, tx, ty) {
     const w = this.world;
-    const holder = (x, y) => w.buildings.find((b) => b.doors.length && inside(b, x, y));
+    this.doorBuildings ??= w.buildings.filter((b) => b.doors.length); // (buildings never change)
+    const holder = (x, y) => this.doorBuildings.find((b) => inside(b, x, y));
     const from = holder(h.x, h.y), to = holder(tx, ty);
     if (from === to) return [tx, ty];
     const b = from ?? to;

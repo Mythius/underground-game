@@ -641,6 +641,53 @@
     let doorReach = 45;
     let useRequested = false;
     const canopyAlpha = []; // per tree, fades when I'm underneath
+    const fadingTrees = new Set(); // trees whose canopy isn't at its resting see-through (still easing back)
+
+    // Trees and buildings filed in a coarse grid (refiled whenever the map's lists are replaced: a new
+    // room, or the editor), so "what's at this spot?" looks at the few nearby, not all ~8000 trees.
+    const GRID_CELL = 600;
+    const sceneGrid = { trees: null, buildings: null, treeCells: new Map(), maxCanopy: 0, buildingCells: new Map() };
+    const cellKey = (cx, cy) => cx * 100000 + cy;
+    function fileScene() {
+      if (sceneGrid.trees !== terrain.trees) {
+        sceneGrid.trees = terrain.trees;
+        sceneGrid.treeCells.clear();
+        sceneGrid.maxCanopy = 0;
+        terrain.trees.forEach((t, i) => { // by its middle (searches reach out by the biggest canopy)
+          const k = cellKey(Math.floor(t.x / GRID_CELL), Math.floor(t.y / GRID_CELL));
+          if (!sceneGrid.treeCells.has(k)) sceneGrid.treeCells.set(k, []);
+          sceneGrid.treeCells.get(k).push(i);
+          sceneGrid.maxCanopy = Math.max(sceneGrid.maxCanopy, t.canopy);
+        });
+      }
+      if (sceneGrid.buildings !== buildings) {
+        sceneGrid.buildings = buildings;
+        sceneGrid.buildingCells.clear();
+        for (const b of buildings) { // in every cell it covers (in order, so the first match is the same as a full search)
+          for (let cx = Math.floor(b.x / GRID_CELL); cx <= Math.floor((b.x + b.w) / GRID_CELL); cx++) {
+            for (let cy = Math.floor(b.y / GRID_CELL); cy <= Math.floor((b.y + b.h) / GRID_CELL); cy++) {
+              const k = cellKey(cx, cy);
+              if (!sceneGrid.buildingCells.has(k)) sceneGrid.buildingCells.set(k, []);
+              sceneGrid.buildingCells.get(k).push(b);
+            }
+          }
+        }
+      }
+    }
+    /** Indices of the trees whose canopy reaches into the box l..r × t..b. */
+    function treesIn(l, t, r, b) {
+      fileScene();
+      const m = sceneGrid.maxCanopy, out = [];
+      for (let cx = Math.floor((l - m) / GRID_CELL); cx <= Math.floor((r + m) / GRID_CELL); cx++) {
+        for (let cy = Math.floor((t - m) / GRID_CELL); cy <= Math.floor((b + m) / GRID_CELL); cy++) {
+          for (const i of sceneGrid.treeCells.get(cellKey(cx, cy)) ?? []) {
+            const tr = terrain.trees[i];
+            if (tr.x + tr.canopy > l && tr.x - tr.canopy < r && tr.y + tr.canopy > t && tr.y - tr.canopy < b) out.push(i);
+          }
+        }
+      }
+      return out;
+    }
     let tickMs = 1000 / 30;
     let playerParams = { baseSpeed: 260, startMass: 25 };
     let myId = null;
@@ -2961,7 +3008,7 @@
       const r = BODY_REACH + radiusOf(me.mass);
       if ((terrain.dumpsters ?? []).some((d) => Math.hypot(d.x + d.w / 2 - me.x, d.y + d.h / 2 - me.y) < r + d.w / 2)) return '🗑 E: into the dumpster';
       if (waterDistance(me.x, me.y, !lakesFrozen()).d < 40) return '🌊 E: throw it in the water';
-      if (terrain.trees.some((t) => Math.hypot(t.x - me.x, t.y - me.y) < t.canopy * 0.75)) return '🌲 E: hide it under the tree';
+      if (treesIn(me.x, me.y, me.x, me.y).some((i) => Math.hypot(terrain.trees[i].x - me.x, terrain.trees[i].y - me.y) < terrain.trees[i].canopy * 0.75)) return '🌲 E: hide it under the tree';
       return 'E: put it down';
     }
 
@@ -5142,6 +5189,7 @@
       });
       roofAlpha.clear();
       canopyAlpha.length = 0;
+      fadingTrees.clear();
       ed.minimapDirty = true;
     }
 
@@ -6382,7 +6430,10 @@
       return true;
     }
 
-    const insideBuilding = (x, y) => buildings.find((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h);
+    const insideBuilding = (x, y) => {
+      fileScene();
+      return (sceneGrid.buildingCells.get(cellKey(Math.floor(x / GRID_CELL), Math.floor(y / GRID_CELL))) ?? []).find((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h);
+    };
 
     // p needs x, y, mass, stamina, staminaDelay, exhausted.
     function stepMove(p, angle, throttle, boost, dt) {
@@ -8428,8 +8479,8 @@
     // …and so are players under a tree canopy (unless it's the one I'm under).
     function hiddenUnderRoof(x, y) {
       const b = insideBuilding(x, y);
-      if (b) return b.pattern !== 'none' && roofAlpha.get(b.id) > 0.5;
-      return terrain.trees.some((t, i) => canopyAlpha[i] > 0.5 && Math.hypot(x - t.x, y - t.y) < t.canopy * 0.9);
+      if (b) return b.pattern !== 'none' && (roofAlpha.get(b.id) ?? 1) > 0.5;
+      return treesIn(x, y, x, y).some((i) => (canopyAlpha[i] ?? 0.92) > 0.5 && Math.hypot(x - terrain.trees[i].x, y - terrain.trees[i].y) < terrain.trees[i].canopy * 0.9);
     }
 
     /** Update and draw everyone's lines. Each speaker says one thing at a time. */
@@ -8969,14 +9020,18 @@
       drawSkids(frameTime);
 
       const viewL = camera.x - vw / 2, viewT = camera.y - vh / 2, viewR = camera.x + vw / 2, viewB = camera.y + vh / 2;
-      const visibleTrees = [];
-      terrain.trees.forEach((t, i) => {
-        // Canopies go see-through over me, and stay a little see-through otherwise.
+      // Canopies go see-through over me, and stay a little see-through otherwise. Only the trees on screen
+      // (and any still easing back off screen) need updating: every other one is at rest.
+      const visibleTrees = treesIn(viewL, viewT, viewR, viewB).sort((a, b) => a - b); // (drawn in map order, as before)
+      const ease = 1 - Math.exp(-dt * 10);
+      for (const i of new Set([...visibleTrees, ...fadingTrees])) {
+        const t = terrain.trees[i];
+        if (!t) { fadingTrees.delete(i); continue; }
         const under = me && playing && Math.hypot(me.x - t.x, me.y - t.y) < t.canopy * 0.9;
         const a = canopyAlpha[i] ?? 0.92;
-        canopyAlpha[i] = editing ? 0.55 : a + ((under ? 0.3 : 0.92) - a) * (1 - Math.exp(-dt * 10));
-        if (t.x + t.canopy > viewL && t.x - t.canopy < viewR && t.y + t.canopy > viewT && t.y - t.canopy < viewB) visibleTrees.push(i);
-      });
+        canopyAlpha[i] = editing ? 0.55 : a + ((under ? 0.3 : 0.92) - a) * ease;
+        if (Math.abs(canopyAlpha[i] - 0.92) > 0.002) fadingTrees.add(i); else fadingTrees.delete(i);
+      }
 
       const visibleBuildings = buildings.filter((b) => inView(b, viewL - 20, viewT - 20, viewR + 20, viewB + 20));
       for (const b of visibleBuildings) drawFloor(b);
@@ -8987,7 +9042,7 @@
       for (const b of buildings) {
         const target = editing ? edRoofAlpha : b === myBuilding ? 0 : 1;
         const a = roofAlpha.get(b.id) ?? 1;
-        roofAlpha.set(b.id, a + (target - a) * (1 - Math.exp(-dt * 10)));
+        if (a !== target) roofAlpha.set(b.id, Math.abs(target - a) < 0.001 ? target : a + (target - a) * ease); // (most sit at 1: nothing to do)
       }
 
       // Guns on the ground: a pulsing glow in the gun's colour, the gun slowly turning, and its name.

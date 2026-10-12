@@ -1266,8 +1266,9 @@ export class World {
 
     // Vehicles shove each other apart and lose speed when they collide (two parked cars never do).
     for (const a of this.vehicles.values()) {
+      if (a.idle) continue; // (a parked car's bumps are found from the moving car's side)
       for (const b of this.carGrid.query(a.x, a.y, a.radius, this.#near.clear() ?? this.#near)) {
-        if (b.id <= a.id || (a.idle && b.idle)) continue; // (each pair once)
+        if (b === a || (!b.idle && b.id <= a.id)) continue; // (each pair once)
         const reach = a.radius + b.radius;
         if (Math.abs(a.x - b.x) > reach || Math.abs(a.y - b.y) > reach || Math.hypot(a.x - b.x, a.y - b.y) > reach) continue;
         for (const ca of vehicleCircles(a, a.stats)) {

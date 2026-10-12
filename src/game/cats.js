@@ -125,6 +125,7 @@ export class Cats {
     const w = this.world;
     const k = config.cats;
     const players = [...w.players.values()].filter((p) => p.alive);
+    const moving = [...w.vehicles.values()].filter((v) => !v.idle); // (parked cars never scare them)
     for (const c of this.list) {
       if (c.heldBy) {
         const p = c.heldBy;
@@ -139,7 +140,7 @@ export class Cats {
       // Trouble: a car coming, or a stranger close (unless they've a fish to offer).
       const fishy = (p) => p.inventory[p.selected]?.good === 'fish' && !p.vehicle;
       let danger = null;
-      for (const v of w.vehicles.values()) if (v.speed > 60 && Math.hypot(v.x - c.x, v.y - c.y) < 160) { danger = v; break; }
+      for (const v of moving) if (v.speed > 60 && Math.hypot(v.x - c.x, v.y - c.y) < 160) { danger = v; break; }
       if (!danger) for (const p of players) {
         if (p === c.friend || p.hidden || p.vehicle || fishy(p)) continue;
         const run = p.input?.throttle > 0 && p.input?.boost;

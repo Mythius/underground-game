@@ -7,11 +7,14 @@ export class SpatialGrid {
     this.cellSize = cellSize;
     this.cols = Math.ceil(width / cellSize);
     this.rows = Math.ceil(height / cellSize);
-    this.cells = new Map();
+    this.cells = new Array(this.cols * this.rows); // cell index -> entities (arrays are kept and reused)
+    this.used = []; // indices of the cells with anything in them
   }
 
+  /** Empties the grid (keeping the cells' arrays, so rebuilding it each tick makes no garbage). */
   clear() {
-    this.cells.clear();
+    for (const i of this.used) this.cells[i].length = 0;
+    this.used.length = 0;
   }
 
   #cellIndex(col, row) {
@@ -35,8 +38,8 @@ export class SpatialGrid {
     for (let row = r0; row <= r1; row++) {
       for (let col = c0; col <= c1; col++) {
         const key = this.#cellIndex(col, row);
-        let bucket = this.cells.get(key);
-        if (!bucket) this.cells.set(key, (bucket = []));
+        const bucket = (this.cells[key] ??= []);
+        if (!bucket.length) this.used.push(key);
         bucket.push(entity);
       }
     }
@@ -50,7 +53,7 @@ export class SpatialGrid {
     const r1 = this.#rowOf(y + range);
     for (let row = r0; row <= r1; row++) {
       for (let col = c0; col <= c1; col++) {
-        const bucket = this.cells.get(this.#cellIndex(col, row));
+        const bucket = this.cells[this.#cellIndex(col, row)];
         if (bucket) for (const e of bucket) out.add(e);
       }
     }
