@@ -6,6 +6,7 @@ import { validateMap } from '../src/game/mapFile.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
 config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
+config.labour.workers = 0; // (nor the site's own hands: see labour.test.js)
 
 function site(type) {
   const { map, error } = validateMap({

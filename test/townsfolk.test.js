@@ -145,13 +145,13 @@ test('a walker who is stuck tries another way: a sidestep, then somewhere else, 
 test('a full-size map is capped at maxPopulation townsfolk and maxUnits police', () => {
   const world = new World();
   assert.ok(world.buildings.length * config.townsfolk.perBuilding > config.townsfolk.maxPopulation, 'a big enough town to hit the cap');
-  assert.equal(world.townsfolk.people.length, config.townsfolk.maxPopulation);
+  assert.equal(world.townsfolk.people.filter((p) => !p.job).length, config.townsfolk.maxPopulation); // (the hands and convicts come on top)
   const patrols = world.police.units.filter((u) => !u.post).length + world.police.waiting.filter((w) => !w.post).length;
   assert.equal(patrols, config.police.maxUnits, 'patrol cars (checkpoints have their own on top)');
   assert.equal(world.police.units.filter((u) => u.post?.roadblock).length, world.roadblocks.list.length, 'one crewed car at each checkpoint');
   assert.equal(world.police.units.filter((u) => u.post?.guard && !u.post.prison).length, world.buildings.filter((b) => b.type === 'bank').length, 'and a guard in each bank');
   assert.equal(world.buildings.filter((b) => b.type === 'prison').length, 1, 'one prison');
   assert.equal(world.police.units.filter((u) => u.post?.prison).length, config.prison.guards, 'with its guards');
-  assert.equal(config.townsfolk.maxPopulation, 300);
+  assert.equal(config.townsfolk.maxPopulation, 150);
   assert.equal(config.police.maxUnits, 20);
 });

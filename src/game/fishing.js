@@ -33,10 +33,11 @@ export class Fishing {
     this.events = []; // { player, kind, … } for the room to pass on
   }
 
-  /** Is (x, y) open water a float can sit on (not dry land, not a bridge)? */
+  /** Is (x, y) open water a float can sit on (not dry land, not a bridge, not a frozen lake)? */
   #water(x, y) {
     const w = this.world;
-    if (waterDistance(w.water, x, y).d > -12) return false;
+    const water = w.frozen ? { rivers: w.water.rivers, lakes: [] } : w.water; // (the lakes are ice in winter)
+    if (waterDistance(water, x, y).d > -12) return false;
     return !w.roads.some((r) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h);
   }
 
@@ -48,7 +49,7 @@ export class Fishing {
   cast(p, angle) {
     const r = config.fishing;
     if (!this.hasRod(p)) return 'no_rod';
-    if (p.vehicle || p.hidden || p.jailed || p.carrying || !p.alive) return 'busy';
+    if (p.vehicle || p.hidden || p.jailed || p.carrying || p.holdingCat || !p.alive) return 'busy';
     if (p.fishing) return this.pull(p, null); // (a click while the line's out is a pull)
     if (this.world.isSwimming(p.x, p.y)) return 'busy';
     if (!Number.isFinite(angle)) return 'no_water';
@@ -205,10 +206,11 @@ export class Fishing {
     for (const p of this.world.players.values()) {
       const f = p.fishing;
       if (!f) continue;
-      // Walked off, put the rod away, got in a car…: the line comes in.
-      if (!p.alive || !this.hasRod(p) || p.vehicle || p.hidden || p.jailed || Math.hypot(p.x - f.from.x, p.y - f.from.y) > config.fishing.lineReach) {
+      // Walked off, put the rod away, got in a car, the lake froze over…: the line comes in.
+      const iced = !f.victim && !this.#water(f.x, f.y);
+      if (!p.alive || iced || !this.hasRod(p) || p.vehicle || p.hidden || p.jailed || Math.hypot(p.x - f.from.x, p.y - f.from.y) > config.fishing.lineReach) {
         p.fishing = null;
-        if (p.alive) this.events.push({ player: p, kind: f.phase === 'bite' ? 'fish_escaped' : 'fish_reeled', why: 'moved' });
+        if (p.alive) this.events.push({ player: p, kind: f.phase === 'bite' ? 'fish_escaped' : 'fish_reeled', why: iced ? 'frozen' : 'moved' });
         if (f.victim) this.events.push({ player: f.victim, kind: 'hook_free' });
         continue;
       }

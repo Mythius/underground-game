@@ -166,7 +166,7 @@ export class Police {
   witnessed(x, y, target = null, except = null) {
     if (this.policeSee(x, y, target)) return true;
     const r = this.#spotRange(target, config.crime.witnessSees);
-    return r > 0 && this.world.townsfolk.people.some((t) => t !== except && t.inside <= 0 && this.sees(t.x, t.y, t.angle, x, y, r));
+    return r > 0 && this.world.townsfolk.people.some((t) => t !== except && t.inside <= 0 && !t.job?.quiet && this.sees(t.x, t.y, t.angle, x, y, r));
   }
 
   /**
@@ -742,6 +742,13 @@ export class Police {
       if (target.lastKnown) return this.#search(u, target, dt);
     }
     u.arrest = 0;
+    const outAfterDark = post.patrol ? this.world.prison?.curfewTarget(o) : null;
+    if (outAfterDark) { // a prisoner out of the cells after lights-out: over to him with the baton
+      o.angle = Math.atan2(outAfterDark.y - o.y, outAfterDark.x - o.x);
+      if (Math.hypot(outAfterDark.x - o.x, outAfterDark.y - o.y) > outAfterDark.radius + 34) return this.#walk(o, outAfterDark.x, outAfterDark.y, dt);
+      this.world.prison.club(o, outAfterDark);
+      return;
+    }
     if (post.patrol) { // a prison guard: round the camp at a stroll
       const at = post.patrol[u.leg ?? 0];
       if (Math.hypot(at.x - o.x, at.y - o.y) < 14) u.leg = ((u.leg ?? 0) + 1) % post.patrol.length;

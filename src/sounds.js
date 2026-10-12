@@ -72,6 +72,14 @@ export const SOUND_SLOTS = [
     { id: 'chat', name: 'Chat message' },
     { id: 'error', name: "Can't do that (error)" },
   ] },
+  { group: 'Animals', slots: [
+    { id: 'howl', name: 'A wolf howling (at night, in the woods)' },
+    { id: 'growl', name: 'Wolves snarling as they run at you' },
+    { id: 'caw', name: 'A crow cawing' },
+    { id: 'meow', name: 'A cat meowing (fed, or wriggling free)' },
+    { id: 'purr', name: 'A cat purring (petted)' },
+    { id: 'wings', name: 'Crows flapping up into the air' },
+  ] },
   { group: 'Crime', slots: [
     { id: 'alarm', name: 'Wanted (crime reported)' },
     { id: 'busted', name: 'Arrested' },
@@ -80,6 +88,8 @@ export const SOUND_SLOTS = [
     { id: 'atmSmash', name: 'An ATM bursting open (bat)' },
     { id: 'bribe', name: 'Paying a bribe at a checkpoint' },
     { id: 'hire', name: 'Hiring muscle at the bar' },
+    { id: 'campBell', name: 'The prison bell (meal times)' },
+    { id: 'whistle', name: 'A guard\'s whistle (lights out at the prison)' },
   ] },
 ];
 export const SLOT_IDS = new Set(SOUND_SLOTS.flatMap((g) => g.slots.map((s) => s.id)));

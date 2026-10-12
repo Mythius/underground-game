@@ -120,6 +120,29 @@ export const config = Object.freeze({
     sniper: { name: 'Sniper', damage: 75, cooldownSec: 1.1, magazineSize: 3, reloadSec: 2.5, bulletSpeed: 1900, bulletLifetimeSec: 1.3, pellets: 1, spread: 0, barrel: 2.6, spawnWeight: 15 },
   },
 
+  // NPC hands at the work sites and the trucks that carry the goods along the chain:
+  //   farm wheat → flour mill → bakery → shops, kiosks, gas stations, markets (bread)
+  //   logs → sawmill → markets (planks);  ore → foundry → markets (steel)
+  // Shops only get bread when a truck brings it, so the more farms (and the busier their hands) the
+  // more bread there is in town. City mills and factories keep a stock and work it themselves.
+  labour: {
+    workers: 2, // per farm, lumberyard and mine
+    sites: ['farm', 'logging', 'mine'],
+    swingSec: 2, // they work slowly
+    carry: 6, // they take the haul to the foreman when they've this much (or nothing's left to work)
+    speed: 70,
+    replaceSec: 90, // a new hand turns up this long after one is killed
+    truckCapacity: 40, // units per run
+    loadSec: 6, // stopped at each end, loading and unloading
+    minLoad: 8, // a truck waits at the pickup until there's at least this much (or waitSec has passed)
+    waitSec: 40,
+    truckReplaceSec: 120, // a hijacked or wrecked truck is replaced this long after
+    factoryTarget: 60, // a city mill/factory keeps up to this much of its output on hand
+    factoryLines: 6, // batches a city mill works at once (so the farms, not the mill, set how much bread there is)
+    chain: { farm: 'flourmill', logging: 'sawmill', mine: 'foundry' }, // raw site → the mill its trucks feed
+    deliver: { flourmill: ['bakery'], bakery: ['shop', 'kiosk', 'gas', 'market'], sawmill: ['market'], foundry: ['market'] }, // where each mill's trucks drop
+  },
+
   // Drivable cars and trucks, parked on the roads. E to get in/out, W/S gas/brake, A/D steer, Shift to drift, Space to boost (vodka).
   vehicles: {
     fuelCanShare: 20, // one fuel poured in by hand fills this % of a tank
@@ -365,7 +388,7 @@ export const config = Object.freeze({
   },
 
   fuel: {
-    perUnit: 100 / 120000, // a full tank lasts about 120,000 units of driving
+    perUnit: 100 / 150000, // a full tank lasts about 150,000 units of driving (25% longer than at first)
     pumpReach: 220, // a car this close to a gas station's clerk can be refilled
   },
 
@@ -402,7 +425,7 @@ export const config = Object.freeze({
   // NPC townsfolk walking between buildings and spending money: the town's demand.
   townsfolk: {
     perBuilding: 1.1, // how many live in town, per building…
-    maxPopulation: 300, // …but never more than this on a map (anyone killed is replaced, see replaceSec)
+    maxPopulation: 150, // …but never more than this on a map (anyone killed is replaced, see replaceSec)
     walkSpeed: 80,
     minStaySec: 8, // time spent inside each place they visit
     maxStaySec: 45,
@@ -452,19 +475,32 @@ export const config = Object.freeze({
   // unlock the door in the inner fence, then pick the lock on the outer fence — the tower snipers
   // open up on anyone wanted round the camp.
   prison: {
-    coalPerStar: 10, // the quota: this much coal per wanted star at the arrest
+    coalPerStar: 50, // the quota: this much coal per wanted star at the arrest
     minStars: 1, // (a player officer's arrest counts as at least this)
     guards: 3, // patrolling inside the wire
     hopperReach: 110, // stand this close to the coal bunker and your coal goes in
     wardenReach: 140,
     keyReach: 50, // lifting a guard's key (F, from behind)
-    caughtCoal: 5, // caught at it (from the front): this much more coal on your quota
+    caughtCoal: 25, // caught at it (from the front): this much more coal on your quota
     doorOpenSec: 12, // the escape doors swing shut (and lock) after this
     lockpickSec: 6, // the outer fence door
     escapeStars: 3,
     sniperRange: 1100, // from each watchtower (out past this from the camp, an escape is done)
     sniperEverySec: 3, // each tower
     sniperSpread: 0.14, // they miss more the further off you are
+    // Camp life. You arrive in one of the cells by the gatehouse (8 of them: see buildings.js). At night the guards order everyone
+    // back to the cells: still out after warnSec and a guard comes to club you (and every club is
+    // more coal on your quota). The cell doors lock till dawn — picking one is an escape attempt.
+    curfewWarnSec: 20,
+    clubDamage: 25, // a guard's baton, every clubEverySec while you're out after the warning
+    clubEverySec: 2,
+    curfewCoal: 5, // more coal on your quota per club
+    cellLockpickSec: 6,
+    // The big convicts (NPCs): mine coal and tip it in the bunker, mind their own business — hit one
+    // and he fights back with his fists.
+    convicts: { count: 6, health: 160, swingSec: 2, carry: 4, punchShare: 0.12, punchHits: 6, fightSec: 30, speed: 70 },
+    // The camp kitchen: the cook ladles out slop at the morning and evening meal (one bowl each).
+    slop: { reach: 90, heal: 15, healSec: 6, servingSec: 120 }, // serving for this long after each bell
   },
   robbery: {
     atm: { sec: 5, min: 150, max: 400, cooldownSec: 300, needsGun: false, noDepositSec: 300 }, // noDepositSec: you can't pay the cash straight back in at the ATM you robbed
@@ -624,6 +660,46 @@ export const config = Object.freeze({
     tradeReach: 110,
     respawnSec: 120,
   },
+  // Wolves: at nightfall packsPerNight packs come out of forests in the country (never in town), each
+  // packSize strong, and pad about their den. Come within `sight` of one on foot and the pack runs you
+  // down (faster than you can sprint); each bite takes biteShare of your max health. They leave anyone in
+  // a car alone, a car hitting one at speed kills it, and they don't chase past `leash` from their den.
+  // At dawn they're gone (see src/game/wolves.js).
+  wolves: {
+    packsPerNight: 5,
+    packSize: [3, 5],
+    radius: 16,
+    health: 60,
+    wanderSpeed: 55,
+    runSpeed: 370,
+    wanderSec: [3, 8],
+    sight: 300,
+    biteReach: 12,
+    biteShare: 0.28,
+    biteCooldownSec: 0.6,
+    leash: 1500,
+    spawnClear: 900, // dens with nobody this close are picked first
+  },
+  // Stray cats round town (by the dumpsters, the panelkas, on the pavements; a couple at the prison and
+  // the farms). They keep their distance from strangers — unless you've a fish in hand. Feed one a fish
+  // (E) and it follows you about for friendSec; then you can pick it up (E, hands full: no guns or
+  // tools; it wriggles free after holdSec) and pet it (P).
+  cats: {
+    count: 20,
+    radius: 10,
+    reach: 70, // to feed, pick up or pet one
+    wanderSpeed: 40,
+    runSpeed: 300,
+    followSpeed: 260,
+    shyRange: 130, // a stranger this close (without a fish) and it's off
+    curiousRange: 320, // a fish in hand: it comes over from this far
+    homeRange: 300, // strays keep round their spot
+    friendSec: 240,
+    holdSec: 45,
+    petCooldownSec: 1.2,
+  },
+  // Feeding crows: wheat in hand, E near a flock — they land round you and stay calm while you're there.
+  crows: { reach: 350 },
   hires: {
     barVodkaPrice: 250, // a bottle of vodka from the barman (cash): dear — no questions asked
     reach: 130, // from the barman's centre to your edge (same as a market's, which the client's E prompt uses)

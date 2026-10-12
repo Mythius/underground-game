@@ -9,6 +9,7 @@ import { randRange } from '../utils/math.js';
 //   doors:     every doorway gap, with the outward direction for outside doors
 //   npc:       where a shopkeeper stands (centre and facing), for buildings that sell food
 
+const PRISON_CELLS = 8; // the cell block's cells (2 bunks each), in two rows
 const MIN_DOOR = 90; // comfortably wider than a starting player (40)
 
 // Doorways recorded while a layout is being built (layouts are built one at a time).
@@ -605,8 +606,10 @@ export const BUILDING_TYPES = {
   // Two barbed-wire fences with a raked "death strip" between them and watchtowers on the corners.
   // Inside: the coal face (west half), barracks and the boiler house with its coal bunker (east), a
   // parade ground, and the gatehouse (КПП) in the south fence, where the warden stands at a counter
-  // between the visitors' room (from the road) and the prisoners' side. Escape: the door in the inner
-  // fence opens with a guard's key; the one in the outer fence has to be picked.
+  // between the visitors' room (from the road) and the prisoners' side. Against the south fence: the
+  // cell block west of the gatehouse (two rows of cells either side of a corridor) and the kitchen
+  // east of it. Escape: the door in the inner fence opens with a guard's key; the one in the outer
+  // fence has to be picked.
   prison: (size = { w: 1800, h: 1800 }) => {
     const { w, h } = size;
     const T = 6, S = 100, gx = Math.round(w / 2);
@@ -637,17 +640,53 @@ export const BUILDING_TYPES = {
     ];
     // Watchtowers: the corners of the strip, and halfway down the long sides of a big camp.
     const towers = [[S / 2, S / 2], [w - S / 2, S / 2], [S / 2, h - S / 2], [w - S / 2, h - S / 2], ...(h > 1300 ? [[S / 2, h / 2], [w - S / 2, h / 2]] : [])].map(([x, y]) => ({ x: Math.round(x), y: Math.round(y) }));
+    // The cell block: two rows of cells facing each other across a corridor that opens toward the
+    // gatehouse, against the south fence west of it.
+    const yard = h - S - T; // the inside edge of the south fence
+    const CH = 100, BH = 3 * CH; // a cell's depth; the block (cells, corridor, cells)
+    const blockTop = yard - BH;
+    const cellX1 = gh.x - 20;
+    const perRow = Math.max(1, Math.min(Math.ceil(PRISON_CELLS / 2), Math.floor((cellX1 - S - 20) / 115)));
+    const cw = Math.min(140, Math.floor((cellX1 - S - 20) / perRow));
+    const cellX0 = cellX1 - perRow * cw;
+    const concrete = '#7d7a72';
+    const cellRows = [{ y: blockTop, doorY: blockTop + CH - 10, ny: 1 }, { y: yard - CH, doorY: yard - CH, ny: -1 }];
+    const cells = cellRows.flatMap((r) => Array.from({ length: perRow }, (_, k) => ({ x: cellX0 + k * cw + 10, y: r.y + 10, w: cw - 20, h: CH - 20 })));
+    const cellDoors = cellRows.flatMap((r) => Array.from({ length: perRow }, (_, k) => ({ x: cellX0 + (k + 0.5) * cw, y: r.doorY + 5 })));
+    const doorsAlong = Array.from({ length: perRow }, (_, k) => ({ at: (k + 0.5) / perRow, width: 60 }));
+    const cellWalls = [
+      ...wallLine(true, blockTop, cellX0, cellX1, 10), // the top row's back wall
+      ...wallLine(true, blockTop + CH - 10, cellX0, cellX1, 10, doorsAlong), // the top row's barred fronts
+      ...wallLine(true, yard - CH, cellX0, cellX1, 10, doorsAlong), // the bottom row's
+      ...wallLine(false, cellX0, blockTop + CH, yard - CH, 10), // the corridor's blind end
+      ...Array.from({ length: perRow + 1 }, (_, k) => [
+        ...wallLine(false, Math.min(cellX0 + k * cw, cellX1 - 10), blockTop + 10, blockTop + CH - 10, 10),
+        ...wallLine(false, Math.min(cellX0 + k * cw, cellX1 - 10), yard - CH + 10, yard, 10),
+      ]).flat(),
+    ].map((r) => ({ ...r, c: concrete }));
+    // The kitchen: east of the gatehouse, past the truck gates; the cook ladles slop over the counter.
+    const kw = 320, kh = 200;
+    const kx = Math.min(w - S - 20 - kw, gx + 430), ky = yard - kh;
+    const kitchenWalls = [
+      ...wallLine(true, ky, kx, kx + kw, 12, door(0.5, 60)), // (inside the wire: not an outside door)
+      ...wallLine(true, yard - 12, kx, kx + kw, 12),
+      ...wallLine(false, kx, ky + 12, yard - 12, 12),
+      ...wallLine(false, kx + kw - 12, ky + 12, yard - 12, 12),
+      { x: kx + 40, y: ky + 112, w: kw - 80, h: 16, c: '#8a8f94' }, // the serving counter
+    ].map((r) => ({ c: '#8b5a4a', ...r }));
+    const cook = { x: kx + kw / 2, y: ky + 150 };
+    const serve = { x: kx + kw / 2, y: ky + 80 };
     // East half: barracks (as many as fit) above the boiler house; the coal face fills the west half.
     const ex0 = gx + 60, ex1 = w - S - 110, top = S + 110;
     const boiler = { w: 250, h: 190 };
-    const room = gh.y - 110 - top - boiler.h; // above the boiler house, which stays clear of the guards' walk
+    const room = blockTop - 90 - top - boiler.h; // above the boiler house, which stays clear of the guards' walk
     const huts = Math.max(0, Math.min(3, Math.floor(room / 220)));
     const hutW = Math.min(560, ex1 - ex0);
     const barracks = Array.from({ length: huts }, (_, i) => ({ x: ex0, y: top + i * 220, w: hutW, h: 160 }));
     boiler.x = ex0;
     boiler.y = top + huts * 220;
     const hopper = { x: boiler.x - 75, y: boiler.y + 45 }; // the coal bunker, by the boiler house's side door
-    const mine = { x: S + 50, y: S + 50, w: gx - 70 - (S + 50), h: gh.y - 200 - (S + 50) };
+    const mine = { x: S + 50, y: S + 50, w: gx - 70 - (S + 50), h: blockTop - 70 - (S + 50) };
     const parade = { x: gx - 160, y: gh.y - 170, w: 320, h: 140 };
     const wood = '#6e5a44', brick = '#8b4a3a';
     const hutWalls = barracks.flatMap((b) => [
@@ -667,7 +706,7 @@ export const BUILDING_TYPES = {
     const railY = mine.y + mine.h + 30;
     return {
       w, h,
-      walls: [...fences, ...gates, ...gatehouse, ...hutWalls, ...boilerWalls, ...towers.map((t) => ({ x: t.x - 20, y: t.y - 20, w: 40, h: 40, c: '#4a3a2a', tower: true, low: true })), // (the snipers shoot from up top)
+      walls: [...fences, ...gates, ...gatehouse, ...hutWalls, ...boilerWalls, ...cellWalls, ...kitchenWalls, ...towers.map((t) => ({ x: t.x - 20, y: t.y - 20, w: 40, h: 40, c: '#4a3a2a', tower: true, low: true })), // (the snipers shoot from up top)
         { x: hopper.x - 35, y: hopper.y - 35, w: 70, h: 70, c: '#55514c', bunker: true }],
       decor: [
         { x: 0, y: 0, w, h, c: '#a39579', rake: true }, // the raked death strip
@@ -685,6 +724,16 @@ export const BUILDING_TYPES = {
         { x: boiler.x + 12, y: boiler.y + 12, w: boiler.w - 24, h: boiler.h - 24, c: '#5a5652' },
         { x: boiler.x + 40, y: boiler.y + 45, w: 110, h: 100, c: '#2c2c2e', round: true }, // the boiler
         { x: boiler.x + 160, y: boiler.y + 120, w: 60, h: 45, c: '#1f1d1c', round: true }, // coal by the firebox
+        { x: cellX0, y: blockTop, w: cellX1 - cellX0, h: BH, c: '#8a877f' }, // the cell block's concrete floor
+        ...cells.flatMap((c) => [ // two bunks in each, along the side walls
+          { x: c.x + 4, y: c.y + 6, w: 26, h: c.h - 12, c: '#4f4f47' },
+          { x: c.x + c.w - 30, y: c.y + 6, w: 26, h: c.h - 12, c: '#4f4f47' },
+          { x: c.x + c.w / 2 - 8, y: c.y + (c.y < blockTop + CH ? 4 : c.h - 20), w: 16, h: 16, c: '#b9b6ad', round: true }, // the bucket
+        ]),
+        { x: kx + 12, y: ky + 12, w: kw - 24, h: kh - 24, c: '#a69f92' }, // the kitchen's tiled floor
+        { x: kx + 30, y: yard - 50, w: 90, h: 34, c: '#2f3133' }, { x: kx + kw - 120, y: yard - 50, w: 90, h: 34, c: '#2f3133' }, // the stoves
+        { x: kx + 60, y: yard - 48, w: 30, h: 30, c: '#8f949a', round: true }, { x: kx + kw - 90, y: yard - 48, w: 30, h: 30, c: '#8f949a', round: true }, // the slop pots
+        { x: kx + 30, y: ky + 30, w: 110, h: 30, c: '#6b4a2e' }, { x: kx + kw - 140, y: ky + 30, w: 110, h: 30, c: '#6b4a2e' }, // tables
       ],
       roofDecor: [{ ...chimney, c: brick, chimney: true }], // (smoke only: the camp has no roof of its own)
       roofs: [
@@ -692,6 +741,8 @@ export const BUILDING_TYPES = {
         { x: boiler.x - 6, y: boiler.y - 6, w: boiler.w + 12, h: boiler.h + 12, c: '#5d6166', pattern: 'metal', ridge: true },
         { ...chimney, c: '#9b4a3a', round: true },
         { x: gh.x - 6, y: gh.y - 6, w: gh.w + 12, h: gh.h + 12, c: '#5f6a60', pattern: 'metal' },
+        { x: cellX0 - 6, y: blockTop - 6, w: cellX1 - cellX0 + 12, h: BH + 6, c: '#5d6166', pattern: 'metal' },
+        { x: kx - 6, y: ky - 6, w: kw + 12, h: kh + 6, c: '#6a5048', pattern: 'metal', ridge: true },
         ...towers.map((t) => ({ x: t.x - 34, y: t.y - 34, w: 68, h: 68, c: '#5b4630', pattern: 'planks', tower: true })),
       ],
       npc: { x: gx, y: cy, angle: -Math.PI / 2, role: 'warden' },
@@ -703,7 +754,11 @@ export const BUILDING_TYPES = {
         keyDoor: { x: S + 0.6 * (w - 2 * S), y: S + T / 2 },
         outerDoor: { x: 0.85 * w, y: T / 2 },
         inner: { x: S, y: S, w: w - 2 * S, h: h - 2 * S },
-        patrol: [[S + 56, S + 56], [w - S - 56, S + 56], [w - S - 56, gh.y - 40], [S + 56, gh.y - 40]].map(([x, y]) => ({ x, y })),
+        patrol: [[S + 56, S + 56], [w - S - 56, S + 56], [w - S - 56, blockTop - 45], [S + 56, blockTop - 45]].map(([x, y]) => ({ x, y })),
+        cells, // inside each cell (rects)
+        cellDoors, // where each cell's door is
+        block: { x: cellX0, y: blockTop, w: cellX1 - cellX0, h: BH },
+        cook, serve,
         towers,
       },
       floor: '#6a6259', wall: '#7a7a7a', roof: '#6a6259', pattern: 'none', label: 'ИТК-7',
@@ -881,7 +936,8 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
 function prisonSpots(spots, move) {
   const at = ({ x, y }) => { const r = move({ x, y, w: 0, h: 0 }); return { x: r.x, y: r.y }; };
   const out = {};
-  for (const [k, v] of Object.entries(spots)) out[k] = Array.isArray(v) ? v.map(at) : v.w !== undefined ? (({ x, y, w, h }) => ({ x, y, w, h }))(move(v)) : at(v);
+  const rect = (v) => (({ x, y, w, h }) => ({ x, y, w, h }))(move(v));
+  for (const [k, v] of Object.entries(spots)) out[k] = Array.isArray(v) ? v.map((e) => (e.w !== undefined ? rect(e) : at(e))) : v.w !== undefined ? rect(v) : at(v);
   return out;
 }
 

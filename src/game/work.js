@@ -56,7 +56,7 @@ export class Work {
     for (const p of w.players.values()) {
       p.swingCooldown = Math.max(0, (p.swingCooldown ?? 0) - dt);
       const tool = p.tool;
-      if (!tool || !p.input.fire || p.vehicle || p.carrying || p.hidden || p.swingCooldown > 0) continue;
+      if (!tool || !p.input.fire || p.vehicle || p.carrying || p.holdingCat || p.hidden || p.swingCooldown > 0) continue;
       p.swingCooldown = config.work.swingSec;
       this.#swing(p, tool);
     }
@@ -117,6 +117,28 @@ export class Work {
       this.events.push({ player: p, kind: 'gathered', items: yieldOf });
     } else best.hp -= 1;
     this.changed.push(best);
+  }
+
+  /** Free nodes at site `siteId` that a tool of `tool` works (for the NPC hands). */
+  workable(siteId, tool) {
+    const kinds = KIND_OF_TOOL[tool] ?? [];
+    const out = [];
+    for (const n of this.nodes.values()) {
+      if (n.site !== siteId || n.hp <= 0 || !kinds.includes(n.kind)) continue;
+      if (n.kind === 'wheat' && this.world.frozen) continue;
+      out.push(n);
+    }
+    return out;
+  }
+
+  /** An NPC's swing at node `n`: what it gave if that worked it out, else null. */
+  hit(n) {
+    if (n.hp <= 0) return null;
+    n.hp -= 1;
+    this.changed.push(n);
+    if (n.hp > 0) return null;
+    n.readyAt = this.time + config.work.regrowSec[n.kind];
+    return this.#yield(n);
   }
 
   /** What a node gives when it's worked out (a little luck at the rock face). */

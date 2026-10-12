@@ -131,16 +131,11 @@ test('they buy all your vodka, at three times what it is worth', () => {
   assert.equal(world.hires.sellVodka(p, g.id), 'no_vodka');
 });
 
-test('they go about in pairs: the second sticks with the first', () => {
+test('they go about on their own, not in pairs', () => {
   const world = town();
   const gs = gangsters(world);
-  assert.ok(gs.every((g) => g.partner && g.partner.partner === g), 'everyone has a mate');
-  const [a] = gs;
-  const b = a.partner;
-  const [lead, mate] = a.id < b.id ? [a, b] : [b, a];
-  Object.assign(mate, { x: lead.x + 600, y: lead.y }); // drifted apart
-  run(world, 15);
-  assert.ok(Math.hypot(mate.x - lead.x, mate.y - lead.y) < 150, `back at his shoulder (${Math.round(Math.hypot(mate.x - lead.x, mate.y - lead.y))})`);
+  assert.ok(gs.length > 1);
+  assert.ok(gs.every((g) => !g.partner), 'nobody has a mate');
 });
 
 test('the police and the gangsters leave each other be; goons and guards go for gangsters on sight', () => {

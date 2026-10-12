@@ -130,8 +130,8 @@ test('markets breathe back toward normal stock over time', () => {
   assert.ok(depot.goods.steel.stock > 5);
   const camp = eco.markets.get(byType('logging').id);
   camp.goods.logs.stock = 0;
-  world.step(20);
-  assert.ok(camp.goods.logs.stock >= config.work.npcProducePerSec * 20 * 0.9, 'raw sites produce (work sites slowly: players do most of it)');
+  for (let i = 0; i < 150 * 4; i++) world.step(1 / 4);
+  assert.ok(camp.goods.logs.stock > 0, 'the hands bring logs in to the foreman');
 });
 
 test('anyone can have their own goods processed at a city factory for a fee', () => {

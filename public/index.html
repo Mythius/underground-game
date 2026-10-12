@@ -501,7 +501,7 @@
   <div id="jobhud" hidden></div>
   <div id="wanted" hidden></div>
   <div id="crimebar" hidden><span></span><div class="bar"><i></i></div></div>
-  <div id="prisonbar" hidden><span></span><div class="bar"><i></i></div><small>Dig coal at the coal face, tip it into the bunker by the boiler house · or pay the warden at the gatehouse</small></div>
+  <div id="prisonbar" hidden><span></span><div class="bar"><i></i></div><small>Dig coal at the coal face, tip it into the bunker by the boiler house · or pay the warden at the gatehouse · back in your cell at lights out · slop at the kitchen when the bell rings</small></div>
   <div id="jailscreen" hidden><div>🔒 In jail <span id="jail-time"></span><small>You couldn't make bail. You'll be let out when your time's up.</small></div></div>
   <div id="fuel-gauge" hidden></div>
   <div id="bankpanel" hidden role="dialog" aria-label="Bank">
@@ -628,6 +628,7 @@
     let carBoost = { perVodka: 25, burnPerSec: 6, accel: 1.9, topSpeed: 1.35 }; // vodka in the boost tank (Space); the server's figures replace these
     let knockDecay = 6; // how fast a player thrown by a car slows (config.vehicles.knockDecay)
     let fishCfg = { rodPrice: 150, pulls: 3, lineReach: 40, cast: [70, 240] };
+    let catCfg = { reach: 70 }, crowCfg = { reach: 350 };
     let myFish = null; // my line: { v: [x, y] waiting | [x, y, t, cycle, from, to, pulls] fighting, at: when it came }
     let otherLines = []; // [player id, float x, float y, fighting] for other people fishing nearby
     const furn = { list: [], kinds: {}, cabinetSlots: 10, reach: 50 }; // placed cabinets, beds, sofas: [id, kind, x, y, w, h, rot, building, owner]
@@ -667,6 +668,8 @@
       setBrokenAtms(msg.brokenAtms);
       if (msg.visionSec) visionSec = msg.visionSec;
       if (msg.fishing) fishCfg = msg.fishing;
+      if (msg.cats) catCfg = msg.cats;
+      if (msg.crows) crowCfg = msg.crows;
       if (msg.furnish) Object.assign(furn, msg.furnish);
       if (msg.shop) shop = msg.shop;
       if (msg.bank) bankData = msg.bank;
@@ -797,6 +800,15 @@
           }
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
           if (msg.kind === 'prison_out') { sfx('doorOpen'); toast(msg.how === 'served' ? '🔓 Quota met — the warden hands your things back. Free to go.' : msg.by ? `🔓 ${msg.by} paid your bail — the warden hands your things back. Free to go.` : '🔓 Bail paid — the warden hands your things back. Free to go.', 5000); }
+          if (msg.kind === 'cat_fed') { sfx('meow'); sfx('eat', null, 0.5); toast('🐟 The cat wolfs it down — it\'s taken a liking to you (E: pick it up · P: pet)'); }
+          if (msg.kind === 'cat_pet') sfx('purr');
+          if (msg.kind === 'cat_free') { sfx('meow'); toast('🐈 The cat wriggles free and hops down'); }
+          if (msg.kind === 'lights_out') { sfx('whistle'); toast(`🌙 Lights out! Back to your cell — the guards come for anyone still out in ${msg.sec} s`, 6000); }
+          if (msg.kind === 'curfew_warn') { sfx('whistle'); toast(`🌙 "Back in your cell!" — ${msg.sec} s`, 4000); }
+          if (msg.kind === 'clubbed') { sfx('hurt'); toast(`🦯 A guard's baton — get back in your cell! +${msg.extra} coal (quota ${msg.quota})`, 3000); }
+          if (msg.kind === 'cells_open') { sfx('doorOpen'); toast('🌅 Morning — the cells are open. Back to the coal face.'); }
+          if (msg.kind === 'meal_bell') { sfx('campBell'); toast(`🔔 ${msg.meal === 'supper' ? 'Supper' : 'Breakfast'} — slop at the kitchen hatch (east of the gatehouse)`, 5000); }
+          if (msg.kind === 'slop') toast('🥣 A bowl of slop. It\'s… warm.');
           if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
           if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the inner fence (north side) opens with it', 5000); }
           if (msg.kind === 'key_caught') { sfx('error'); toast(`👮 The guard caught your hand — ${msg.extra} more coal on your quota (${msg.quota})`, 4000); }
@@ -820,12 +832,14 @@
             sfx('catch');
             toast(msg.what === 'player' ? `🪝 You reeled in ${msg.name}'s ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!` : msg.what === 'fish' ? '🐟 You landed a fish!' : msg.what === 'food' ? `🎣 Not a fish… ${shop.menu[msg.item]?.name ?? 'something to eat'}, still wrapped` : `🎣 Not a fish… a ${weapons[msg.item]?.name ?? 'gun'} someone threw in the water!`);
           }
-          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
+          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
+          if (msg.kind === 'wolves') { sfx('growl'); addShake(2); toast('🐺 Wolves! They\'re faster than you — get in a car, or fight them off'); }
           if (msg.kind === 'hooked_by') { sfx('hooked'); toast(`🪝 ${msg.name} has hooked you with a fishing line! Walk away to snap it before they reel something in`); }
           if (msg.kind === 'hook_free') toast(msg.escaped ? '🪝 You pulled free of the line' : '🪝 The line came off you');
           if (msg.kind === 'hooked_robbed') { sfx('error'); toast(`🪝 ${msg.name} reeled in your ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!`); }
           if (msg.kind === 'fish_reeled' && msg.why === 'moved') toast('The line came in');
+          if (msg.kind === 'fish_reeled' && msg.why === 'frozen') toast('🧊 The lake froze over — the line came in');
           if (msg.kind === 'tool_returned') toast(`${TOOL_ICONS[msg.tool] ?? ''} You left the site — the ${TOOL_NAMES[msg.tool]?.toLowerCase() ?? 'tool'} went back to the foreman`);
           if (msg.kind === 'gathered') { sfx('pickup', null, 0.6); toast(`+ ${Object.entries(msg.items).map(([g, q]) => `${q} ${gi(g)}`).join(' ')}`); }
           if (msg.kind === 'body_found') toast('⚠️ Someone found a body you left — keep away from it');
@@ -1565,9 +1579,13 @@
       atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
       one_per_size: 'You already own a warehouse this size — one of each size each',
       load_saved_instead: 'You have a saved factory this size — load it here instead of buying (📦 button)',
-      no_water: '🎣 Aim at a river or lake, close to the bank, and click to cast',
+      get no_water() { return lakesFrozen() ? '🎣 The lakes are frozen — find a river to fish in' : '🎣 Aim at a river or lake, close to the bank, and click to cast'; },
       no_rod: 'Select your fishing rod first',
       have_rod: 'You already have a fishing rod',
+      no_fish: '🐟 Hold a fish to feed the cat (catch one with a rod)',
+      cat_wary: '🐈 It backs off with a hiss — feed it a fish first',
+      no_cat: "You're not holding a cat",
+      no_wheat: '🌾 Hold some wheat to feed the crows',
       busy: "You can't do that right now",
       no_room: 'Not enough cargo space — bring a car or truck',
       sold_out: 'Sold out here right now',
@@ -2912,6 +2930,20 @@
     let bodyOpen = null; // { id, data }
     const latestBodies = () => snapshots.at(-1)?.bodies ?? new Map();
 
+    // ---- stray cats: the nearest one within reach, the one in my arms, and a fish in my hand ----
+    const holdingFish = () => { const s = inv[selectedSlot]; return isGoods(s) && s[1] === 'fish'; };
+    const heldCat = () => { for (const [id, c] of snapshots.at(-1)?.cats ?? []) if (c.heldBy === myId) return { id, ...c }; return null; };
+    function nearestCat() {
+      if (!me || me.car || riding) return null;
+      let best = null;
+      for (const [id, c] of snapshots.at(-1)?.cats ?? []) {
+        if (c.heldBy) continue;
+        const d = Math.hypot(c.x - me.x, c.y - me.y) - radiusOf(me.mass);
+        if (d < catCfg.reach && (!best || d < best.d)) best = { id, ...c, d };
+      }
+      return best;
+    }
+
     function nearestBody() {
       if (!me || me.car || riding) return null;
       let best = null, bd = Infinity;
@@ -3716,6 +3748,299 @@
     /** Which way a watchtower's searchlight points: a slow sweep, each tower out of step. */
     const towerBeam = (x, y, now) => ((x * 31 + y * 17) % 628) / 100 + Math.sin(now / 2600 + x * 0.013 + y * 0.007) * 1.6;
 
+    // ---- wolves: grey shapes padding about the woods at night; only their eyes show in the dark ----
+    let shownWolves = new Map();
+    const wolfAudio = { nextHowl: 0, nextGrowl: 0 };
+
+    /** A wolf from above: tail, body, legs (trotting), head with ears and snout. */
+    function drawWolf(wf, id, now) {
+      const R = 16;
+      ctx.save();
+      ctx.translate(wf.x, wf.y);
+      ctx.rotate(wf.angle);
+      const gait = Math.sin(now / (wf.running ? 55 : 160) + id) * (wf.running ? 1 : 0.5);
+      ctx.fillStyle = 'rgba(0, 0, 0, .25)';
+      ctx.beginPath(); ctx.ellipse(2, 3, R * 1.5, R * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4f4b47';
+      for (const [lx, side] of [[R * 0.8, 1], [R * 0.8, -1], [-R * 0.8, 1], [-R * 0.8, -1]]) { // legs
+        const swing = gait * R * 0.35 * side * (lx > 0 ? 1 : -1);
+        ctx.beginPath(); ctx.ellipse(lx + swing, side * R * 0.55, R * 0.28, R * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.strokeStyle = '#5d5853'; ctx.lineWidth = R * 0.32; ctx.lineCap = 'round'; // tail
+      ctx.beginPath(); ctx.moveTo(-R * 1.2, 0); ctx.quadraticCurveTo(-R * 1.8, gait * R * 0.4, -R * 2.3, gait * R * 0.2); ctx.stroke();
+      const fur = ctx.createLinearGradient(0, -R * 0.6, 0, R * 0.6);
+      fur.addColorStop(0, '#7d7770'); fur.addColorStop(0.5, '#5f5a54'); fur.addColorStop(1, '#7d7770');
+      ctx.fillStyle = fur;
+      ctx.beginPath(); ctx.ellipse(0, 0, R * 1.35, R * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#6a655f';
+      ctx.beginPath(); ctx.arc(R * 1.25, 0, R * 0.5, 0, Math.PI * 2); ctx.fill(); // head
+      ctx.beginPath(); ctx.ellipse(R * 1.75, 0, R * 0.38, R * 0.22, 0, 0, Math.PI * 2); ctx.fill(); // snout
+      ctx.fillStyle = '#1c1a18';
+      ctx.beginPath(); ctx.arc(R * 2.1, 0, R * 0.09, 0, Math.PI * 2); ctx.fill(); // nose
+      ctx.fillStyle = '#4a4642';
+      for (const side of [1, -1]) { ctx.beginPath(); ctx.moveTo(R * 1.05, side * R * 0.2); ctx.lineTo(R * 0.95, side * R * 0.62); ctx.lineTo(R * 1.3, side * R * 0.36); ctx.closePath(); ctx.fill(); } // ears
+      ctx.restore();
+    }
+
+    // ---- stray cats: from above — a furry oval, a round head with pointed ears, a swishing tail ----
+    const CAT_COATS = [['#d9883a', '#b8692a'], ['#26262a', '#3a3a40'], ['#8c8f96', '#6e7178'], ['#f2efe8', '#d8d3c8'], ['#f2efe8', '#d9883a'], ['#8a6a48', '#5e4630']]; // ginger, black, grey, white, calico, brown tabby
+    function drawCat(c, id, now, held = false) {
+      const R = 10;
+      const [coat, mark] = CAT_COATS[c.look % CAT_COATS.length];
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.angle);
+      if (held) ctx.scale(0.85, 0.85);
+      const sitting = c.move === 0 || held;
+      const gait = c.move ? Math.sin(now / (c.move === 2 ? 45 : 110) + id) : 0;
+      if (!held) {
+        ctx.fillStyle = 'rgba(0, 0, 0, .25)';
+        ctx.beginPath(); ctx.ellipse(1.5, 2.5, R * (sitting ? 1 : 1.35), R * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = shade(coat, 0.8);
+      if (c.move) for (const [lx, side] of [[R * 0.7, 1], [R * 0.7, -1], [-R * 0.7, 1], [-R * 0.7, -1]]) { // paws
+        ctx.beginPath(); ctx.arc(lx + gait * R * 0.3 * side * (lx > 0 ? 1 : -1), side * R * 0.5, R * 0.2, 0, Math.PI * 2); ctx.fill();
+      }
+      // The tail: swishing behind when walking, curled round when sitting, hanging down when held.
+      const swish = Math.sin(now / 380 + id * 1.3);
+      ctx.strokeStyle = mark; ctx.lineWidth = R * 0.32; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-R * (sitting ? 0.6 : 1.1), 0);
+      if (held) ctx.quadraticCurveTo(-R * 1.4, R * 0.2, -R * 1.6, R * 0.9 + swish * R * 0.2);
+      else if (sitting) ctx.quadraticCurveTo(-R * 1.2, R * 1.1, R * 0.1, R * 0.95 + swish * R * 0.1);
+      else ctx.quadraticCurveTo(-R * 1.7, swish * R * 0.7, -R * 2.2, swish * R * 0.4 + gait * R * 0.2);
+      ctx.stroke();
+      ctx.fillStyle = coat; // body
+      ctx.beginPath(); ctx.ellipse(sitting ? -R * 0.1 : 0, 0, R * (sitting ? 0.85 : 1.15), R * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = mark; // stripes / patches
+      for (const k of [-0.5, 0, 0.5]) { ctx.beginPath(); ctx.ellipse(R * k * (sitting ? 0.8 : 1), 0, R * 0.12, R * 0.5, 0, 0, Math.PI * 2); ctx.fill(); }
+      const hx = sitting ? R * 0.75 : R * 1.1;
+      ctx.fillStyle = coat;
+      ctx.beginPath(); ctx.arc(hx, 0, R * 0.48, 0, Math.PI * 2); ctx.fill(); // head
+      for (const side of [1, -1]) { // ears
+        ctx.beginPath(); ctx.moveTo(hx - R * 0.15, side * R * 0.18); ctx.lineTo(hx - R * 0.05, side * R * 0.62); ctx.lineTo(hx + R * 0.25, side * R * 0.3); ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle = '#e8909a';
+      ctx.beginPath(); ctx.arc(hx + R * 0.44, 0, R * 0.07, 0, Math.PI * 2); ctx.fill(); // nose
+      ctx.restore();
+      if (c.petted) { // hearts drifting up
+        const t = (now / 900 + id * 0.37) % 1;
+        ctx.save();
+        ctx.globalAlpha = 1 - t;
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('❤️', c.x + Math.sin(t * 6 + id) * 6, c.y - 18 - t * 26);
+        ctx.restore();
+      }
+    }
+
+    /** Cats on the ground (before people, who walk over them) or held (after: in someone's arms). */
+    function drawCats(view, shown, now, held) {
+      for (const [id, c] of view.cats ?? []) {
+        if ((c.move === 3) !== held) continue;
+        let at = c;
+        if (held) { // in front of whoever's holding it, cradled against their chest
+          const p = shown.get(c.heldBy);
+          if (!p) continue;
+          const a = p.aim ?? c.angle;
+          at = { ...c, x: p.x + Math.cos(a) * p.r * 0.55, y: p.y + Math.sin(a) * p.r * 0.55, angle: a + Math.PI / 2 };
+        }
+        if (at.x < viewBox.l - 40 || at.x > viewBox.r + 40 || at.y < viewBox.t - 40 || at.y > viewBox.b + 40) continue;
+        drawCat(at, id, now, held);
+      }
+    }
+
+    /** Where a wolf's eyes are, in the world. */
+    const wolfEyes = (wf) => {
+      const R = 16, fx = Math.cos(wf.angle), fy = Math.sin(wf.angle);
+      return [1, -1].map((side) => ({ x: wf.x + fx * R * 1.45 - fy * side * R * 0.22, y: wf.y + fy * R * 1.45 + fx * side * R * 0.22 }));
+    };
+
+    /** Glowing eyes, drawn over the night's darkness (even under the trees), each pair blinking now and then. */
+    function drawWolfEyes(now, w, h, ox, oy, glow) {
+      if (!shownWolves.size) return;
+      const toScreen = (x, y) => ({ x: (x + ox - w / 2) * viewZ + w / 2, y: (y + oy - h / 2) * viewZ + h / 2 });
+      for (const [id, wf] of shownWolves) {
+        if ((now / 1000 + id * 1.7) % 5 < 0.15) continue; // a blink
+        for (const e of wolfEyes(wf)) {
+          const s = toScreen(e.x, e.y);
+          if (s.x < -20 || s.y < -20 || s.x > w + 20 || s.y > h + 20) continue;
+          const r = 9 * viewZ;
+          const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+          g.addColorStop(0, `rgba(255, 255, 210, ${glow})`);
+          g.addColorStop(0.25, `rgba(230, 240, 90, ${0.9 * glow})`);
+          g.addColorStop(1, 'rgba(200, 220, 40, 0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
+    /** A howl from the woods now and then; a snarl when they're running at me. */
+    function wolfSounds(now) {
+      if (!shownWolves.size) return;
+      const list = [...shownWolves.values()];
+      if (now > wolfAudio.nextHowl) {
+        if (wolfAudio.nextHowl) { const wf = list[Math.floor(Math.random() * list.length)]; if (!wf.running) sfx('howl', wf); }
+        wolfAudio.nextHowl = now + 12000 + Math.random() * 20000;
+      }
+      if (me && playing && now > wolfAudio.nextGrowl) {
+        const close = list.find((wf) => wf.running && Math.hypot(wf.x - me.x, wf.y - me.y) < 260);
+        if (close) { sfx('growl', close, 0.8); wolfAudio.nextGrowl = now + 1400 + Math.random() * 800; }
+      }
+    }
+
+    // ---- crows: flocks pecking about the fields in the country. Anyone walking or driving close, or a gunshot,
+    // sends them up flapping and cawing; they come back to the same field a while later. (Only drawn here:
+    // every client places the same flocks from the map, but each sees them fly off on its own.)
+    const crows = { key: null, flocks: [] };
+
+    /** Pick the flocks' fields: open ground well away from town (street lamps), roads, water, buildings and trees. */
+    function placeCrows() {
+      const key = `${world.width}x${world.height}:${terrain.trees.length}:${lamps.length}:${buildings.length}`;
+      if (crows.key === key) return;
+      crows.key = key;
+      crows.flocks = [];
+      const rnd = seeded((world.width * 7 + world.height * 13 + terrain.trees.length) % 2147483646 + 1);
+      const want = Math.max(6, Math.min(60, Math.round((world.width * world.height) / 2.5e6)));
+      for (let i = 0; i < want * 12 && crows.flocks.length < want; i++) {
+        const x = 150 + rnd() * (world.width - 300), y = 150 + rnd() * (world.height - 300);
+        if (lamps.some((l) => Math.hypot(l.x - x, l.y - y) < 900)) continue;
+        if (terrain.roads.some((r) => x > r.x - 60 && x < r.x + r.w + 60 && y > r.y - 60 && y < r.y + r.h + 60)) continue;
+        if (waterDistance(x, y).d < 60 || buildings.some((b) => x > b.x - 80 && x < b.x + b.w + 80 && y > b.y - 80 && y < b.y + b.h + 80)) continue;
+        if (terrain.trees.some((t) => Math.hypot(t.x - x, t.y - y) < t.canopy + 40)) continue;
+        if (crows.flocks.some((f) => Math.hypot(f.x - x, f.y - y) < 700)) continue;
+        crows.flocks.push({ x, y, n: 4 + Math.floor(rnd() * 6), birds: null, state: 'ground', back: 0, nextCaw: 0 });
+      }
+    }
+
+    /** Wheat in hand and a flock close by (sitting, flying off, or gone from its field nearby): it can be fed. */
+    function crowsToFeed() {
+      const s = inv[selectedSlot];
+      if (!me || me.car || riding || !isGoods(s) || s[1] !== 'wheat') return null;
+      let best = null, bd = crowCfg.reach;
+      for (const f of crows.flocks) {
+        const h = f.home ?? f, d = Math.min(Math.hypot(f.x - me.x, f.y - me.y), Math.hypot(h.x - me.x, h.y - me.y));
+        if (d < bd) [best, bd] = [f, d];
+      }
+      return best;
+    }
+
+    /** A handful of wheat tossed down: the flock flutters down round me and pecks at it, calm while I'm there. */
+    function feedCrows(f) {
+      f.home ??= { x: f.x, y: f.y };
+      const a = aimAngle();
+      f.x = me.x + Math.cos(a) * 60;
+      f.y = me.y + Math.sin(a) * 60;
+      f.fedUntil = performance.now() + 90000;
+      landFlock(f);
+      for (const c of f.birds) c.z = 0.6 + Math.random() * 0.4; // (they flutter down)
+      sfx('wings', f, 0.6);
+      setTimeout(() => sfx('caw', f, 0.6), 300);
+    }
+
+    function landFlock(f) {
+      f.state = 'ground';
+      f.birds = Array.from({ length: f.n }, () => {
+        const a = Math.random() * Math.PI * 2, d = Math.random() * 55;
+        return { x: f.x + Math.cos(a) * d, y: f.y + Math.sin(a) * d, a: Math.random() * Math.PI * 2, z: 0, vx: 0, vy: 0, hop: Math.random() * 3, peck: Math.random() * 10, delay: 0 };
+      });
+    }
+
+    function updateCrows(dt, view, now) {
+      placeCrows();
+      const night = daylight(clockNow(now)) < 0.3;
+      const threats = [];
+      for (const [id, p] of view.players ?? []) if (id !== myId) threats.push([p.x, p.y, 210]);
+      if (me && playing) threats.push([me.x, me.y, 210, true]);
+      for (const [, v] of view.vehicles ?? []) threats.push([v.x, v.y, 320]);
+      for (const [, b] of view.bullets ?? []) threats.push([b.x, b.y, 450]);
+      for (const [, wf] of view.wolves ?? []) threats.push([wf.x, wf.y, 220]);
+      for (const f of crows.flocks) {
+        const fed = f.fedUntil > now;
+        if (Math.abs(f.x - camera.x) > 2200 || Math.abs(f.y - camera.y) > 2200) { if (f.state === 'flying') { f.state = 'gone'; f.back = 0; f.birds = null; } continue; }
+        const offScreen = f.x < viewBox.l - 150 || f.x > viewBox.r + 150 || f.y < viewBox.t - 150 || f.y > viewBox.b + 150;
+        if (f.state === 'gone') { if (now > f.back && offScreen) { if (f.home && !fed) { f.x = f.home.x; f.y = f.home.y; } landFlock(f); } else continue; } // (back to their own field once the wheat's forgotten)
+        if (!f.birds) landFlock(f); // (first time near: already sitting there)
+        if (f.state === 'ground') {
+          const scare = threats.find(([x, y, r, mine]) => !(fed && mine) && Math.hypot(x - f.x, y - f.y) < r + 60); // (fed: I don't scare them)
+          if (scare) {
+            f.state = 'flying';
+            f.flewAt = now;
+            const away = Math.atan2(f.y - scare[1], f.x - scare[0]);
+            for (const c of f.birds) {
+              const a = away + (Math.random() - 0.5) * 1.4, sp = 170 + Math.random() * 90;
+              Object.assign(c, { vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, a, z: 0, delay: Math.random() * 0.35 });
+            }
+            sfx('wings', f);
+            sfx('caw', f);
+            setTimeout(() => sfx('caw', f, 0.7), 400 + Math.random() * 400);
+            continue;
+          }
+          for (const c of f.birds) { // pecking about (still at night)
+            if (c.z > 0) c.z = Math.max(0, c.z - dt * 1.2); // fluttering down to the wheat
+            if (night) continue;
+            c.peck += dt;
+            c.hop -= dt;
+            if (c.hop <= 0) {
+              c.hop = 1.5 + Math.random() * 4;
+              c.a += (Math.random() - 0.5) * 2;
+              const d = 6 + Math.random() * 12;
+              const nx = c.x + Math.cos(c.a) * d, ny = c.y + Math.sin(c.a) * d;
+              if (Math.hypot(nx - f.x, ny - f.y) < 70) { c.x = nx; c.y = ny; } else c.a += Math.PI;
+            }
+          }
+          if (!night && now > f.nextCaw) {
+            if (f.nextCaw && Math.random() < 0.5) sfx('caw', f, 0.5);
+            f.nextCaw = now + 15000 + Math.random() * 30000;
+          }
+        } else if (f.state === 'flying') {
+          for (const c of f.birds) {
+            if ((c.delay -= dt) > 0) continue;
+            c.x += c.vx * dt; c.y += c.vy * dt;
+            c.z = Math.min(1, c.z + dt * 0.8);
+            c.a = Math.atan2(c.vy, c.vx) + Math.sin(now / 400 + c.peck) * 0.15;
+          }
+          if (now - f.flewAt > 6000) { f.state = 'gone'; f.back = now + 45000 + Math.random() * 60000; f.birds = null; }
+        }
+      }
+    }
+
+    /** One crow from above: wings folded on the ground (head bobbing as it pecks), spread and flapping in the air. */
+    function drawCrow(c, now) {
+      const flying = c.z > 0, S = 7 * (1 + c.z * 0.35);
+      if (flying) { // its shadow on the ground, further off the higher it is
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.25 * (1 - c.z * 0.5)})`;
+        ctx.beginPath(); ctx.ellipse(c.x + c.z * 40, c.y + c.z * 55, 7, 4, c.a, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.a);
+      ctx.fillStyle = '#16161a';
+      if (flying) {
+        const flap = Math.sin(now / 55 + c.peck * 3);
+        for (const side of [1, -1]) {
+          ctx.beginPath();
+          ctx.moveTo(S * 0.3, 0);
+          ctx.quadraticCurveTo(0, side * S * (1.4 + flap * 0.6), -S * 0.6, side * S * (1.7 + flap * 0.8));
+          ctx.lineTo(-S * 0.5, side * S * 0.2);
+          ctx.closePath(); ctx.fill();
+        }
+      }
+      ctx.beginPath(); ctx.moveTo(-S * 0.7, 0); ctx.lineTo(-S * 1.3, -S * 0.35); ctx.lineTo(-S * 1.3, S * 0.35); ctx.closePath(); ctx.fill(); // tail
+      ctx.beginPath(); ctx.ellipse(0, 0, S * 0.85, S * 0.42, 0, 0, Math.PI * 2); ctx.fill(); // body
+      const bob = flying ? 0 : Math.max(0, Math.sin(c.peck * 4)) * S * 0.25;
+      ctx.beginPath(); ctx.arc(S * 0.75 + bob, 0, S * 0.32, 0, Math.PI * 2); ctx.fill(); // head
+      ctx.fillStyle = '#3a3530';
+      ctx.beginPath(); ctx.moveTo(S * 1.0 + bob, -S * 0.1); ctx.lineTo(S * 1.45 + bob, 0); ctx.lineTo(S * 1.0 + bob, S * 0.1); ctx.closePath(); ctx.fill(); // beak
+      ctx.restore();
+    }
+
+    function drawCrows(air, now) {
+      for (const f of crows.flocks) {
+        if (!f.birds || f.x < viewBox.l - 900 || f.x > viewBox.r + 900 || f.y < viewBox.t - 900 || f.y > viewBox.b + 900) continue;
+        for (const c of f.birds) if ((c.z > 0) === air) drawCrow(c, now);
+      }
+    }
+
     function drawSky(now, dt, w, h, cars) {
       const clock = clockNow(now);
       const light = daylight(clock);
@@ -3794,6 +4119,7 @@
         }
         ctx.drawImage(skyCanvas, 0, 0, w, h);
       }
+      drawWolfEyes(now, w, h, ox, oy, Math.max(0.35, dark / 0.86));
 
       // Snow in winter: big slow flakes drifting down.
       const snowing = season.main === 'winter'; // it never rains in winter
@@ -4019,6 +4345,14 @@
       splash: (o) => { noiseBurst(o, { dur: 0.3, filter: 'lowpass', freq: 1800, endFreq: 250, vol: 0.35 }); },
       reel: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.035, dur: 0.02, type: 'square', freq: 1500, vol: 0.05 }); },
       catch: (o) => { noiseBurst(o, { dur: 0.25, filter: 'lowpass', freq: 1500, endFreq: 300, vol: 0.3 }); tone(o, { at: 0.15, dur: 0.12, freq: 784, vol: 0.2 }); tone(o, { at: 0.27, dur: 0.22, freq: 1046, vol: 0.2 }); },
+      campBell: (o) => { for (const at of [0, 0.7, 1.4]) { tone(o, { at, dur: 1.2, type: 'triangle', freq: 880, endFreq: 870, vol: 0.18 }); tone(o, { at, dur: 0.9, freq: 2210, endFreq: 2190, vol: 0.05 }); } },
+      whistle: (o) => { tone(o, { dur: 0.35, freq: 2500, endFreq: 2700, vol: 0.12 }); tone(o, { at: 0.45, dur: 0.8, freq: 2600, endFreq: 2500, vol: 0.12 }); },
+      meow: (o) => { tone(o, { dur: 0.45, type: 'triangle', freq: 520, endFreq: 760, vol: 0.12, attack: 0.08 }); tone(o, { at: 0.3, dur: 0.35, type: 'triangle', freq: 760, endFreq: 430, vol: 0.1 }); },
+      purr: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.22, dur: 0.18, type: 'sawtooth', freq: 26, endFreq: 24, vol: 0.12, attack: 0.05 }); },
+      howl: (o) => { tone(o, { dur: 1.1, freq: 330, endFreq: 610, vol: 0.22, attack: 0.35 }); tone(o, { at: 1.0, dur: 1.7, freq: 610, endFreq: 370, vol: 0.22, attack: 0.1 }); tone(o, { dur: 2.6, type: 'triangle', freq: 660, endFreq: 760, vol: 0.03, attack: 0.6 }); },
+      growl: (o) => { noiseBurst(o, { dur: 0.7, filter: 'lowpass', freq: 380, vol: 0.7 }); tone(o, { dur: 0.7, type: 'sawtooth', freq: 85, endFreq: 62, vol: 0.18, attack: 0.08 }); },
+      caw: (o) => { for (const at of [0, 0.26]) { tone(o, { at, dur: 0.17, type: 'sawtooth', freq: 820, endFreq: 560, vol: 0.12, attack: 0.01 }); noiseBurst(o, { at, dur: 0.15, freq: 1300, q: 3, vol: 0.25 }); } },
+      wings: (o) => { for (let i = 0; i < 7; i++) noiseBurst(o, { at: i * 0.07 + Math.random() * 0.03, dur: 0.06, freq: 450 + Math.random() * 300, q: 0.8, vol: 0.35 }); },
       hooked: (o) => { tone(o, { dur: 0.08, type: 'square', freq: 1200, endFreq: 600, vol: 0.12 }); tone(o, { at: 0.1, dur: 0.15, type: 'sawtooth', freq: 300, endFreq: 180, vol: 0.12 }); },
       grab: (o) => { tone(o, { dur: 0.06, type: 'square', freq: 500, vol: 0.12 }); tone(o, { at: 0.05, dur: 0.1, freq: 880, vol: 0.18 }); },
       pour: (o) => { noiseBurst(o, { dur: 0.7, freq: 900, endFreq: 500, q: 2, vol: 0.25 }); for (let i = 0; i < 5; i++) tone(o, { at: 0.08 + i * 0.12, dur: 0.05, freq: 300 + i * 40, vol: 0.06 }); },
@@ -5673,6 +6007,11 @@
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
       if (playing && e.code === 'KeyH' && me?.car?.type === 'police' && !e.repeat && document.activeElement !== chatInput) { send({ t: 'siren' }); return; } // a stolen Militsiya car's siren
       if (playing && (e.code === 'KeyV' || e.code === 'KeyN') && (me?.car || riding) && !e.repeat && document.activeElement !== chatInput) { send({ t: 'radio', action: e.code === 'KeyV' ? 'toggle' : 'next' }); return; } // the car radio
+      if (playing && e.code === 'KeyP' && !me?.car && !e.repeat && document.activeElement !== chatInput) { // pet the cat (in my arms, or one beside me that knows me)
+        const c = heldCat() ? { id: 0 } : nearestCat();
+        if (c) send({ t: 'cat', action: 'pet', id: c.id });
+        return;
+      }
       if (playing && e.code === 'KeyJ') { jobsEl.hidden ? openJobs() : closeJobs(); return; }
       if (playing && e.code === 'KeyF' && !me?.car && !e.repeat && carrying) { send({ t: 'body', action: 'drop' }); return; } // F: get rid of the body
       if (playing && e.code === 'KeyF' && !me?.car && !e.repeat && nearestBody()) { send({ t: 'body', action: 'carry', id: nearestBody().id }); closeBody(); return; } // F: pick it up
@@ -5700,6 +6039,9 @@
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
           else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him all of it
+          else if (t?.kind === 'cat') send({ t: 'cat', action: t.feed ? 'feed' : 'pickup', id: t.target }); // a fish for it, or up into my arms
+          else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
+          else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
           else if (!t && placeableHere()) { send({ t: 'furnish', action: 'place', angle: aimAngle() }); sfx('furnish'); } // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
@@ -5897,6 +6239,7 @@
       { code: 'KeyN', label: '⏭', show: () => me?.car || riding },
       { code: 'ShiftLeft', label: 'Brake', hold: true, show: () => me?.car },
       { code: 'Space', label: '🔥 Boost', hold: true, show: () => me?.car },
+      { code: 'KeyP', label: '✋ Pet', show: () => !me?.car && (heldCat() || nearestCat()?.knows) },
       { code: 'KeyQ', label: 'Drop', show: () => inv[selectedSlot] && !me?.car },
       { code: 'KeyR', label: 'Reload', show: () => heldGun() && !me?.car },
       { code: 'KeyF', label: 'F', big: true, hold: true, show: () => !me?.car },
@@ -6222,9 +6565,11 @@
       for (const [id, type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting, radio] of msg.vehicles ?? []) vehicles.set(id, { type, x, y, angle, driver, health, color, slipping, owner, siren, lights, locked, boosting, radio: radio ? { song: radio[0], playing: radio[1], at: performance.now() } : null });
       soundsFromSnapshot(players, msg.bullets ?? []);
       const npcs = new Map();
-      for (const [id, x, y, angle, state] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1 || state === 3, robbed: state === 3, fleeing: state === 2 });
+      for (const [id, x, y, angle, state, job = 0, work = 0] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1 || state === 3, robbed: state === 3, fleeing: state === 2, job, work });
       const cops = new Map();
       for (const [id, x, y, angle, guard] of msg.cops ?? []) cops.set(id, { x, y, angle, guard: guard === 1 });
+      const wolves = new Map();
+      for (const [id, x, y, angle, running] of msg.wolves ?? []) wolves.set(id, { x, y, angle, running: running === 1 });
       otherLines = msg.lines ?? [];
       const crew = new Map(); // hired muscle: goons, guards, hitmen
       for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
@@ -6233,7 +6578,9 @@
       muzzleFlashes(msg.bullets ?? [], shooters);
       const corpses = new Map();
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, bodies: corpses });
+      const cats = new Map();
+      for (const [id, x, y, angle, move, look, petted, knows, heldBy] of msg.cats ?? []) cats.set(id, { x, y, angle, move, look, petted: petted === 1, knows: knows === 1, heldBy });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, cats, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -6362,7 +6709,7 @@
       const npcs = new Map();
       for (const [id, nb] of b.npcs ?? []) {
         const na = a.npcs?.get(id);
-        npcs.set(id, na ? { x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t), armed: nb.armed, fleeing: nb.fleeing } : nb);
+        npcs.set(id, na ? { ...nb, x: lerp(na.x, nb.x, t), y: lerp(na.y, nb.y, t), angle: lerpAngle(na.angle, nb.angle, t) } : nb);
       }
       const cops = new Map();
       for (const [id, cb] of b.cops ?? []) {
@@ -6374,7 +6721,17 @@
         const ha = a.crew?.get(id);
         crew.set(id, ha ? { ...hb, x: lerp(ha.x, hb.x, t), y: lerp(ha.y, hb.y, t), angle: lerpAngle(ha.angle, hb.angle, t) } : hb);
       }
-      return { players, bullets, vehicles, npcs, cops, crew, bodies: b.bodies };
+      const wolves = new Map();
+      for (const [id, wb] of b.wolves ?? []) {
+        const wa = a.wolves?.get(id);
+        wolves.set(id, wa ? { ...wb, x: lerp(wa.x, wb.x, t), y: lerp(wa.y, wb.y, t), angle: lerpAngle(wa.angle, wb.angle, t) } : wb);
+      }
+      const cats = new Map();
+      for (const [id, cb] of b.cats ?? []) {
+        const ca = a.cats?.get(id);
+        cats.set(id, ca ? { ...cb, x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t) } : cb);
+      }
+      return { players, bullets, vehicles, npcs, cops, crew, wolves, cats, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -6678,14 +7035,40 @@
           ctx.beginPath(); ctx.arc(lake.x, lake.y, r, 0, Math.PI * 2); ctx.fill();
         }
       }
-      // Frozen lakes: smooth pale ice; it goes grey and thin in winter's last minutes.
+      // Frozen lakes: clear ice you can see the deep water through — pale over the shallows at the
+      // shore, dark blue out in the middle — with a few cracks. It goes grey and thin in winter's last minutes.
       if (lakesFrozen()) {
         ctx.save();
         ctx.globalAlpha = 1 - 0.45 * season.blend;
         for (const lake of lakes) {
           if (lake.x + lake.r < viewBox.l || lake.x - lake.r > viewBox.r || lake.y + lake.r < viewBox.t || lake.y - lake.r > viewBox.b) continue;
-          ctx.fillStyle = '#d2e3ed'; // one flat sheet, covering the shelf-ice rim too
+          const depth = ctx.createRadialGradient(lake.x, lake.y, 0, lake.x, lake.y, lake.r + 5);
+          depth.addColorStop(0, '#1f4a6b'); // deep water under the ice
+          depth.addColorStop(0.45, '#3f7194');
+          depth.addColorStop(0.8, '#9cc0d6');
+          depth.addColorStop(0.93, '#d2e3ed'); // shallows and the shelf-ice rim
+          depth.addColorStop(1, '#e2edf3');
+          ctx.fillStyle = depth;
           ctx.beginPath(); ctx.arc(lake.x, lake.y, lake.r + 5, 0, Math.PI * 2); ctx.fill();
+          // Cracks: the same few for each lake every frame (seeded from where it is).
+          let seed = Math.abs(Math.round(lake.x * 7 + lake.y * 13)) % 2147483647 || 1;
+          const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+          ctx.strokeStyle = 'rgba(225, 240, 250, .55)';
+          ctx.lineWidth = 1.5;
+          const cracks = 3 + Math.floor(lake.r / 120);
+          for (let i = 0; i < cracks; i++) {
+            let a = rnd() * Math.PI * 2, d = lake.r * (0.1 + rnd() * 0.5);
+            let x = lake.x + Math.cos(a) * d, y = lake.y + Math.sin(a) * d;
+            ctx.beginPath(); ctx.moveTo(x, y);
+            const dir = rnd() * Math.PI * 2;
+            for (let k = 0, n = 3 + Math.floor(rnd() * 3); k < n; k++) {
+              const step = lake.r * (0.08 + rnd() * 0.12), h = dir + (rnd() - 0.5) * 1.2;
+              x += Math.cos(h) * step; y += Math.sin(h) * step;
+              if (Math.hypot(x - lake.x, y - lake.y) > lake.r * 0.95) break;
+              ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+          }
         }
         ctx.restore();
       }
@@ -7710,10 +8093,15 @@
         const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 18;
         if (gd < 110) options.push({ kind: 'gangster', target: id, dist: gd - 20, x: h.x, y: h.y - 52 });
       }
+      if (heldCat()) return { kind: 'catDown', dist: 0, x: me.x, y: me.y - 46 }; // a cat in my arms: E puts it down
+      const cat = nearestCat();
+      if (cat && (holdingFish() || cat.knows)) options.push({ kind: 'cat', target: cat.id, dist: cat.d - 25, x: cat.x, y: cat.y - 32, feed: holdingFish() });
+      const flock = crowsToFeed();
+      if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
-      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster'].includes(o.kind))) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'cat'].includes(o.kind))) best = o;
       return best;
     }
 
@@ -8070,8 +8458,12 @@
         speaker(`n${id}`, n.x, n.y, 30, (s, d) => {
           const edge = approach(s, d, 110, 170);
           if (n.fleeing) return s.mode !== 'flee' ? ((s.mode = 'flee'), { text: pick(SPEECH.flee), urgent: true }) : null;
-          if (n.armed) return s.mode !== 'fight' ? ((s.mode = 'fight'), { text: pick(n.robbed ? SPEECH.robbed : SPEECH.fight), urgent: true }) : null;
+          if (n.armed) return s.mode !== 'fight' ? ((s.mode = 'fight'), { text: pick(n.job === 4 ? SPEECH.convictFight : n.robbed ? SPEECH.robbed : SPEECH.fight), urgent: true }) : null;
           s.mode = null;
+          if (n.job) { // a site hand, a convict or the camp cook: their own lines, no small talk
+            if (edge === 'in' && Math.random() < (n.job === 5 ? 0.8 : 0.3)) return { text: pick(SPEECH[['', 'worker', 'worker', 'worker', 'convict', 'cook'][n.job]]) };
+            return null;
+          }
           if (edge === 'in' && Math.random() < 0.35) return { text: pick(SPEECH.greet) };
           if (t > s.next) { s.next = t + 25 + Math.random() * 40; if (Math.random() < 0.5) return { text: pick(SPEECH.chatter) }; }
           return null;
@@ -8363,6 +8755,25 @@
       }
     }
 
+    // Hands at the work sites (their site's tool, a sack over the shoulder when carrying the haul in),
+    // the big convicts in camp black (fists up in a fight), and the camp cook in his whites.
+    const JOB_TOOLS = { 1: 'scythe', 2: 'axe', 3: 'pickaxe', 4: 'pickaxe' };
+    const WORKER_LOOK = { 1: { skin: '#e0ac69', shirt: '#7a8a4a', pants: '#3a3f5c', hat: 'cap' }, 2: { skin: '#c68642', shirt: '#9b3b2e', pants: '#3a3a3a', hat: 'beanie' }, 3: { skin: '#f1c27d', shirt: '#5d6470', pants: '#2c2c2c', hat: 'miner' } };
+    const COOK_LOOK = { skin: '#f1c27d', shirt: '#e8e6df', pants: '#6d6d6d', hat: 'none' };
+    function drawWorker(n, id) {
+      const swing = n.work === 1 ? Math.max(0, Math.sin(frameTime / 90 + id)) : 0;
+      if (n.job === 5) return drawPerson({ x: n.x, y: n.y, r: 19, aim: n.angle, weapon: n.armed ? 'purse' : null }, COOK_LOOK);
+      if (n.job === 4) { // a convict: big, and the pickaxe swaps for his fists in a fight
+        drawPerson({ x: n.x, y: n.y, r: 25, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : 'pickaxe', thrust: n.armed ? Math.max(0, Math.sin(frameTime / 140 + id)) : swing }, { ...PRISONER_LOOK, skin: resolveLook({ skin: id * 7 }).skin });
+      } else drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : JOB_TOOLS[n.job], thrust: n.armed ? Math.max(0, Math.sin(frameTime / 170 + id)) : swing }, WORKER_LOOK[n.job] ?? WORKER_LOOK[1]);
+      if (n.work === 2) { // the haul: a sack (or a load of coal) on his back
+        ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(n.angle);
+        ctx.fillStyle = n.job === 4 ? '#1f1d1c' : n.job === 2 ? '#7a5534' : '#b89a62';
+        ctx.beginPath(); ctx.ellipse(-12, 0, 11, 14, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+    }
+
     function drawPerson(p, look) {
       ctx.save();
       ctx.translate(p.x, p.y);
@@ -8615,6 +9026,7 @@
 
       drawWorkNodes();
       drawBodies(view, false);
+      drawCats(view, shown, frameTime, false);
       for (const [id, p] of shown) {
         if (id === myId && hiddenSelf) continue; // inside the bin
         if (isSwimming(p.x, p.y)) {
@@ -8629,6 +9041,7 @@
         }
         drawPerson(p, p.cop === 1 ? { ...POLICE_LOOK, skin: lookOf(id).skin, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' } : p.cop === 2 ? { ...PRISONER_LOOK, skin: lookOf(id).skin } : lookOf(id)); // Militsiya players wear the uniform; prisoners the camp's black
       }
+      drawCats(view, shown, frameTime, true);
       drawBodies(view, true);
       drawGunfire(frameTime, dt);
       drawFishing(frameTime, shown);
@@ -8699,8 +9112,18 @@
       // Townsfolk out and about (each one's look comes from their id, so it never changes).
       for (const [id, n] of view.npcs ?? []) {
         if (n.x < viewBox.l || n.x > viewBox.r || n.y < viewBox.t || n.y > viewBox.b) continue;
+        if (n.job) { drawWorker(n, id); continue; }
         drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: n.armed ? 'purse' : null, thrust: n.armed ? Math.max(0, Math.sin(frameTime / 170 + id)) : 0 }, resolveLook({ skin: id * 7, shirt: id * 3, pants: id * 5, hat: id * 11 }));
       }
+      // Wolves (their eyes glow on top of the dark: see drawWolfEyes), and crows in the fields.
+      shownWolves = view.wolves ?? new Map();
+      for (const [id, wf] of shownWolves) {
+        if (wf.x < viewBox.l || wf.x > viewBox.r || wf.y < viewBox.t || wf.y > viewBox.b) continue;
+        drawWolf(wf, id, frameTime);
+      }
+      wolfSounds(frameTime);
+      updateCrows(dt, view, frameTime);
+      drawCrows(false, frameTime);
       for (const t of bankData.tellers) {
         if (t.x < viewBox.l || t.x > viewBox.r || t.y < viewBox.t || t.y > viewBox.b) continue;
         drawPerson({ x: t.x, y: t.y, r: 20, aim: t.angle, weapon: null }, TELLER_LOOK);
@@ -8718,6 +9141,7 @@
       for (const b of visibleBuildings) drawRoof(b, roofAlpha.get(b.id) ?? 1);
       for (const b of visibleBuildings) drawSubRoofs(b, dt);
       drawSmoke(visibleBuildings, frameTime);
+      drawCrows(true, frameTime); // (up in the air: over the trees and roofs)
       drawPowerLines();
       for (const k of shop.shopkeepers) {
         if (k.x < viewBox.l || k.x > viewBox.r || k.y < viewBox.t || k.y > viewBox.b || hiddenUnderRoof(k.x, k.y)) continue;
@@ -8739,6 +9163,10 @@
       const place = me && playing && !me.car ? nearestPlace() : null;
       const eNow = playing ? eTarget() : null;
       if (eNow) drawKeyPrompt(eNow.x, eNow.y); // just the closest E
+      if (playing && !touchMode) { // P: pet the cat in my arms, or one beside me that knows me
+        const pc = heldCat() ? { x: me.x, y: me.y - 46 + 0 } : nearestCat();
+        if (pc && (heldCat() || pc.knows)) drawKeyPrompt(pc.x + 30, pc.y - (heldCat() ? 0 : 32), 'P', '#f58ab0');
+      }
       const collar = playing ? collarTarget() : null; // an officer beside a player: Z arrest · Y fine
       if (collar) { drawKeyPrompt(collar.x - 16, collar.y - collar.r - 40, 'Z', '#2e86de'); drawKeyPrompt(collar.x + 16, collar.y - collar.r - 40, 'Y', '#2e86de'); }
       else if (me && playing && fuelCar()) { // fuel or vodka in hand beside a car: E pours it in (before drinking it)

@@ -55,7 +55,7 @@ test('arrested by the Militsiya: off to the prison, hotbar held by the warden, a
   assert.equal(p.jailed.stash[0], knife, 'the warden has the knife');
   assert.equal(p.inventory[0].type, 'pickaxe');
   assert.ok(inside(s.inner, p.x, p.y), 'on the parade ground');
-  assert.deepEqual(p.account.prison, { quota: 20, coal: 0, bail: 500 });
+  assert.deepEqual(p.account.prison, { quota: 2 * config.prison.coalPerStar, coal: 0, bail: 500 });
   assert.equal(p.wanted, 0);
 });
 
@@ -187,4 +187,106 @@ test('a sentence carries on after logging off (resume)', () => {
   assert.equal(p.jailed.coal, 12);
   assert.equal(p.jailed.quota, 30);
   assert.equal(p.jailed.bail, 750);
+});
+
+// ---- camp life: cells, lights out, convicts, slop ----------------------------------------------
+
+test('you arrive in one of the cells by the gatehouse', () => {
+  const { world, p, prison, s } = camp();
+  assert.equal(s.cells.length, 8);
+  prison.jail(p, 1);
+  assert.ok(prison.inCell(p.x, p.y), 'in a cell');
+  assert.ok(inside(s.block, p.x, p.y), 'in the cell block');
+  // A second prisoner gets the next (emptiest) cell.
+  const q = world.spawnPlayer('crook2');
+  prison.jail(q, 1);
+  assert.ok(prison.inCell(q.x, q.y));
+  assert.notDeepEqual(s.cells.find((c) => inside(c, p.x, p.y)), s.cells.find((c) => inside(c, q.x, q.y)));
+});
+
+test('lights out: back to the cells or a guard comes with his baton (more coal); the cells lock till morning', () => {
+  const { world, p, prison, s } = camp();
+  prison.jail(p, 1);
+  const quota = p.jailed.quota;
+  Object.assign(p, { x: s.spawn.x, y: s.spawn.y }); // out on the parade ground
+  world.night = true;
+  world.step(1 / 30);
+  assert.ok(prison.lockdown);
+  const evs = prison.events.splice(0);
+  assert.ok(evs.some((e) => e.kind === 'lights_out'));
+  assert.ok(p.jailed.out, 'out of the cells after lights-out');
+  for (let i = 0; i < 30 * (config.prison.curfewWarnSec - 2); i++) world.step(1 / 30);
+  assert.equal(p.jailed.quota, quota, 'the warning first');
+  let clubbed = false;
+  for (let i = 0; i < 30 * 90 && !clubbed; i++) {
+    world.step(1 / 30);
+    clubbed = prison.events.splice(0).some((e) => e.kind === 'clubbed');
+  }
+  assert.ok(clubbed, 'a guard came and clubbed him');
+  assert.equal(p.jailed.quota, quota + config.prison.curfewCoal);
+  assert.ok(p.health > 0, 'beaten, not killed');
+  // The cell doors are locked; picking one is the only way out.
+  const door = [...prison.cellDoors][0];
+  assert.ok(world.lockedFor(door, p));
+  assert.ok(prison.isPrisonDoor(door));
+  // Back in a cell: left alone.
+  const cell = s.cells[0];
+  Object.assign(p, { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 });
+  world.step(1 / 30);
+  assert.equal(p.jailed.out, null);
+  // Morning: unlocked and opened up.
+  world.night = false;
+  world.step(1 / 30);
+  assert.ok(!prison.lockdown);
+  assert.ok(!world.lockedFor(door, p) && door.open);
+});
+
+test('the big convicts dig coal and tip it in the bunker; hit one and he fights back with his fists', () => {
+  const { world, p, prison, b } = camp();
+  world.townsfolk.people.length = 0;
+  for (let i = 0; i < config.prison.convicts.count; i++) prison.jobLost({ job: { kind: 'convict' } });
+  prison.jobLost({ job: { kind: 'cook' } });
+  for (let i = 0; i < config.labour.replaceSec + 1; i++) world.step(1);
+  const convicts = world.townsfolk.people.filter((x) => x.job?.kind === 'convict');
+  assert.equal(convicts.length, config.prison.convicts.count);
+  assert.ok(convicts.every((c) => c.big && c.health === config.prison.convicts.health));
+  assert.equal(world.townsfolk.people.filter((x) => x.job?.kind === 'cook').length, 1, 'and the cook');
+  const coal = () => [...world.work.nodes.values()].filter((n) => n.site === b.id).reduce((sum, n) => sum + n.hp, 0);
+  const before = coal();
+  for (let i = 0; i < 60 * 4; i++) world.step(1 / 4);
+  assert.ok(coal() < before, 'coal dug');
+  // A punch-up.
+  prison.jail(p, 1);
+  const c = convicts[0];
+  Object.assign(p, { x: c.x + 40, y: c.y });
+  const crimes = [];
+  world.police.crime = (who, kind) => crimes.push(kind);
+  world.townsfolk.provoke(c, p, 'assault');
+  const hp = p.health;
+  for (let i = 0; i < 30 * 3; i++) world.step(1 / 30);
+  assert.ok(p.health < hp, 'he hits back');
+  assert.ok(!c.flee, 'and doesn\'t run off');
+  assert.deepEqual(crimes, [], 'nobody calls the Militsiya');
+});
+
+test('meal times: the bell, then one bowl of slop at the kitchen hatch', () => {
+  const { world, p, prison, s } = camp();
+  prison.jail(p, 1);
+  prison.jobLost({ job: { kind: 'cook' } });
+  for (let i = 0; i < config.labour.replaceSec + 1; i++) world.step(1);
+  Object.assign(p, { x: s.serve.x, y: s.serve.y + 10 });
+  Object.assign(world, { dayClock: config.environment.daySec / 2, dayNumber: 3 }); // between meals
+  world.step(1 / 30);
+  assert.ok(!prison.events.splice(0).some((e) => e.kind === 'slop'), 'nothing between meals');
+  world.dayClock = 5; // breakfast
+  world.step(1 / 30);
+  const evs = prison.events.splice(0);
+  assert.ok(evs.some((e) => e.kind === 'meal_bell'));
+  assert.ok(evs.some((e) => e.kind === 'slop'));
+  assert.ok(p.digesting.length > 0, 'it heals like a loaf');
+  world.step(1 / 30);
+  assert.ok(!prison.events.splice(0).some((e) => e.kind === 'slop'), 'one bowl each');
+  world.dayClock = config.environment.daySec - 6 * 60 + 5; // supper
+  world.step(1 / 30);
+  assert.ok(prison.events.splice(0).some((e) => e.kind === 'slop'), 'another at supper');
 });

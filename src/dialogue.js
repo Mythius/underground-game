@@ -41,6 +41,12 @@ export const DIALOGUE = [
     { id: 'copWanted', name: 'Chasing you', note: 'While you\'re wanted and they can see you.', lines: ['Stop! Militsiya!', 'Hands where I can see them!', 'Halt!', 'You\'re under arrest!'] },
     { id: 'copArrest', name: 'Arresting you', note: 'While the arrest bar fills (get away to stop it).', lines: ['Don\'t move!', 'Hands behind your back!', 'You\'re coming with us.', 'Stop resisting!', 'Got you now.'] },
   ] },
+  { group: 'Work sites & the camp', kinds: [
+    { id: 'worker', name: 'Site hand', note: 'You walk past a hand working a farm, lumberyard or mine.', lines: ['Hard work, honest pay. Well — work, anyway.', 'Mind the blade.', 'Another load for the foreman.', 'The truck comes when it comes.'] },
+    { id: 'convict', name: 'Convict', note: 'You walk past one of the big convicts at the prison camp.', lines: ['What are you looking at?', 'Keep digging, new fish.', 'Ten years for a sack of potatoes…', 'Stay out of my way.'] },
+    { id: 'convictFight', name: 'Convict — fighting', note: 'You hit a convict and he comes at you with his fists.', lines: ['You picked the wrong zek!', 'I\'ll break you in half!', 'Big mistake, fish.'] },
+    { id: 'cook', name: 'Camp cook', note: 'You walk up to the kitchen hatch.', lines: ['Slop. Take it or leave it.', 'One bowl. ONE.', 'It\'s got meat in it. Probably.', 'Bell rings, you eat. Not before.'] },
+  ] },
   { group: 'Hired muscle', kinds: [
     { id: 'goon', name: 'Your goon', note: 'Now and then, while following you.', lines: ['Right behind you, boss.', 'Anyone gives you trouble…', 'Quiet today.', 'Say the word, boss.'] },
     { id: 'guard', name: 'Building guard', note: 'Someone walks up to the building they guard.', lines: ['Private property.', 'Keep walking.', 'Nobody gets in.', 'Not one step closer.'] },

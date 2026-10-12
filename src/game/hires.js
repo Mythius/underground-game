@@ -824,44 +824,30 @@ export class Hires {
       if (w.isBlocked(x, y, 22) || w.isSwimming(x, y)) continue;
       if ([...w.players.values()].some((p) => Math.hypot(p.x - x, p.y - y) < 900)) continue;
       const r = config.hires;
-      const lonely = this.list.find((o) => o.role === 'gangster' && !this.#partner(o)); // they go about in pairs
       const g2 = {
         kind: 'hire', role: 'gangster', id: this.nextId++, employer: null, name: 'a gangster',
         x, y, angle: 0, health: g.health, maxHealth: g.health, radius: r.radius,
         weapon: g.weapon, fireCooldown: 0, ammo: config.weapons[g.weapon].magazineSize, reload: 0,
         vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
-        foes: new Map(), offline: 0, pick: null, route: [], seen: new Map(), cash: 0, nextTheft: 0, look: 0, partner: null,
+        foes: new Map(), offline: 0, pick: null, route: [], seen: new Map(), cash: 0, nextTheft: 0, look: 0,
       };
-      if (lonely) { // a mate for the one on his own (starting out together, or turning up to join him)
-        g2.partner = lonely;
-        lonely.partner = g2;
-        if (!this.started) Object.assign(g2, { x: lonely.x + 50, y: lonely.y });
-      }
       this.list.push(g2);
       return true;
     }
     return false;
   }
 
-  /** His mate, if he has one still about. */
-  #partner(h) {
-    const m = h.partner;
-    return m && this.list.includes(m) ? m : null;
-  }
-
-  /** A gangster's turn: a fight if anyone's after him (or his mate); else a hold-up or a stolen car under way; else looking for trouble while he walks the town. The second of a pair just sticks with the first. */
+  /** A gangster's turn: a fight if anyone's after him; else a hold-up or a stolen car under way; else looking for trouble while he walks the town (each on his own). */
   #gangster(h, dt) {
     const g = config.gangsters, w = this.world;
     h.aiming = false;
-    const mate = this.#partner(h);
-    const threat = this.#threat(h, null, g.fightRange) ?? (mate ? this.#threat(mate, null, g.fightRange) : null); // (a fight with one is a fight with both)
+    const threat = this.#threat(h, null, g.fightRange);
     if (threat) {
       if (h.holdup?.p) h.holdup.p.heldUp = null;
       h.holdup = null;
       if (h.vehicle) h.vehicle.stolenBy === h ? this.#dumpCar(h) : this.#leaveCar(h);
       return this.#fightThreat(h, threat, dt, 220);
     }
-    if (mate && mate.id < h.id) return this.#tagAlong(h, mate, dt);
     if (h.vehicle) return this.#joyride(h, dt);
     if (h.holdup) return this.#holdUp(h, dt);
     if (h.stealing) return this.#goSteal(h, dt);
@@ -893,26 +879,6 @@ export class Hires {
       }
     }
     this.#wander(h, dt);
-  }
-
-  /** The second of a pair: rides along in his mate's stolen car, covers his hold-ups, otherwise walks at his shoulder. */
-  #tagAlong(h, lead, dt) {
-    const car = lead.vehicle;
-    if (h.vehicle && h.vehicle !== car) this.#leaveCar(h); // the car's been dumped: out
-    if (h.vehicle) { h.x = h.vehicle.x; h.y = h.vehicle.y; return; }
-    if (car) {
-      if (Math.hypot(car.x - h.x, car.y - h.y) < car.stats.length / 2 + 40) return this.#board(h, car);
-      return this.#walk(h, car.x, car.y, config.hires.runSpeed, dt, car);
-    }
-    const victim = lead.holdup?.started ? lead.holdup.p : null;
-    if (victim) { // rifle on them too
-      h.angle = Math.atan2(victim.y - h.y, victim.x - h.x);
-      h.aiming = true;
-      return;
-    }
-    const d = Math.hypot(lead.x - h.x, lead.y - h.y);
-    if (d > 60) this.#walk(h, lead.x - Math.cos(lead.angle) * 40, lead.y - Math.sin(lead.angle) * 40, d > 90 ? config.hires.runSpeed : config.gangsters.walkSpeed, dt); // (jogs to catch up)
-    else h.angle = lead.angle;
   }
 
   /** Walk the town: from road to road, somewhere new each time. */
@@ -999,12 +965,6 @@ export class Hires {
       return;
     }
     if (car.fuel <= 0) return this.#dumpCar(h); // out of petrol: he ditches it where it is
-    const partner = this.#partner(h);
-    if (partner && !partner.vehicle && Math.hypot(partner.x - car.x, partner.y - car.y) < 500 && (j.waited = (j.waited ?? 0) + dt) < 8) { // waiting for his mate to get in
-      const fw = vehicleMotion(car).forward;
-      car.ai = { gas: Math.abs(fw) > 20 ? -Math.sign(fw) : 0, steer: 0, drift: false };
-      return;
-    }
     const next = h.route[0];
     if (Math.hypot(next.x - car.x, next.y - car.y) < 110) h.route.shift();
     const forward = vehicleMotion(car).forward;
@@ -1025,8 +985,6 @@ export class Hires {
     car.ai = null;
     car.stolenBy = null;
     this.#leaveCar(h);
-    const mate = this.#partner(h);
-    if (mate?.vehicle === car) this.#leaveCar(mate);
     h.route = [];
     const owner = [...this.world.players.values()].find((p) => p.account === car.owner);
     if (owner) this.events.push({ player: owner, kind: 'car_dumped', x: Math.round(car.x), y: Math.round(car.y), type: car.type, id: car.id });

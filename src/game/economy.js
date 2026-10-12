@@ -150,10 +150,13 @@ export class Economy {
     const cool = (config.underTable.heatDecayPerMin * dt) / 60;
     for (const market of this.markets.values()) if (market.heat) market.heat = Math.max(0, market.heat - cool);
     for (const market of this.markets.values()) {
-      for (const entry of Object.values(market.goods)) {
-        // Raw sites produce a little on their own (NPC hands); work sites mostly need players.
-        if (market.kind === 'raw') entry.stock = Math.min(entry.target * 1.5, entry.stock + (market.work ? config.work.npcProducePerSec : m.rawProducePerSec) * dt);
-        else entry.stock += (entry.target * 0.6 - entry.stock) * m.driftPerSec * dt;
+      for (const [good, entry] of Object.entries(market.goods)) {
+        // Raw sites produce a little on their own; at work sites it's the hands (see Labour) and players.
+        if (market.kind === 'raw') {
+          if (!market.work || !this.world.labour) entry.stock = Math.min(entry.target * 1.5, entry.stock + (market.work ? config.work.npcProducePerSec : m.rawProducePerSec) * dt);
+        } else if (entry.stock > entry.target * 0.6 || !this.world.labour?.supplies.has(good)) { // (what comes by truck never refills by itself)
+          entry.stock += (entry.target * 0.6 - entry.stock) * m.driftPerSec * dt;
+        }
       }
     }
   }

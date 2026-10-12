@@ -21,6 +21,9 @@ import { Roadblocks } from './roadblocks.js';
 import { Bodies, generateDumpsters } from './bodies.js';
 import { Hires } from './hires.js';
 import { Fishing } from './fishing.js';
+import { Labour } from './labour.js';
+import { Cats } from './cats.js';
+import { Wolves } from './wolves.js';
 import { radioAt } from '../radio.js';
 import { Furnishings } from './furnishing.js';
 import { Prison } from './prison.js';
@@ -196,8 +199,12 @@ export class World {
     this.roadblocks = new Roadblocks(this, railStrip); // after vehicle ids start: their Militsiya cars are vehicles
     this.hires = new Hires(this); // goons, guards and hitmen from the БАР
     this.fishing = new Fishing(this);
+    this.wolves = new Wolves(this);
+    this.night = false; // set by the room each tick (wolves come out at night)
     this.furnishings = new Furnishings(this); // cabinets, beds and sofas placed in homes and warehouses
     this.prison = new Prison(this); // where every arrest ends up (its guards join the police)
+    this.labour = new Labour(this); // hands at the work sites, the city mills and the cargo trucks between them
+    this.cats = new Cats(this); // strays round town: feed them fish, pick them up, pet them
     this.brokenAtms = new Map(); // ATM key -> economy time it works again (smashed with a bat)
     this.atmsChanged = false; // (the room tells everyone which ATMs are broken)
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
@@ -439,6 +446,16 @@ export class World {
       qty -= put;
     }
     return qty;
+  }
+
+  /** Wheat in hand: a handful tossed to the crows (one wheat). The flocks themselves are drawn by each client. */
+  feedCrows(p) {
+    const slot = p.inventory[p.selected];
+    if (slot?.good !== 'wheat') return 'no_wheat';
+    if (p.vehicle || p.hidden || !p.alive) return 'busy';
+    slot.qty -= 1;
+    if (slot.qty <= 0) p.inventory[p.selected] = null;
+    return null;
   }
 
   /** E with food selected: eat one. It heals over the next few seconds (see #digest). */
@@ -810,6 +827,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     if (p.vehicle) this.leaveSeat(p);
+    if (p.holdingCat) this.cats.putDown(p);
     p.alive = false;
     this.players.delete(id);
     if (p.carrying) {
@@ -904,6 +922,14 @@ export class World {
       if (!p.alive) continue;
       this.removePlayer(p.id);
       deaths.push({ victim: p, killer: { name: 'a townsperson' } });
+    }
+    this.labour.step(dt);
+    this.cats.step(dt);
+    this.wolves.step(dt);
+    for (const p of this.wolves.kills.splice(0)) {
+      if (!p.alive) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'the wolves' } });
     }
     this.hires.step(dt);
     for (const p of this.players.values()) p.arrest = 0;
@@ -1125,6 +1151,7 @@ export class World {
         if (best.police) this.police.crime(p, 'steal_police_car', true); // the radio's in it: they always know
         else if (best.owner && best.owner !== p.account) this.police.crime(p, 'steal_car');
         if (best.owner && best.owner === p.account) best.picked = false; // back in your own car: locked again
+        if (best.labourTruck) this.labour.hijack(best, p); // a cargo truck: its driver jumps out and runs for it
         best.driver = p;
         best.lights = true; // headlights on as you set off (C toggles them)
         p.vehicle = best;
@@ -1334,7 +1361,7 @@ export class World {
   #fireGuns(dt) {
     for (const p of this.players.values()) {
       p.shotCooldown = Math.max(0, p.shotCooldown - dt);
-      const gun = p.vehicle || p.jailed || p.carrying || p.hidden ? null : p.weapon; // no shooting while driving, in a cell or with your hands full
+      const gun = p.vehicle || p.jailed || p.carrying || p.holdingCat || p.hidden ? null : p.weapon; // no shooting while driving, in a cell or with your hands full (a body, a cat)
       const reloadRequested = p.input.reload;
       p.input.reload = false;
       if (!gun) continue; // empty hand
@@ -1411,6 +1438,7 @@ export class World {
     for (const t of this.townsfolk.people) if (t.inside <= 0) consider('npc', t, 17);
     for (const u of this.police.units) if (u.officer.onFoot && u.officer.health > 0) consider('officer', u.officer, 20);
     for (const h of this.hires.list) if (!h.vehicle && h.employer !== p.account) consider('hire', h, h.radius);
+    for (const w of this.wolves.list) consider('wolf', w, config.wolves.radius);
     if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
       const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
       if (atm) this.#smashAtm(p, atm);
@@ -1420,6 +1448,7 @@ export class World {
     const t = best.ref;
     if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
+    if (best.kind === 'wolf') return this.wolves.damage(t, config.wolves.health * stats.share + 0.01, p);
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
     t.hurt(t.maxHealth * stats.share + 0.01); // (+ a hair, so three stabs always do it)
@@ -1463,6 +1492,12 @@ export class World {
       if (hire) {
         this.bullets.delete(b.id);
         this.hires.damage(hire, b.damage, shooter);
+        continue;
+      }
+      const wolf = this.wolves.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);
+      if (wolf) {
+        this.bullets.delete(b.id);
+        this.wolves.damage(wolf, b.damage, shooter);
         continue;
       }
       // Officers on foot and townsfolk out walking.

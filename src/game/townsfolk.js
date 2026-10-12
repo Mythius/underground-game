@@ -11,6 +11,11 @@ const STUCK_CLEAR = 200; // this far from where they got stuck, they're on their
 // another building's path, and go in for a while. Where they go, they spend: food at shops (bread),
 // fuel at gas stations, goods at markets. That spending is the town's demand.
 //
+// Some have a job instead (person.job: { kind, owner, … }): the hands at the work sites, the convicts
+// and the cook at the prison. They don't go visiting; each step their job's owner moves them
+// (owner.stepJob), and when one is killed the owner hires a replacement (owner.jobLost). They still
+// fight back when hurt — convicts with their fists, and they never call the Militsiya.
+//
 // Walking happens on a small graph of the road centre-lines (junctions and ends are nodes), each
 // townsperson keeping to one side of the road: on the sidewalk in town, the verge in the country.
 
@@ -119,6 +124,41 @@ export class RoadGraph {
   }
 }
 
+const JOB_CODES = { farm: 1, logging: 2, mine: 3, convict: 4, cook: 5 }; // (how the client dresses them)
+
+/**
+ * One step of someone with a job walking straight to (tx, ty) (sliding along walls, round parked
+ * cars). True once they're within `near`. Stuck a while with nobody watching, they're just put there.
+ */
+export function walkTo(world, person, tx, ty, speed, dt, near = 8) {
+  const d = Math.hypot(tx - person.x, ty - person.y);
+  if (d <= near) {
+    person.stuckFor = 0;
+    return true;
+  }
+  const heading = Math.atan2(ty - person.y, tx - person.x);
+  const way = world.steerAroundCars?.(person.x, person.y, heading) ?? heading;
+  const step = Math.min(d, speed * dt);
+  const [ox, oy] = [person.x, person.y];
+  person.x += Math.cos(way) * step;
+  person.y += Math.sin(way) * step;
+  person.angle = way;
+  for (const w of world.wallsNear(person.x, person.y, 17)) {
+    const cx = Math.min(Math.max(person.x, w.x), w.x + w.w), cy = Math.min(Math.max(person.y, w.y), w.y + w.h);
+    const dx = person.x - cx, dy = person.y - cy, dd = Math.hypot(dx, dy);
+    if (dd > 0 && dd < 17) { person.x += (dx / dd) * (17 - dd); person.y += (dy / dd) * (17 - dd); }
+  }
+  const moved = Math.hypot(person.x - ox, person.y - oy);
+  person.stuckFor = moved < step * 0.3 ? (person.stuckFor ?? 0) + dt : 0;
+  if (person.stuckFor > 6 && ![...world.players.values()].some((p) => Math.hypot(p.x - person.x, p.y - person.y) < 1200 || Math.hypot(p.x - tx, p.y - ty) < 1200)) {
+    person.x = tx;
+    person.y = ty;
+    person.stuckFor = 0;
+    return true;
+  }
+  return false;
+}
+
 // Where townsfolk like to go, and how often (weights).
 const VISITS = { home: 40, shop: 18, gas: 8, market: 12, work: 22 };
 const HOMES = new Set(['house', 'cabin', 'mansion', 'barn', 'panelka']);
@@ -179,6 +219,17 @@ export class Townsfolk {
       mood: 0.7, // 0 (angry) – 1 (happy), nudged by what things cost
       health: config.townsfolk.health,
     });
+  }
+
+  /** Someone with a job, out and about at (x, y) from the start. */
+  add(x, y, job, extra = {}) {
+    const person = {
+      id: this.nextId++, at: null, x, y, angle: 0, inside: 0, route: [], side: 1,
+      speed: config.townsfolk.walkSpeed, wallet: 50 + Math.random() * 100, mood: 0.7, health: config.townsfolk.health,
+      job, ...extra,
+    };
+    this.people.push(person);
+    return person;
   }
 
   /** Door → own path → roads → their path → door. */
@@ -269,7 +320,8 @@ export class Townsfolk {
     person.health -= amount;
     if (person.health > 0) return false;
     this.people.splice(this.people.indexOf(person), 1);
-    this.arrivals.push(config.townsfolk.replaceSec);
+    if (person.job) person.job.owner.jobLost?.(person);
+    else this.arrivals.push(config.townsfolk.replaceSec);
     return true;
   }
 
@@ -279,6 +331,10 @@ export class Townsfolk {
    */
   provoke(person, player, crime = 'assault') {
     if (!player?.alive || person.inside > 0 || !this.people.includes(person)) return;
+    if (person.job?.fists) { // a convict: he squares up to whoever hit him (and settles it himself)
+      if (!person.fight) person.fight = { target: player, crime, until: this.time + person.job.fists.fightSec, cooldown: 0.4, hits: 0 };
+      return;
+    }
     if (player.kind === 'hire' && !person.flee) { // nobody takes a purse to an armed thug: they run and phone it in
       person.fight = null;
       person.flee = { from: player, crime, until: this.time + config.townsfolk.fleeSec };
@@ -295,6 +351,7 @@ export class Townsfolk {
   /** The fight's over: run from them, and phone the Militsiya once clear (unless they're dead). */
   #runFrom(person, f) {
     person.fight = null;
+    if (person.job?.fists) return; // a convict just goes back to work
     if (f.target.alive) person.flee = { from: f.target, crime: f.crime, until: this.time + config.townsfolk.fleeSec };
   }
 
@@ -303,7 +360,7 @@ export class Townsfolk {
     const f = person.flee;
     if (this.time >= f.until) {
       person.flee = null;
-      this.world.police?.crime(f.from, f.crime, true);
+      if (!person.job?.quiet) this.world.police?.crime(f.from, f.crime, true); // (nobody in the camp talks to the Militsiya)
       return;
     }
     const t = f.from;
@@ -327,9 +384,9 @@ export class Townsfolk {
   #fight(person, dt) {
     const f = person.fight;
     const t = f.target;
-    const rule = config.townsfolk;
+    const rule = { ...config.townsfolk, ...(person.job?.fists ?? {}) }; // (a convict: fists, harder and for longer)
     const d = Math.hypot(t.x - person.x, t.y - person.y);
-    if (!t.alive || t.vehicle || t.hidden || t.jailed || this.time > f.until || d > rule.fightGiveUpRange) {
+    if (!t.alive || t.vehicle || t.hidden || (t.jailed && !person.job?.fists) || this.time > f.until || d > rule.fightGiveUpRange) { // (a convict settles it inside the wire too)
       this.#runFrom(person, f);
       return;
     }
@@ -377,6 +434,10 @@ export class Townsfolk {
       }
       if (person.flee) {
         this.#flee(person, dt);
+        continue;
+      }
+      if (person.job) {
+        person.job.owner.stepJob(person, dt);
         continue;
       }
       this.#stuckCheck(person, dt);
@@ -439,18 +500,24 @@ export class Townsfolk {
     }
   }
 
-  /** Townsfolk out and about within `range` of (x, y): [id, x, y, angle, 1 fighting (purse swinging) · 2 running away · 0]. */
+  /**
+   * Townsfolk out and about within `range` of (x, y): [id, x, y, angle, 1 fighting (purse swinging) · 2 running away · 0,
+   * job (0 none · 1 farm hand · 2 lumberjack · 3 miner · 4 convict · 5 cook), 1 working (swinging his tool) · 2 carrying a load · 0].
+   */
   visible(x, y, range) {
     const out = [];
     for (const p of this.people) {
       if (p.inside > 0 || Math.abs(p.x - x) > range || Math.abs(p.y - y) > range) continue;
-      out.push([p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? (p.fight.crime === 'pickpocket' ? 3 : 1) : p.flee ? 2 : 0]); // 1 fighting, 2 fleeing, 3 fighting a pickpocket
+      const row = [p.id, Math.round(p.x), Math.round(p.y), Math.round(p.angle * 100) / 100, p.fight ? (p.fight.crime === 'pickpocket' ? 3 : 1) : p.flee ? 2 : 0]; // 1 fighting, 2 fleeing, 3 fighting a pickpocket
+      if (p.job) row.push(JOB_CODES[p.job.look ?? p.job.kind] ?? 0, p.job.swinging > 0 ? 1 : p.job.carry > 0 ? 2 : 0);
+      out.push(row);
     }
     return out;
   }
 
   /** Average mood, 0–1 (for elections later). */
   mood() {
-    return this.people.length ? this.people.reduce((sum, p) => sum + p.mood, 0) / this.people.length : 0.7;
+    const folk = this.people.filter((p) => !p.job);
+    return folk.length ? folk.reduce((sum, p) => sum + p.mood, 0) / folk.length : 0.7;
   }
 }

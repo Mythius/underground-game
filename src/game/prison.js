@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { hotbarOf } from './cargo.js';
 import { Bullet } from './entities.js';
+import { walkTo } from './townsfolk.js';
 
 // The prison (ИТК-7): a gulag on the edge of town, where every arrest ends up.
 //
@@ -16,7 +17,14 @@ import { Bullet } from './entities.js';
 //     you're back inside.
 //
 // The sentence lives on the account (account.prison: { quota, coal, bail }), so logging off or dying
-// inside doesn't get you out: you're back at the parade ground when you next spawn.
+// inside doesn't get you out: you're back in the cells when you next spawn.
+//
+// Camp life: you arrive in one of the cells by the gatehouse. At nightfall the guards order everyone
+// back to the cells; still out when the warning runs out and a guard comes over and clubs you (more
+// coal on your quota each time) until you're back. The cell doors lock till dawn — picking one open
+// gets the guards straight onto you. The cook serves slop at the morning and evening meals (a bell
+// rings; one bowl each). The big convicts (NPCs) dig coal and tip it in the bunker all day, and go to
+// their cells at night; hit one and he fights back with his fists.
 //
 //   p.jailed: { prison: true, quota, coal, bail, stash (your hotbar, held by the warden) }
 
@@ -40,6 +48,107 @@ export class Prison {
     // The tower snipers: they shoot from up in the towers (over the wire), and never come down.
     this.snipers = b.prison.towers.map((t) => ({ kind: 'officer', name: 'a tower sniper', x: t.x, y: t.y, vehicle: null, cooldown: Math.random() * 2 }));
     world.police.postPrisonGuards(b);
+    this.cellDoors = new Set((b.prison.cellDoors ?? []).map(doorAt));
+    this.lockdown = false; // the cell doors are locked (night)
+    this.lockedAt = -Infinity;
+    this.meal = null; // the meal being served: its id (one bowl each)
+    this.hiring = []; // seconds until each lost convict (or the cook) is replaced: { kind, left }
+    for (let i = 0; i < config.prison.convicts.count; i++) this.#newConvict(i);
+    this.#newCook();
+  }
+
+  // ---- the convicts and the cook (townsfolk with a job: see Townsfolk) -------------------
+
+  #newConvict(i = Math.floor(Math.random() * 100)) {
+    const c = config.prison.convicts;
+    const s = this.spots;
+    const cell = s.cells.length ? i % s.cells.length : 0;
+    const w = this.building.work;
+    const x = w.x + Math.random() * w.w, y = w.y + Math.random() * w.h;
+    this.world.townsfolk.add(x, y, {
+      kind: 'convict', owner: this, cell, carry: 0, target: null, swingT: Math.random() * c.swingSec, swinging: 0, quiet: true,
+      fists: { purseShare: c.punchShare, purseHits: c.punchHits, fightSec: c.fightSec, purseReach: 30, fightCooldownSec: 1 },
+    }, { health: c.health, speed: c.speed * (0.9 + Math.random() * 0.2), big: true });
+  }
+
+  #newCook() {
+    const at = this.spots.cook;
+    if (!at) return;
+    this.world.townsfolk.add(at.x, at.y, { kind: 'cook', owner: this, quiet: true }, { angle: -Math.PI / 2 });
+  }
+
+  jobLost(person) {
+    this.hiring.push({ kind: person.job.kind, left: config.labour.replaceSec });
+  }
+
+  stepJob(person, dt) {
+    const j = person.job;
+    if (j.kind === 'cook') { // behind his counter, facing the hatch
+      if (walkTo(this.world, person, this.spots.cook.x, this.spots.cook.y, 80, dt, 4)) person.angle = -Math.PI / 2;
+      return;
+    }
+    const c = config.prison.convicts;
+    const w = this.world;
+    j.swinging = Math.max(0, j.swinging - dt);
+    const cell = this.spots.cells[j.cell];
+    // Night: into his cell (he's let in before the doors lock), out again at dawn.
+    if (this.lockdown && cell) {
+      if (!j.inCell) {
+        const door = this.#cellDoorPoint(j.cell);
+        if (!walkTo(w, person, door.x, door.y, person.speed * 1.5, dt, 30) && !this.#lockedLongAgo()) return;
+        Object.assign(person, { x: cell.x + cell.w / 2 + (j.cell % 2 ? 14 : -14), y: cell.y + cell.h / 2 });
+        j.inCell = true;
+      }
+      return;
+    }
+    if (j.inCell) {
+      const door = this.#cellDoorPoint(j.cell);
+      Object.assign(person, { x: door.x, y: door.y });
+      j.inCell = false;
+    }
+    if (j.carry >= c.carry) { // to the bunker with it
+      const hop = this.spots.hopper;
+      if (!walkTo(w, person, hop.x, hop.y, person.speed, dt, config.prison.hopperReach - 20)) return;
+      j.carry = 0; // (into the boiler: it doesn't count for anyone's quota)
+      return;
+    }
+    if (!j.target || j.target.hp <= 0) {
+      const taken = new Set(w.townsfolk.people.filter((p) => p !== person && p.job?.target).map((p) => p.job.target));
+      let best = null, bestD = Infinity;
+      for (const n of w.work.workable(this.building.id, 'pickaxe')) {
+        const d = Math.hypot(n.x - person.x, n.y - person.y) + Math.random() * 200;
+        if (!taken.has(n) && d < bestD) [best, bestD] = [n, d];
+      }
+      j.target = best;
+      if (!best) return;
+    }
+    const n = j.target;
+    if (!walkTo(w, person, n.x, n.y, person.speed, dt, n.r + 32)) return;
+    person.angle = Math.atan2(n.y - person.y, n.x - person.x);
+    if ((j.swingT -= dt) > 0) return;
+    j.swingT = c.swingSec;
+    j.swinging = 0.4;
+    const got = w.work.hit(n);
+    if (got) {
+      j.carry += got.coal ?? 0;
+      j.target = null;
+    }
+  }
+
+  /** Just outside cell `i`'s door, in the corridor. */
+  #cellDoorPoint(i) {
+    const cell = this.spots.cells[i], d = this.spots.cellDoors[i];
+    const dx = d.x - (cell.x + cell.w / 2), dy = d.y - (cell.y + cell.h / 2), len = Math.hypot(dx, dy) || 1;
+    return { x: d.x + (dx / len) * 40, y: d.y + (dy / len) * 40 };
+  }
+
+  #lockedLongAgo() {
+    return this.time - this.lockedAt > config.prison.curfewWarnSec;
+  }
+
+  /** Is (x, y) inside one of the cells? */
+  inCell(x, y) {
+    return (this.spots?.cells ?? []).some((c) => inRect(c, x, y, 6));
   }
 
   get time() {
@@ -68,6 +177,7 @@ export class Prison {
     const sentence = resume ?? { quota: c.coalPerStar * n, coal: 0, bail: config.police.bailPerStar * n };
     if (p.vehicle) this.world.leaveSeat(p);
     if (p.carrying) this.world.bodies.dropCarried?.(p);
+    if (p.holdingCat) this.world.cats?.putDown(p);
     if (p.hidden) this.world.unhide(p);
     p.robbing = null;
     p.wanted = 0;
@@ -105,8 +215,18 @@ export class Prison {
     this.events.push({ player: p, kind: 'prison_out', how, by });
   }
 
-  /** A clear spot on the parade ground (not on top of anyone). */
+  /** A clear spot in the emptiest cell (or on the parade ground, if the camp has no cells). */
   #spawnSpot(p) {
+    const cells = this.spots.cells ?? [];
+    if (cells.length) {
+      const inside = (c) => [...this.world.players.values()].filter((q) => q !== p && q.alive && inRect(c, q.x, q.y)).length;
+      const cell = cells.reduce((best, c) => (inside(c) < inside(best) ? c : best));
+      for (const dx of [-16, 16, 0]) {
+        const x = cell.x + cell.w / 2 + dx, y = cell.y + cell.h / 2;
+        if (!this.world.isBlocked(x, y, p.radius)) return { x, y };
+      }
+      return { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 };
+    }
     const s = this.spots.spawn;
     for (let k = 0; k < 40; k++) {
       const a = k * 2.4, d = k * 9;
@@ -157,8 +277,9 @@ export class Prison {
 
   // ---- the doors in the wire ---------------------------------------------------------------
 
-  /** The door in the inner fence (a guard's key) and the one in the outer fence (pick it) are locked. */
+  /** The door in the inner fence (a guard's key) and the one in the outer fence (pick it) are locked; the cells at night. */
   lockedFor(door) {
+    if (this.cellDoors?.has(door)) return this.lockdown && !this.unlockedUntil.has(door);
     if (door !== this.keyDoor && door !== this.outerDoor) return false;
     return !this.unlockedUntil.has(door);
   }
@@ -169,7 +290,7 @@ export class Prison {
   }
 
   isPrisonDoor(door) {
-    return Boolean(door) && (door === this.keyDoor || door === this.outerDoor);
+    return Boolean(door) && (door === this.keyDoor || door === this.outerDoor || Boolean(this.cellDoors?.has(door)));
   }
 
   /** E at the inner door with a guard's key in your hotbar: it opens (and the key's used up). */
@@ -182,9 +303,100 @@ export class Prison {
     return true;
   }
 
-  /** The outer door's lock is picked: it swings open. */
+  /** The outer door's (or a cell's) lock is picked: it swings open. */
   picked(door) {
     this.#unlock(door);
+  }
+
+  // ---- lights out, and meal times --------------------------------------------------------------
+
+  /** Seconds into the day, and which day it is (the room sets these from its clock). */
+  #clock() {
+    return { at: this.world.dayClock ?? null, day: this.world.dayNumber ?? 0 };
+  }
+
+  /** The prison guard `guard` (on his rounds): a prisoner out after lights-out for him to deal with, if any. */
+  curfewTarget(guard) {
+    if (!this.lockdown) return null;
+    let best = null, bestD = Infinity;
+    for (const p of this.world.players.values()) {
+      if (!p.alive || !p.jailed?.prison || !p.jailed.out || this.time < p.jailed.out.warnUntil) continue;
+      const d = Math.hypot(p.x - guard.x, p.y - guard.y);
+      if (d < bestD) [best, bestD] = [p, d];
+    }
+    return best;
+  }
+
+  /** A guard's baton: it hurts (never kills) and there's more coal on the quota. */
+  club(guard, p) {
+    const c = config.prison;
+    const out = p.jailed?.out;
+    if (!out || (out.clubbed ?? -Infinity) > this.time - c.clubEverySec) return false;
+    out.clubbed = this.time;
+    p.hurt(Math.min(c.clubDamage, Math.max(0, p.health - 1)));
+    p.jailed.quota += c.curfewCoal;
+    this.#saveSentence(p);
+    this.events.push({ player: p, kind: 'clubbed', extra: c.curfewCoal, quota: p.jailed.quota });
+    return true;
+  }
+
+  #lightsOut(w) {
+    const c = config.prison;
+    if (w.night && !this.lockdown) {
+      this.lockdown = true;
+      this.lockedAt = this.time;
+      for (const door of this.cellDoors) this.unlockedUntil.delete(door);
+      for (const p of w.players.values()) if (p.alive && p.jailed?.prison) this.events.push({ player: p, kind: 'lights_out', sec: c.curfewWarnSec });
+    } else if (!w.night && this.lockdown) {
+      this.lockdown = false;
+      for (const door of this.cellDoors) if (!door.open) { door.open = true; w.pendingDoors.push(door); } // morning: the cells are opened up
+      for (const p of w.players.values()) if (p.jailed?.prison) { p.jailed.out = null; if (p.alive) this.events.push({ player: p, kind: 'cells_open' }); }
+    }
+    if (!this.lockdown) return;
+    // The cell doors swing shut behind whoever's in (not on anyone in a doorway) and stay locked.
+    if (this.time - this.lockedAt > 3) {
+      for (const door of this.cellDoors) {
+        if (!door.open || this.unlockedUntil.has(door)) continue;
+        if ([...w.players.values()].some((o) => o.alive && Math.abs(o.x - (door.x + door.w / 2)) < door.w / 2 + o.radius && Math.abs(o.y - (door.y + door.h / 2)) < door.h / 2 + o.radius)) continue;
+        door.open = false;
+        w.pendingDoors.push(door);
+      }
+    }
+    // Anyone out of the cells: warned (once lights-out's warning has run out, no more warnings).
+    for (const p of w.players.values()) {
+      if (!p.alive || !p.jailed?.prison) continue;
+      if (this.inCell(p.x, p.y)) { p.jailed.out = null; continue; }
+      if (p.jailed.out) continue;
+      const warnUntil = Math.max(this.time, this.lockedAt + c.curfewWarnSec);
+      p.jailed.out = { warnUntil };
+      if (warnUntil > this.time + 1) this.events.push({ player: p, kind: 'curfew_warn', sec: Math.round(warnUntil - this.time) });
+    }
+  }
+
+  /** Morning and evening: the bell, then slop at the kitchen hatch for a while (one bowl each). */
+  #meals(w) {
+    const s = config.prison.slop;
+    const { at, day } = this.#clock();
+    if (at === null || !this.spots.serve) return;
+    const daySec = config.environment.daySec;
+    const times = [0, daySec - 6 * 60]; // first thing, and before lights-out
+    const k = times.findIndex((t) => at >= t && at < t + s.servingSec);
+    const id = k < 0 ? null : day * 2 + k;
+    if (id !== null && id !== this.meal) {
+      for (const p of w.players.values()) if (p.alive && p.jailed?.prison) this.events.push({ player: p, kind: 'meal_bell', meal: k ? 'supper' : 'breakfast' });
+    }
+    this.meal = id;
+    if (id === null) return;
+    const cook = w.townsfolk.people.find((x) => x.job?.kind === 'cook' && !x.fight && !x.flee);
+    if (!cook) return; // (no cook, no slop)
+    const hatch = this.spots.serve;
+    for (const p of w.players.values()) {
+      if (!p.alive || !p.jailed?.prison || p.jailed.meal === id) continue;
+      if (Math.hypot(hatch.x - p.x, hatch.y - p.y) > s.reach + p.radius) continue;
+      p.jailed.meal = id;
+      (p.digesting ??= []).push({ perSec: s.heal / s.healSec, left: s.healSec });
+      this.events.push({ player: p, kind: 'slop' });
+    }
   }
 
   #unlock(door) {
@@ -234,6 +446,14 @@ export class Prison {
     const w = this.world;
     const c = config.prison;
     const b = this.building;
+    for (let i = this.hiring.length - 1; i >= 0; i--) {
+      if ((this.hiring[i].left -= dt) > 0) continue;
+      if (this.hiring[i].kind === 'cook') this.#newCook();
+      else this.#newConvict();
+      this.hiring.splice(i, 1);
+    }
+    this.#lightsOut(w);
+    this.#meals(w);
     const mid = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
     for (const p of w.players.values()) {
       if (p.alive && p.escaping && Math.hypot(p.x - mid.x, p.y - mid.y) > Math.max(b.w, b.h) / 2 + c.sniperRange) this.#gotAway(p);

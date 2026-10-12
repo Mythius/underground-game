@@ -35,6 +35,8 @@ export const ClientMsg = Object.freeze({
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   PRISON: 'prison', // { t, action: 'bail', id (prisoner: yourself or anyone inside) } at the prison warden
   COP: 'cop', // { t, action: 'apply', answers: [option index per question] } | { t, action: 'resign' } at a Militsiya front desk | { t, action: 'arrest' | 'fine', id (player) } as an officer
+  CAT: 'cat', // { t, action: 'feed' (a fish) | 'pickup' | 'drop' | 'pet', id? } a stray cat
+  CROWS: 'crows', // { t } wheat in hand: toss a handful to the crows (uses one)
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
 });
 
@@ -203,6 +205,10 @@ const validators = {
   [ClientMsg.PRISON]: (m) => (m.action === 'bail' && Number.isInteger(m.id) ? { t: m.t, action: 'bail', id: m.id } : null),
 
   [ClientMsg.GANGSTER]: (m) => (Number.isInteger(m.id) && m.action === 'sell' ? { t: m.t, id: m.id, action: 'sell' } : null),
+
+  [ClientMsg.CAT]: (m) => (['feed', 'pickup', 'drop', 'pet'].includes(m.action) && (m.id === undefined || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null),
+
+  [ClientMsg.CROWS]: (m) => ({ t: m.t }),
 
   [ClientMsg.RADIO]: (m) => (m.action === 'toggle' || m.action === 'next' ? { t: m.t, action: m.action } : null),
 

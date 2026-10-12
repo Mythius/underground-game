@@ -116,6 +116,9 @@ export class Room {
     this.env.step(dt);
     this.world.gripScale = 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain');
     this.world.frozen = this.env.season.name === 'winter';
+    this.world.night = this.env.isNight;
+    this.world.dayClock = this.env.clock; // seconds into the day (meal times at the prison)
+    this.world.dayNumber = Math.floor(this.env.time / this.env.cycle);
     if (this.env.time - this.lastEnvBroadcast >= config.environment.broadcastEverySec) {
       this.lastEnvBroadcast = this.env.time;
       this.broadcast({ t: ServerMsg.ENV, ...this.env.state() });
@@ -137,6 +140,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.wolves.events.splice(0)) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.bodies.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -144,6 +151,10 @@ export class Room {
     for (const e of this.world.hires.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
+    for (const e of this.world.cats.events.splice(0)) {
+      const { player, ...rest } = e;
+      if (player) this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
     for (const e of this.world.prison.events.splice(0)) {
       const { player, ...rest } = e;
@@ -352,6 +363,8 @@ export class Room {
       brokenAtms: this.world.brokenAtmList(),
       visionSec: config.economy.visionSec,
       furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
+      cats: { reach: config.cats.reach },
+      crows: { reach: config.crows.reach },
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
       rainGrip: config.environment.rainGrip,
@@ -597,6 +610,23 @@ export class Room {
     const result = this.world.hires.sellVodka(p, msg.id);
     if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
     client.send({ t: ServerMsg.DONE, what: 'vodka_sold', ...result, cash: p.cash });
+  }
+
+  /** A stray cat: feed it a fish, pick it up or put it down, pet it. */
+  cat(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const cats = this.world.cats;
+    const error = msg.action === 'feed' ? cats.feed(p, msg.id) : msg.action === 'pickup' ? cats.pickUp(p, msg.id) : msg.action === 'drop' ? cats.putDown(p) : cats.pet(p, msg.id);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
+  }
+
+  /** Wheat in hand: a handful for the crows (the flocks are drawn by each client; this just uses up the wheat). */
+  crows(client) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const error = this.world.feedCrows(p);
+    if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
   /** The car radio: on/off, next song. */
@@ -862,6 +892,8 @@ export class Room {
           npcs: this.world.townsfolk.visible(cx, cy, config.world.viewDistance),
           bodies: this.world.bodies.near(cx, cy, config.world.viewDistance),
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
+          wolves: this.world.wolves.visible(cx, cy, config.world.viewDistance),
+          cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),
           // Teammates wherever they are, for the map: [player id, x, y, driving].
           team: this.teams.mates(client).filter((c) => c.player?.alive).map((c) => [c.player.id, Math.round(c.player.x), Math.round(c.player.y), c.player.vehicle ? 1 : 0]),

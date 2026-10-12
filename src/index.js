@@ -430,6 +430,12 @@ function handleMessage(client, msg) {
     case ClientMsg.GANGSTER:
       client.room?.gangster(client, msg);
       break;
+    case ClientMsg.CAT:
+      client.room?.cat(client, msg);
+      break;
+    case ClientMsg.CROWS:
+      client.room?.crows(client);
+      break;
     case ClientMsg.INPUT:
       client.room?.handleInput(client, msg);
       break;
