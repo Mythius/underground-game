@@ -68,7 +68,7 @@ export class Fishing {
       // Out a bit further if there's room, so it doesn't sit on the bank.
       const out = Math.min(far, d + 40);
       const [fx, fy] = this.#water(p.x + Math.cos(angle) * out, p.y + Math.sin(angle) * out) ? [p.x + Math.cos(angle) * out, p.y + Math.sin(angle) * out] : [x, y];
-      p.fishing = { x: fx, y: fy, from: { x: p.x, y: p.y }, phase: 'wait', biteAt: this.time + rand(r.biteSec) };
+      p.fishing = { x: fx, y: fy, castAt: { x: fx, y: fy }, from: { x: p.x, y: p.y }, phase: 'wait', biteAt: this.time + rand(r.biteSec) };
       return null;
     }
     return 'no_water';
@@ -206,8 +206,9 @@ export class Fishing {
     for (const p of this.world.players.values()) {
       const f = p.fishing;
       if (!f) continue;
-      // Walked off, put the rod away, got in a car, the lake froze over…: the line comes in.
-      const iced = !f.victim && !this.#water(f.x, f.y);
+      // Walked off, put the rod away, got in a car, the lake froze over…: the line comes in. (Ice is checked
+      // where the float landed: reeling a fish in drags the float toward the bank, and that's not ice.)
+      const iced = !f.victim && this.world.frozen && !this.#water(f.castAt.x, f.castAt.y);
       if (!p.alive || iced || !this.hasRod(p) || p.vehicle || p.hidden || p.jailed || Math.hypot(p.x - f.from.x, p.y - f.from.y) > config.fishing.lineReach) {
         p.fishing = null;
         if (p.alive) this.events.push({ player: p, kind: f.phase === 'bite' ? 'fish_escaped' : 'fish_reeled', why: iced ? 'frozen' : 'moved' });

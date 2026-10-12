@@ -234,3 +234,25 @@ test('in winter the lakes are ice, but the rivers still run: cast into a river o
   Object.assign(p, { x: 2000 - 300 - 40, y: 1500 });
   assert.equal(fishing.cast(p, 0), null, 'the pond in summer');
 });
+
+test('reeling a fish in from a narrow river drags the float to the bank, but that is not ice: the fish is landed', () => {
+  const f = pond();
+  const { world, p } = f;
+  onBank(f);
+  world.water = { ...world.water, rivers: [{ points: [[3200, 0], [3200, 3000]], width: 90 }] };
+  Object.assign(p, { x: 3200 - 45 - 60, y: 1500 }); // a step back from the river's west bank
+  assert.equal(f.fishing.cast(p, 0), null);
+  waitForBite(f);
+  const random = Math.random;
+  try {
+    for (let i = 0; i < config.fishing.pulls; i++) {
+      if (i === config.fishing.pulls - 1) Math.random = () => 0.1; // a fish, not junk
+      assert.equal(pullAt(f, nextMoment(f, true)), null);
+      if (i < config.fishing.pulls - 1) world.step(1 / 30); // (the float's on the bank by now)
+    }
+  } finally {
+    Math.random = random;
+  }
+  assert.ok(!f.fishing.events.some((e) => e.why === 'frozen'), 'no "the lake froze over"');
+  assert.equal(hotbarOf(p).count('fish'), 1, 'landed');
+});

@@ -167,40 +167,57 @@ function warehouse(size) {
   };
 }
 
+/**
+ * A small cobblestone fireplace against a wall, its opening facing (nx, ny) into the room. Solid (you
+ * can't walk into the fire); the client draws the stones, the flames and the warm glow.
+ */
+const fireplace = (x, y, w, h, nx, ny) => ({ x, y, w, h, c: '#7d746a', fireplace: true, nx, ny });
+/** Its chimney on the roof (a little smoke drifts off it). */
+const chimney = (x, y) => ({ x, y, w: 22, h: 22, c: '#6e5a50', chimney: true, small: true });
+/**
+ * Furniture a home comes with, in its own layout coordinates: [kind, x, y, rot]. rot says which way it's
+ * turned (its front faces west, north, east, south for 0, 1, 2, 3). Starter homes get only the bed and
+ * cabinet; the rest is set out in homes nobody owns (and comes with them when bought).
+ */
+const furnish = (list) => list.map(([kind, x, y, rot]) => ({ kind, x, y, rot }));
+
 export const BUILDING_TYPES = {
   house: () => ({
     w: 260, h: 220,
-    walls: [...perimeter(260, 220, 12, { s: door(0.3) }), ...wallLine(false, 160, 12, 208, 10, door(0.5, 56))],
-    decor: [
-      { x: 180, y: 30, w: 60, h: 80, c: '#b9c4d6' }, // bed
-      { x: 180, y: 30, w: 60, h: 18, c: '#e8e8e8' }, // pillow
-      { x: 40, y: 50, w: 70, h: 50, c: '#6b4a2b' }, // table
-      { x: 30, y: 150, w: 90, h: 30, c: '#7a2e2e' }, // sofa
+    walls: [
+      ...perimeter(260, 220, 12, { s: door(0.3) }), ...wallLine(false, 160, 12, 208, 10, door(0.5, 56)),
+      fireplace(12, 122, 20, 44, 1, 0), // on the west wall of the front room
     ],
-    roofDecor: [{ x: 190, y: 40, w: 26, h: 26, c: '#6e2a20' }],
+    decor: [{ x: 32, y: 132, w: 34, h: 24, c: '#6b3a2a' }], // a rag rug before the fire
+    roofDecor: [chimney(10, 133)],
+    furnish: furnish([['bed', 20, 20, 3], ['cabinet', 78, 20, 3], ['table', 205, 140, 0], ['chair', 213, 112, 3]]),
     floor: '#8a6a4a', wall: '#d8cbb0', roof: '#4f6b4a', pattern: 'metal', // green-painted tin roof
   }),
 
   // Five-storey prefab apartment block (khrushchyovka): three stairwell entrances (podezds) on one side.
+  // Three flats, one behind each entrance (walled off from each other: each one can be rented).
   panelka: () => ({
     w: 600, h: 220,
     walls: [
       ...perimeter(600, 220, 14, { s: [{ at: 1 / 6, width: 56 }, { at: 0.5, width: 56 }, { at: 5 / 6, width: 56 }] }),
-      ...wallLine(false, 200, 14, 206, 10, door(0.7, 56)),
-      ...wallLine(false, 400, 14, 206, 10, door(0.7, 56)),
+      ...wallLine(false, 200, 14, 206, 10),
+      ...wallLine(false, 400, 14, 206, 10),
+      ...[0, 1, 2].map((i) => fireplace(i * 200 + 132, 14, 44, 20, 0, 1)), // on each flat's back wall
     ],
     decor: [
       ...[0, 1, 2].flatMap((i) => [
-        { x: 60 + i * 200, y: 120, w: 80, h: 70, c: '#7d7f82' }, // stairwell
-        { x: 30 + i * 200, y: 30, w: 70, h: 60, c: '#7a2e2e' }, // carpet on the wall… and the floor
-        { x: 120 + i * 200, y: 30, w: 60, h: 40, c: '#5a4632' }, // sideboard
+        { x: 60 + i * 200, y: 150, w: 80, h: 40, c: '#7d7f82' }, // the landing by the door
+        { x: 136 + i * 200, y: 36, w: 36, h: 22, c: '#7a2e2e' }, // a rug before the fire
       ]),
     ],
     roofDecor: [
-      ...[0, 1, 2].map((i) => ({ x: 80 + i * 200, y: 90, w: 40, h: 40, c: '#6b6e72' })), // stairwell hatches
-      { x: 160, y: 30, w: 6, h: 60, c: '#3a3a3a' }, // TV aerials
+      ...[0, 1, 2].map((i) => ({ x: 80 + i * 200, y: 150, w: 40, h: 40, c: '#6b6e72' })), // stairwell hatches
+      ...[0, 1, 2].map((i) => chimney(i * 200 + 143, 10)),
+      { x: 60, y: 30, w: 6, h: 60, c: '#3a3a3a' }, // TV aerials
       { x: 430, y: 40, w: 6, h: 50, c: '#3a3a3a' },
     ],
+    rooms: [0, 1, 2].map((i) => ({ x: i * 200 + (i ? 10 : 14), y: 14, w: 200 - (i ? 10 : 14) - (i < 2 ? 0 : 14), h: 192 })), // the flats, for renting
+    furnish: furnish([0, 1, 2].flatMap((i) => [['bed', i * 200 + 24, 22, 3], ['cabinet', i * 200 + 82, 22, 3], ['table', i * 200 + 140, 72, 0], ['chair', i * 200 + 112, 90, 2]])),
     floor: '#9a8a74', wall: '#c9c6bd', roof: '#8c8f93', pattern: 'flat',
   }),
 
@@ -212,12 +229,14 @@ export const BUILDING_TYPES = {
       ...[1, 2, 3, 4].flatMap((i) => wallLine(false, i * 110 - 4, 10, 140, 8)),
     ],
     decor: [
-      { x: 20, y: 20, w: 70, h: 100, c: '#c8b560' }, // a Lada
-      { x: 240, y: 30, w: 60, h: 40, c: '#5a4a3a' }, // junk
-      { x: 350, y: 25, w: 50, h: 50, c: '#3a3a3a', round: true }, // tyres
-      { x: 460, y: 20, w: 70, h: 100, c: '#8a2a2a' },
+      { x: 25, y: 48, w: 62, h: 88, c: '#c8b560' }, // a Lada
+      { x: 240, y: 62, w: 60, h: 40, c: '#5a4a3a' }, // junk
+      { x: 350, y: 62, w: 50, h: 50, c: '#3a3a3a', round: true }, // tyres
+      { x: 462, y: 48, w: 62, h: 88, c: '#8a2a2a' },
     ],
     roofDecor: [],
+    rooms: [0, 1, 2, 3, 4].map((i) => ({ x: i * 110 + (i ? 4 : 10), y: 10, w: 110 - (i ? 4 : 10) - (i < 4 ? 4 : 10), h: 130 })), // the boxes, for renting
+    furnish: furnish([0, 1, 2, 3, 4].map((i) => ['cabinet', i * 110 + 32, 14, 3])), // a cabinet at the back of each box
     floor: '#5a5d61', wall: '#8a7f72', roof: '#7a5a48', pattern: 'metal', // rusty tin
   }),
 
@@ -256,13 +275,10 @@ export const BUILDING_TYPES = {
 
   cabin: () => ({
     w: 180, h: 160,
-    walls: perimeter(180, 160, 14, { e: door(0.5, 56) }),
-    decor: [
-      { x: 24, y: 24, w: 50, h: 70, c: '#5e7a4a' },
-      { x: 100, y: 100, w: 40, h: 30, c: '#4a3020' },
-      { x: 24, y: 120, w: 22, h: 22, c: '#2a2a2a', round: true }, // stove
-    ],
-    roofDecor: [{ x: 30, y: 30, w: 20, h: 20, c: '#3a3a3a' }],
+    walls: [...perimeter(180, 160, 14, { e: door(0.5, 56) }), fireplace(84, 126, 44, 20, 0, -1)], // the fire on the south wall
+    decor: [{ x: 90, y: 100, w: 32, h: 22, c: '#5e3a2a' }], // a rug before it
+    roofDecor: [chimney(95, 136)],
+    furnish: furnish([['bed', 22, 22, 3], ['cabinet', 82, 22, 3], ['chair', 24, 118, 2]]),
     floor: '#7a5434', wall: '#5b3a1e', roof: '#4a3020', pattern: 'planks',
   }),
 
@@ -382,18 +398,23 @@ export const BUILDING_TYPES = {
       ...wallLine(false, 250, 14, 406, 12, [{ at: 0.25, width: 60 }, { at: 0.8, width: 60 }]),
       ...wallLine(true, 200, 14, 250, 12, door(0.5)),
       ...wallLine(true, 200, 262, 506, 12, door(0.3)),
+      fireplace(30, 212, 44, 20, 0, 1), // in the sitting room
     ],
     decor: [
-      { x: 40, y: 40, w: 90, h: 110, c: '#4a5d8a' }, // bed
-      { x: 300, y: 40, w: 160, h: 70, c: '#5a3a24' }, // dining table
-      { x: 40, y: 260, w: 140, h: 40, c: '#7a2e2e' }, // sofa
       { x: 320, y: 280, w: 120, h: 80, c: '#3f6b4a' }, // pool table
       { x: 262, y: 214, w: 244, h: 14, c: '#8b2232' }, // rug
+      { x: 22, y: 236, w: 60, h: 40, c: '#8b2232' }, // a rug before the fire
     ],
     roofDecor: [
-      { x: 60, y: 60, w: 26, h: 26, c: '#2a2a33' },
+      chimney(41, 208),
       { x: 430, y: 330, w: 26, h: 26, c: '#2a2a33' },
     ],
+    furnish: furnish([
+      ['bed', 30, 24, 3], ['bed', 100, 24, 3], ['cabinet', 158, 24, 3], // the bedroom
+      ['table', 300, 70, 1], ['chair', 306, 40, 3], ['chair', 306, 116, 1], ['chair', 370, 78, 0], // the dining room
+      ['furniture', 30, 330, 1], ['chair', 130, 290, 0], // by the fire
+      ['cabinet', 440, 370, 1],
+    ]),
     floor: '#7d5a3c', wall: '#efe6d2', roof: '#3b3b46', pattern: 'shingle',
   }),
 
@@ -923,6 +944,8 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     grid: layout.grid ? move(layout.grid) : null,
     work: layout.work ? move(layout.work) : null, // work sites: where the rocks / trees / wheat are
     roofs: (layout.roofs ?? []).map(move), // separate roofs over buildings inside an open-air site
+    rooms: layout.rooms ? layout.rooms.map(move) : null, // rooms to rent (panelka flats, garage boxes)
+    furnish: layout.furnish ?? null, // the furniture it comes with, in layout coordinates (see Furnishings.loadIn)
     size: size ? { w: layout.w, h: layout.h } : null, // work sites are sized to their block
     docks: layout.docks ? { in: move(layout.docks.in), out: move(layout.docks.out) } : null,
     // The prison: its spots (points) and the inside of the inner fence (a rect), placed like the rest.

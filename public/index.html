@@ -124,6 +124,15 @@
       padding: .8rem .9rem; border-radius: .8rem; background: rgba(22, 22, 22, .94); border: 2px solid #f4c430; text-align: left; font-size: .82rem;
       box-shadow: 0 10px 40px rgba(0, 0, 0, .5); scrollbar-color: #555 transparent; scrollbar-width: thin; }
     #wh h2 { margin: 0 0 .2rem; font-size: 1.05rem; }
+    #homepanel { position: fixed; right: 1rem; top: 4.5rem; z-index: 5; width: min(340px, calc(100vw - 2rem)); max-height: calc(100vh - 12rem); overflow-y: auto;
+      padding: .8rem .9rem; border-radius: .8rem; background: rgba(22, 22, 22, .94); border: 2px solid #c9a46a; text-align: left; font-size: .82rem;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, .5); scrollbar-color: #555 transparent; scrollbar-width: thin; }
+    #homepanel h2 { margin: 0 0 .2rem; font-size: 1.05rem; }
+    #homepanel .sub { color: #aaa; margin-bottom: .5rem; }
+    #homepanel .sec { background: #262626; border-radius: .5rem; padding: .45rem .6rem; margin-bottom: .5rem; color: #ccc; line-height: 1.5; }
+    #homepanel .note { color: #999; font-size: .75rem; margin-top: .3rem; }
+    #homepanel .room { display: flex; align-items: center; justify-content: space-between; gap: .4rem; margin: .25rem 0; }
+    #homepanel .room button { flex: none; }
     #wh .sub { color: #aaa; margin-bottom: .5rem; }
     #wh .sec { background: #262626; border-radius: .5rem; padding: .45rem .6rem; margin-bottom: .5rem; color: #ccc; line-height: 1.5; }
     #wh .note { color: #999; font-size: .75rem; margin-top: .3rem; }
@@ -430,7 +439,7 @@
     body.touch #chat-log { max-height: 18vh; }
     body.touch #chat:not(.typing) #chat-input { position: absolute; opacity: 0; pointer-events: none; height: 0; padding: 0; border: 0; }
     body.touch #place, body.touch #wh, body.touch #jobs, body.touch #shop, body.touch #bankpanel, body.touch #bodypanel,
-    body.touch #furnishpanel, body.touch #garagepanel, body.touch #trunk { max-width: calc(100vw - 1rem); max-height: 78vh; overflow: auto; box-sizing: border-box; }
+    body.touch #furnishpanel, body.touch #garagepanel, body.touch #trunk, body.touch #homepanel { max-width: calc(100vw - 1rem); max-height: 78vh; overflow: auto; box-sizing: border-box; }
   </style>
 </head>
 <body>
@@ -465,7 +474,7 @@
     <div id="chat-log" aria-live="polite"></div>
     <input id="chat-input" maxlength="120" autocomplete="off" placeholder="Press Enter to chat">
   </div>
-  <p id="hint" hidden>WASD move · Shift sprint (in a car: drift) · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B warehouse · G bribe · C car lights · H siren (Militsiya car) · V radio / N next song · J jobs · Space boost (vodka in the car) · M map</p>
+  <p id="hint" hidden>WASD move · Shift sprint (in a car: drift) · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B buy / rent property · G bribe · C car lights · H siren (Militsiya car) · V radio / N next song · J jobs · Space boost (vodka in the car) · M map</p>
   <div id="top-right">
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
@@ -493,6 +502,7 @@
   <div id="coins" hidden title="Cash you carry (dropped if you die) · money in the bank (safe)">💵 0 ₽</div>
   <div id="place" hidden role="dialog" aria-label="Market or factory"></div>
   <div id="wh" hidden role="dialog" aria-label="Warehouse"></div>
+  <div id="homepanel" hidden role="dialog" aria-label="Home"></div>
   <div id="trunk" hidden role="dialog" aria-label="Vehicle trunk"></div>
   <div id="bodypanel" hidden role="dialog" aria-label="Body"></div>
   <div id="furnishpanel" hidden role="dialog" aria-label="Cabinet"></div>
@@ -636,6 +646,10 @@
     let cabinetView = null; // [id, slots] of the cabinet I have open, from the server
     let myHome = null; // [building id, garage x, y]
     let storedFactories = []; // sizes of my saved factories waiting to be loaded into a free warehouse (after a restart)
+    let storedHomes = { own: [], rent: [] }; // types of my homes (and rented rooms' things) waiting from before a restart
+    let homeCfg = { prices: {}, rent: {}, sellBack: 0.5, npcRent: 0, buyReach: 260 };
+    const homeProps = new Map(); // building id -> [id, owner name | null, starter (1/0), [tenant name | null per room] | null]
+    let fireplaces = []; // every fireplace on the map (walls with fireplace: true), for their glow
     let storedReminded = false;
     const explosions = []; // { x, y, start }
     let doorReach = 45;
@@ -707,6 +721,12 @@
     function applyWelcome(msg) {
       world = msg.world;
       buildings = msg.buildings ?? [];
+      if (msg.homes) {
+        homeCfg = msg.homes;
+        homeProps.clear();
+        for (const r of msg.homes.props ?? []) homeProps.set(r[0], r);
+      }
+      fireplaces = buildings.flatMap((b) => b.walls.filter((w) => w.fireplace));
       // The prison's inner fence: a concrete section where its door would be, dug through with a pickaxe.
       prisonWall.door = null;
       for (const b of buildings) {
@@ -867,6 +887,9 @@
           if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
           if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the outer fence (north side) opens with it', 5000); }
           if (msg.kind === 'prison_wall') prisonWall.hits = msg.hits;
+          if (msg.kind === 'rent_paid') toast(`🔑 Rent paid for your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}: ${money(msg.amount)}`);
+          if (msg.kind === 'rent_in') toast(msg.from ? `🏢 ${msg.from} paid you ${money(msg.amount)} rent (${HOME_NAMES[msg.type] ?? 'home'})` : `🏢 Rent from the tenants in your ${HOME_NAMES[msg.type]?.toLowerCase() ?? 'building'}: ${money(msg.amount)}`);
+          if (msg.kind === 'evicted') { sfx('error'); toast(msg.why === 'unpaid' ? `🔑 You couldn't pay the rent — you're out of your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}. What you stored waits for your next one.` : `🔑 The building was sold — you're out of your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}. What you stored waits for your next one.`, 6000); }
           if (msg.kind === 'wall_caught') { sfx('error'); toast(`👮 A guard saw you digging — the hole's filled in, and he's coming with his baton · ${msg.extra} more coal on your quota (${msg.quota})`, 5000); }
           if (msg.kind === 'beaten') sfx('bat');
           if (msg.kind === 'wall_through') { sfx('alarm'); toast('⛏ Through the wall! Into the strip — the door in the outer fence opens with a guard\'s key', 5000); }
@@ -970,6 +993,11 @@
         case 'radio_changed':
           loadPlaylist();
           break;
+        case 'props':
+          homeProps.clear();
+          for (const r of msg.list) homeProps.set(r[0], r);
+          if (homeOpen) renderHome();
+          break;
         case 'owners':
           econ.owners = new Map(msg.list);
           buildMinimap();
@@ -993,6 +1021,15 @@
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
           if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked out front`);
+          if (msg.what?.startsWith('home_')) {
+            const b = buildings[msg.id - 1], name = HOME_NAMES[b?.type] ?? 'home', room = ROOM_NAMES[b?.type] ?? 'room';
+            if (msg.what === 'home_buy') { sfx('coin'); toast(`🏠 The ${name.toLowerCase()} is yours — furnished. Pick up and put down furniture to move it.`, 5000); }
+            if (msg.what === 'home_bring') toast(`📦 Your ${name.toLowerCase()} is back — furniture, cabinets and all`);
+            if (msg.what === 'home_sell') { sfx('coin'); toast(`🏠 Sold the ${name.toLowerCase()}`); }
+            if (msg.what === 'home_rent') { sfx('coin'); toast(`🔑 ${room} ${msg.room + 1} is yours — its cabinet is locked storage only you can open. Rent comes from your bank each dawn.`, 5000); }
+            if (msg.what === 'home_leave') toast(`🔑 You gave up the ${room.toLowerCase()} — anything you left in its cabinet waits for your next one`);
+            if (homeOpen) renderHome();
+          }
           if (msg.what === 'drop_cash') toast(`💵 Dropped ${money(msg.amount)} on the ground`);
           if (msg.what === 'team_invite') toast('👥 Invite sent');
           if (msg.what === 'hire_goon') toast('🥊 A goon is with you now — he follows you and gets in your car');
@@ -1051,7 +1088,9 @@
           if (!['chat_too_fast', 'join_first'].includes(msg.code)) sfx('error');
           if (msg.code === 'not_enough_cash') toast('Not enough cash — withdraw some at an ATM');
           if (msg.code === 'not_enough_bank') toast("You don't have that much in the bank");
-          if (ECON_ERRORS[msg.code]) toast(ECON_ERRORS[msg.code]);
+          if (FURN_ERRORS[msg.code]) toast(FURN_ERRORS[msg.code]);
+          else if (homeOpen && HOME_ERRORS[msg.code]) toast(HOME_ERRORS[msg.code]);
+          else if (ECON_ERRORS[msg.code]) toast(ECON_ERRORS[msg.code]);
           else if (WH_ERRORS[msg.code]) toast(WH_ERRORS[msg.code]);
           if (msg.code === 'already_playing') { toast('This account is already playing somewhere else (another tab or device)'); play.disabled = false; }
           if (msg.code === 'session_expired') {
@@ -1211,6 +1250,19 @@
         fish: (g) => { // a river fish
           E(g, 30, 32, 22, 11, '#7f9aa8'); E(g, 30, 35, 18, 6, '#c9d6dc');
           P(g, [[50, 32], [62, 20], [62, 44]], '#6c8794'); C(g, 16, 29, 2.5, '#1e1f22'); L(g, 22, 26, 22, 38, 'rgba(0,0,0,.25)', 2);
+        },
+        table: (g) => { // a plank table with a lace runner and a glass of tea
+          RR(g, 6, 14, 52, 36, 4, '#9a6a3c', '#4a2f18');
+          for (const y of [23, 32, 41]) R(g, 8, y, 48, 1.5, 'rgba(60,35,15,.45)');
+          R(g, 25, 16, 14, 32, 'rgba(245,240,228,.92)');
+          C(g, 32, 26, 6, '#e9edf0'); C(g, 32, 26, 4, '#3b6ea5'); C(g, 32, 26, 3, '#e9edf0');
+          C(g, 33, 40, 4, '#c9a227'); C(g, 33, 40, 2.6, '#8a3b12');
+          R(g, 8, 50, 5, 9, '#5a3a1e'); R(g, 51, 50, 5, 9, '#5a3a1e');
+        },
+        chair: (g) => { // a wooden chair with a red cushion, seen three-quarter
+          R(g, 16, 6, 6, 44, '#6b4424'); R(g, 42, 6, 6, 44, '#6b4424'); R(g, 16, 8, 32, 6, '#7a5030'); R(g, 16, 20, 32, 4, '#7a5030');
+          RR(g, 12, 30, 40, 12, 3, '#93623a', '#3f2614'); RR(g, 15, 28, 34, 8, 3, '#a5473a');
+          R(g, 14, 42, 5, 16, '#5a3a1e'); R(g, 45, 42, 5, 16, '#5a3a1e');
         },
         cabinet: (g) => { // a wooden cabinet with drawers
           R(g, 14, 6, 36, 52, '#7a5232'); R(g, 14, 6, 36, 4, '#9a6a42');
@@ -3033,10 +3085,136 @@
     }
     function closeBody() { bodyOpen = null; bodyEl.hidden = true; }
 
+    // ---- homes: buy one (one of each type), load a saved one in, sell it; rent a flat or garage box ----
+
+    const homeEl = document.getElementById('homepanel');
+    const HOME_NAMES = { cabin: 'Cabin', house: 'House', mansion: 'Mansion', panelka: 'Panelka', garages: 'Lock-up garages' };
+    const ROOM_NAMES = { panelka: 'Flat', garages: 'Garage box' };
+    const HOME_ERRORS = {
+      already_owned: 'Someone already owns it',
+      someones_home: "Someone lives here — it's their starter home",
+      one_per_type: 'You already have one of these',
+      load_saved_instead: 'You have a saved one of these from before — load it in instead',
+      nothing_stored: "You don't have a saved one of these",
+      not_owner: "It isn't yours",
+      empty_cabinets_first: 'Empty your cabinets first',
+      room_taken: 'Someone already rents that one',
+      its_yours: "It's your own building",
+      not_your_room: "That isn't your room",
+      need_account: 'Guests cannot own or rent homes',
+      too_far: 'Walk up to it first',
+    };
+    let homeOpen = null; // building id whose panel is open
+    let homeKey = '';
+    let homeTimer = 0;
+    const isHomeType = (type) => type in (homeCfg.prices ?? {});
+    function nearHome() {
+      if (!me) return null;
+      let best = null, bestD = Infinity;
+      for (const b of buildings) {
+        if (!isHomeType(b.type)) continue;
+        const d = Math.hypot(Math.max(b.x - me.x, 0, me.x - (b.x + b.w)), Math.max(b.y - me.y, 0, me.y - (b.y + b.h)));
+        if (d < Math.min(150, homeCfg.buyReach) && d < bestD) [best, bestD] = [b, d];
+      }
+      return best;
+    }
+    function openHome(b) {
+      homeOpen = b.id;
+      homeKey = '';
+      renderHome();
+      clearInterval(homeTimer);
+      homeTimer = setInterval(() => homeOpen && renderHome(), 500);
+    }
+    function closeHome() {
+      homeOpen = null;
+      homeEl.hidden = true;
+      clearInterval(homeTimer);
+    }
+    function homeSend(action, extra = {}) { send({ t: 'home', id: homeOpen, action, ...extra }); }
+    function renderHome() {
+      const b = buildings[homeOpen - 1];
+      if (!b || !me || !playing) return closeHome();
+      const away = Math.hypot(Math.max(b.x - me.x, 0, me.x - (b.x + b.w)), Math.max(b.y - me.y, 0, me.y - (b.y + b.h)));
+      if (away > homeCfg.buyReach + 150) return closeHome();
+      const [, owner, starter, rooms] = homeProps.get(b.id) ?? [b.id, null, 0, null];
+      const price = homeCfg.prices[b.type];
+      const mine = Boolean(owner) && owner === wh.account && !starter;
+      const myStarter = myHome && myHome[0] === b.id;
+      const haveType = [...homeProps.values()].some(([id, o, st]) => !st && o === wh.account && buildings[id - 1]?.type === b.type);
+      const saved = storedHomes.own.includes(b.type);
+      const key = JSON.stringify([homeOpen, owner, starter, rooms, mine, haveType, saved, storedHomes.rent, bankBalance >= price]);
+      if (key === homeKey && !homeEl.hidden) return;
+      homeKey = key;
+      homeEl.hidden = false;
+      homeEl.replaceChildren();
+      const h = document.createElement('h2');
+      h.textContent = `🏠 ${HOME_NAMES[b.type] ?? 'Home'}`;
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      homeEl.append(h, sub);
+      const section = (title) => {
+        const div = document.createElement('div');
+        div.className = 'sec';
+        if (title) { const t = document.createElement('b'); t.textContent = title; div.append(t, document.createElement('br')); }
+        homeEl.append(div);
+        return div;
+      };
+      const note = (parent, text) => parent.append(Object.assign(document.createElement('div'), { className: 'note', textContent: text }));
+      if (myStarter) {
+        sub.textContent = '★ Your starter home — free. You come back here, and the car pad outside is your garage.';
+      } else if (starter) {
+        sub.textContent = `🏠 ${owner}'s home`;
+      } else if (mine) {
+        sub.textContent = `★ Yours · sells back for ${money(Math.floor(price * homeCfg.sellBack))}`;
+        const s = section();
+        s.append('Furnish it how you like: select a cabinet, bed, sofa, table or chair in your hotbar inside and press E to set it down; E on one of yours picks it back up to move it.');
+        if (rooms) note(s, `Tenants pay you ${money(homeCfg.rent[b.type])} a day each, and NPC tenants about ${money(homeCfg.npcRent)} a day for the ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}s no player rents.`);
+        homeEl.append(button(`Sell for ${money(Math.floor(price * homeCfg.sellBack))}`, () => { if (confirm('Sell it? Furniture you leave in it stays with it, and any tenants have to move out.')) homeSend('sell'); }));
+      } else if (owner) {
+        sub.textContent = `🔒 Owned by ${owner}`;
+      } else {
+        sub.textContent = `For sale: ${money(price)} from your bank`;
+        const s = section();
+        s.append('Comes furnished, with a fire going. Place and move furniture in it as you like; it is locked to everyone else. You can own one of each kind of home, on top of your starter home.');
+        if (saved) {
+          note(section(), `📦 You have a saved ${HOME_NAMES[b.type].toLowerCase()} from before the restart — load its furniture in here, cabinets and all, free.`);
+          homeEl.append(button(`📦 Load my saved ${HOME_NAMES[b.type].toLowerCase()} here`, () => homeSend('bring'), { cls: 'big go' }));
+        }
+        homeEl.append(button(haveType ? 'You already have one of these' : `Buy for ${money(price)}`, () => homeSend('buy'), { disabled: haveType || saved || bankBalance < price, cls: 'big go' }));
+      }
+      if (b.rooms && !starter) {
+        const s = section(`${ROOM_NAMES[b.type]}s to rent · ${money(homeCfg.rent[b.type])} a day`);
+        const rentingHere = (rooms ?? []).includes(wh.account);
+        const rentingType = [...homeProps.values()].some(([id, , , rs]) => rs?.includes(wh.account) && buildings[id - 1]?.type === b.type);
+        b.rooms.forEach((_, i) => {
+          const tenant = rooms?.[i] ?? null;
+          const row = document.createElement('div');
+          row.className = 'room';
+          const label = document.createElement('span');
+          label.textContent = `${ROOM_NAMES[b.type]} ${i + 1} — ${tenant ? (tenant === wh.account ? '★ yours' : `rented by ${tenant}`) : 'free'}`;
+          row.append(label);
+          if (tenant === wh.account) row.append(button('Leave', () => homeSend('leave', { room: i })));
+          else if (!tenant && !mine && !rentingType) row.append(button('Rent', () => homeSend('rent', { room: i }), { disabled: bankBalance < homeCfg.rent[b.type], cls: 'go' }));
+          s.append(row);
+        });
+        note(s, `Storage only: your ${ROOM_NAMES[b.type].toLowerCase()}'s door and its cabinet are locked to everyone but you. Rent is taken from your bank at every dawn — can't pay and you're out (what you stored waits for your next one).`);
+        if (storedHomes.rent.includes(b.type) && !rentingHere) note(s, `📦 Your things from your last ${ROOM_NAMES[b.type].toLowerCase()} will be in the cabinet of the next one you rent.`);
+      }
+      note(homeEl, 'B or Esc to close.');
+    }
+
     // ---- furniture: cabinets, beds and sofas placed in your home or warehouse ----------------------
 
     const furnEl = document.getElementById('furnishpanel');
-    const FURN_NAMES = { cabinet: '🗄️ Cabinet', bed: '🛏️ Bed', furniture: '🛋️ Sofa' };
+    const FURN_NAMES = { cabinet: '🗄️ Cabinet', bed: '🛏️ Bed', furniture: '🛋️ Sofa', table: '🍽️ Table', chair: '🪑 Chair' };
+    const FURN_WORDS = { cabinet: 'cabinet', bed: 'bed', furniture: 'sofa', table: 'table', chair: 'chair' };
+    const FURN_ERRORS = {
+      not_your_place: 'Furniture goes in your own home or warehouse',
+      too_many_here: 'There are already as many of those here as will fit',
+      no_space: 'No room for it there — try facing another way, or somewhere else',
+      empty_it_first: 'Empty the cabinet first',
+      rented_out: "That's a tenant's cabinet — it's theirs while they rent the room",
+    };
     const furnRect = (f) => ({ x: f[2], y: f[3], w: f[4], h: f[5] });
     const mineFurn = (f) => Boolean(f[8]) && f[8] === wh.account;
     /** Edge-to-edge distance from me to a placed thing. */
@@ -3085,7 +3263,7 @@
           furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Click a slot to take it; drag from your hotbar (or select it and press the button) to put it in. Anything goes: goods, food, guns, your rod. E or Esc to close.' }));
         }
       } else {
-        furnEl.append(act(`🫳 Pick up the ${f[1] === 'bed' ? 'bed' : 'sofa'}`, () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
+        furnEl.append(act(`🫳 Pick up the ${FURN_WORDS[f[1]] ?? 'furniture'}`, () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
         furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Back into your hotbar, to put down somewhere else. E or Esc to close.' }));
       }
     }
@@ -3097,7 +3275,8 @@
       if (!me || me.car || riding || !isGoods(w) || !furn.kinds[w[1]]) return null;
       const b = buildings.find((x) => me.x > x.x && me.x < x.x + x.w && me.y > x.y && me.y < x.y + x.h);
       if (!b) return null;
-      const mine = (myHome && myHome[0] === b.id) || (econ.owners.get(b.id) ?? wh.layouts.get(b.id)?.owner) === wh.account;
+      const prop = homeProps.get(b.id);
+      const mine = (myHome && myHome[0] === b.id) || (prop && !prop[2] && prop[1] === wh.account) || (econ.owners.get(b.id) ?? wh.layouts.get(b.id)?.owner) === wh.account;
       return mine ? { kind: w[1], b } : null;
     }
     /** Where it would go (same rule as the server): in front of me, the long side across the way I face. */
@@ -3117,24 +3296,106 @@
       ctx.rotate((rot * Math.PI) / 2 + Math.PI); // drawn with its front (handles, seat, foot of the bed) toward whoever put it there
       const [w, h] = rot % 2 ? [r.h, r.w] : [r.w, r.h]; // w = depth, h = width
       if (ghost) ctx.globalAlpha = 0.45;
-      ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w, h); // shadow
-      if (kind === 'cabinet') {
-        ctx.fillStyle = '#6b4626'; ctx.fillRect(-w / 2, -h / 2, w, h);
-        ctx.fillStyle = '#8e6038'; ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6);
-        ctx.strokeStyle = '#4a2f18'; ctx.lineWidth = 1.5;
-        for (let i = 1; i < 3; i++) { const y = -h / 2 + (h * i) / 3; ctx.beginPath(); ctx.moveTo(-w / 2 + 3, y); ctx.lineTo(w / 2 - 3, y); ctx.stroke(); }
-        ctx.fillStyle = '#d4b07a';
-        for (let i = 0; i < 3; i++) ctx.fillRect(w / 2 - 6, -h / 2 + (h * (i + 0.5)) / 3 - 2, 3, 4); // handles on the front
-      } else if (kind === 'bed') {
-        ctx.fillStyle = '#5a3a1e'; ctx.fillRect(-w / 2, -h / 2, w, h); // frame
-        ctx.fillStyle = '#ecf0f1'; ctx.fillRect(-w / 2 + 3, -h / 2 + 3, w - 6, h - 6); // sheet
-        ctx.fillStyle = '#fdfdfd'; ctx.fillRect(-w / 2 + 5, -h / 2 + 6, w * 0.22, h - 12); // pillow at the head (the back)
-        ctx.fillStyle = '#2e6da4'; ctx.fillRect(-w / 2 + w * 0.32, -h / 2 + 3, w * 0.68 - 3, h - 6); // blanket
-        ctx.strokeStyle = '#5a8fc4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-w / 2 + w * 0.32, -h / 2 + 3); ctx.lineTo(-w / 2 + w * 0.32, h / 2 - 3); ctx.stroke();
-      } else { // a sofa: back, arms, cushions
-        ctx.fillStyle = '#7a3026'; ctx.fillRect(-w / 2, -h / 2, w, h);
-        ctx.fillStyle = '#a5473a'; ctx.fillRect(-w / 2 + w * 0.35, -h / 2 + 6, w * 0.65 - 2, h - 12);
-        ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(-w / 2 + w * 0.35, 0); ctx.lineTo(w / 2 - 2, 0); ctx.stroke();
+      const rr = (x, y, rw, rh, rad, fill, stroke, lw = 1) => {
+        ctx.beginPath(); ctx.roundRect(x, y, rw, rh, rad);
+        ctx.fillStyle = fill; ctx.fill();
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+      };
+      const lin = (x0, y0, x1, y1, stops) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); stops.forEach(([t, c]) => g.addColorStop(t, c)); return g; };
+      const L = -w / 2, T = -h / 2; // back-left corner (the front is +x)
+      // Soft shadow on the floor, offset away from the light.
+      ctx.save(); ctx.shadowColor = 'rgba(0, 0, 0, .45)'; ctx.shadowBlur = 6; ctx.shadowOffsetX = 3; ctx.shadowOffsetY = 4;
+      rr(L, T, w, h, kind === 'cabinet' ? 2 : 5, 'rgba(0, 0, 0, .35)');
+      ctx.restore();
+      if (kind === 'cabinet') { // a chest of drawers: polished top with grain, drawer fronts and brass pulls along the front edge
+        rr(L, T, w, h, 2, '#4a2f18');
+        rr(L + 1.5, T + 1.5, w - 3, h - 3, 1.5, lin(L, 0, w / 2, 0, [[0, '#7a5030'], [0.6, '#9a6a3e'], [1, '#a8774a']]));
+        const rnd = seeded(Math.round(r.x * 7 + r.y * 13) % 2147483646 + 1); // the grain runs across the top
+        ctx.lineWidth = 0.8;
+        for (let k = 0; k < 7; k++) {
+          const y = T + 3 + rnd() * (h - 6), bend = (rnd() - 0.5) * 3;
+          ctx.strokeStyle = rnd() < 0.5 ? 'rgba(70, 40, 18, .35)' : 'rgba(200, 150, 100, .25)';
+          ctx.beginPath(); ctx.moveTo(L + 3, y); ctx.quadraticCurveTo(0, y + bend, w / 2 - 7, y - bend * 0.5); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(255, 235, 200, .18)'; ctx.fillRect(L + 2, T + 2, w - 9, 2); // light along the back edge
+        // The front: three drawer faces, each with a brass pull.
+        const fx = w / 2 - 6;
+        ctx.fillStyle = '#6e4627'; ctx.fillRect(fx, T + 1.5, 4.5, h - 3);
+        for (let k = 0; k < 3; k++) {
+          const y0 = T + 2 + ((h - 4) * k) / 3, dh = (h - 4) / 3;
+          rr(fx + 0.5, y0 + 0.6, 3.5, dh - 1.2, 0.8, lin(fx, 0, fx + 4, 0, [[0, '#8a5a32'], [1, '#5e3b1f']]));
+          rr(fx + 2.6, y0 + dh / 2 - 2.4, 2.6, 4.8, 1.2, '#e2bd6a', '#8a6a2a', 0.6);
+        }
+      } else if (kind === 'bed') { // headboard at the back, two pillows, a sheet turned down over a quilted blanket
+        const head = Math.max(6, w * 0.08);
+        rr(L, T, w, h, 4, '#4f321a'); // the frame
+        rr(L, T, head, h, 3, lin(L, 0, L + head, 0, [[0, '#5e3b1f'], [1, '#8a5a32']]), '#3b2412', 1); // headboard
+        ctx.strokeStyle = 'rgba(40, 22, 10, .45)'; ctx.lineWidth = 0.8;
+        for (let k = 1; k < 4; k++) { ctx.beginPath(); ctx.moveTo(L + 1.5, T + (h * k) / 4); ctx.lineTo(L + head - 1.5, T + (h * k) / 4); ctx.stroke(); } // its slats
+        rr(w / 2 - 3, T + 1, 3, h - 2, 1.5, '#6b4424'); // footboard
+        const mx = L + head + 1, mw = w - head - 5;
+        rr(mx, T + 3, mw, h - 6, 4, '#f4f1ea', 'rgba(0, 0, 0, .15)'); // mattress and sheet
+        // Pillows: plump, with a crease and a shadow on the sheet.
+        const pillows = h > 44 ? 2 : 1, pw = Math.min(16, mw * 0.2), ph = (h - 10 - (pillows - 1) * 3) / pillows;
+        for (let k = 0; k < pillows; k++) {
+          const py = T + 5 + k * (ph + 3);
+          rr(mx + 3 + 1.5, py + 1.5, pw, ph, 5, 'rgba(0, 0, 0, .12)');
+          rr(mx + 3, py, pw, ph, 5, lin(mx + 3, 0, mx + 3 + pw, 0, [[0, '#ffffff'], [1, '#dfe3e8']]), '#b9c0c8', 0.8);
+          ctx.strokeStyle = 'rgba(150, 160, 170, .6)'; ctx.lineWidth = 0.8;
+          ctx.beginPath(); ctx.moveTo(mx + 3 + pw / 2, py + 3); ctx.quadraticCurveTo(mx + 3 + pw / 2 + 1.5, py + ph / 2, mx + 3 + pw / 2, py + ph - 3); ctx.stroke();
+        }
+        // The blanket: over the foot end and down both sides, its top turned back.
+        const bx = mx + pw + 8, bw = w / 2 - 3 - bx;
+        rr(bx, T + 1, bw, h - 2, 4, lin(0, T, 0, -T, [[0, '#24578a'], [0.5, '#2f6fae'], [1, '#24578a']]), '#1c4670', 1);
+        ctx.strokeStyle = 'rgba(160, 200, 240, .35)'; ctx.lineWidth = 0.8; // quilting
+        for (let qx = bx + 9; qx < bx + bw - 3; qx += 9) { ctx.beginPath(); ctx.moveTo(qx, T + 3); ctx.lineTo(qx, -T - 3); ctx.stroke(); }
+        for (let qy = T + 9; qy < -T - 3; qy += 9) { ctx.beginPath(); ctx.moveTo(bx + 6, qy); ctx.lineTo(bx + bw - 2, qy); ctx.stroke(); }
+        rr(bx - 1, T + 1, 6, h - 2, 2, lin(bx, 0, bx + 6, 0, [[0, '#ffffff'], [1, '#d9dee4']]), '#c3c9d0', 0.6); // the sheet turned down over it
+      } else if (kind === 'table') { // a plank-top kitchen table with a lace runner, a glass of tea and a plate
+        rr(L, T, w, h, 3, '#4a2f18');
+        rr(L + 1.5, T + 1.5, w - 3, h - 3, 2.5, lin(L, T, -L, -T, [[0, '#8a5a32'], [0.5, '#a3703f'], [1, '#86552e']]));
+        ctx.strokeStyle = 'rgba(60, 35, 15, .45)'; ctx.lineWidth = 0.9; // the planks run front to back
+        for (let k = 1; k < 4; k++) { const y = T + (h * k) / 4; ctx.beginPath(); ctx.moveTo(L + 2, y); ctx.lineTo(-L - 2, y); ctx.stroke(); }
+        const rnd = seeded(Math.round(r.x * 11 + r.y * 5) % 2147483646 + 1);
+        ctx.strokeStyle = 'rgba(210, 160, 110, .25)'; ctx.lineWidth = 0.7;
+        for (let k = 0; k < 6; k++) { const y = T + 3 + rnd() * (h - 6); ctx.beginPath(); ctx.moveTo(L + 3, y); ctx.lineTo(L + 3 + rnd() * (w - 6), y + (rnd() - 0.5) * 1.5); ctx.stroke(); }
+        rr(-w * 0.18, T + 3, w * 0.36, h - 6, 2, 'rgba(245, 240, 228, .9)', 'rgba(200, 190, 170, .9)', 0.6); // the runner
+        ctx.strokeStyle = 'rgba(190, 175, 150, .8)'; ctx.lineWidth = 0.6;
+        for (let y = T + 6; y < -T - 4; y += 4) { ctx.beginPath(); ctx.arc(0, y, 1.2, 0, Math.PI * 2); ctx.stroke(); } // lace
+        const plate = Math.min(w, h) * 0.17;
+        ctx.fillStyle = '#e9edf0'; ctx.beginPath(); ctx.arc(0, -h * 0.22, plate, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#3b6ea5'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(0, -h * 0.22, plate * 0.7, 0, Math.PI * 2); ctx.stroke(); // a blue rim
+        ctx.fillStyle = '#c9a227'; ctx.beginPath(); ctx.arc(w * 0.08, h * 0.22, 3.6, 0, Math.PI * 2); ctx.fill(); // the glass holder
+        ctx.fillStyle = '#8a3b12'; ctx.beginPath(); ctx.arc(w * 0.08, h * 0.22, 2.4, 0, Math.PI * 2); ctx.fill(); // tea
+      } else if (kind === 'chair') { // a wooden chair: the back rail behind, a seat with a worn cushion
+        rr(L + 1, T + 1, w - 2, h - 2, 3, lin(L, 0, -L, 0, [[0, '#6b4424'], [1, '#93623a']]), '#3f2614', 1); // the seat
+        rr(L + 4, T + 4, w - 9, h - 8, 3, lin(L, T, -L, -T, [[0, '#7a3328'], [1, '#a5473a']])); // the cushion
+        ctx.fillStyle = 'rgba(255, 220, 200, .2)'; ctx.fillRect(L + 6, T + 6, w - 13, 1.5);
+        rr(L - 1, T, 5, h, 2, lin(L, 0, L + 5, 0, [[0, '#4a2c16'], [1, '#7a5030']]), '#2f1c0e', 0.8); // the back rail
+        ctx.fillStyle = '#3f2614'; for (const y of [T + 1, -T - 4]) ctx.fillRect(L, y, 3, 3); // the posts
+      } else { // a sofa: a padded back, rolled arms, and seat cushions with a seam and buttons
+        const back = Math.max(7, w * 0.3), arm = Math.max(6, Math.min(10, h * 0.13));
+        const dark = '#6e2a21', mid = '#9c4234', light = '#bb5a49';
+        rr(L, T, w, h, 6, dark); // the frame under it all
+        rr(L, T, back, h, 5, lin(L, 0, L + back, 0, [[0, '#5e231c'], [1, mid]]), '#4f1d17', 1); // the back
+        for (const side of [-1, 1]) { // the arms, rolled over at the top
+          const ay = side < 0 ? T : -T - arm;
+          rr(L + 2, ay, w - 2, arm, 4, lin(0, ay, 0, ay + arm, side < 0 ? [[0, mid], [1, '#7c3328']] : [[0, '#7c3328'], [1, mid]]), '#4f1d17', 1);
+          ctx.fillStyle = 'rgba(255, 210, 190, .18)'; ctx.fillRect(L + 4, ay + arm / 2 - 0.75, w - 8, 1.5);
+        }
+        // Seat cushions between the arms, plumper toward the front.
+        const sx = L + back - 1, sw = w / 2 - 1.5 - sx, inner = h - 2 * arm - 2;
+        const n = inner > 60 ? 3 : 2, cw = inner / n;
+        for (let k = 0; k < n; k++) {
+          const cy = T + arm + 1 + k * cw;
+          rr(sx, cy + 0.5, sw, cw - 1, 3.5, lin(sx, 0, sx + sw, 0, [[0, mid], [0.7, light], [1, '#a94c3d']]), '#5e231c', 0.8);
+          ctx.fillStyle = 'rgba(60, 15, 10, .45)'; ctx.beginPath(); ctx.arc(sx + sw * 0.5, cy + cw / 2, 1.1, 0, Math.PI * 2); ctx.fill(); // a button
+        }
+        // Back cushions resting against the back.
+        for (let k = 0; k < n; k++) {
+          const cy = T + arm + 1 + k * cw;
+          rr(L + back * 0.35, cy + 1, back * 0.75, cw - 2, 3, lin(L, 0, L + back, 0, [[0, '#7c3328'], [1, mid]]), '#4f1d17', 0.6);
+        }
       }
       ctx.restore();
     }
@@ -3775,21 +4036,35 @@
           ctx.fillStyle = g;
           ctx.beginPath(); ctx.arc(h.x, h.y, 170, 0, Math.PI * 2); ctx.fill();
         }
-        // Shadow, then the arm curving out from the post, then the post and the lamp housing.
+        // On the ground: the arm's shadow and the foot of the post (the arm itself goes over the traffic: see drawLampArms).
         const side = h.angle + Math.PI / 2;
         const mx = (l.x + h.x) / 2 + Math.cos(side) * 8, my = (l.y + h.y) / 2 + Math.sin(side) * 8;
         ctx.lineCap = 'round';
         ctx.strokeStyle = 'rgba(0, 0, 0, .3)';
         ctx.lineWidth = 6;
         ctx.beginPath(); ctx.moveTo(l.x + 5, l.y + 6); ctx.quadraticCurveTo(mx + 5, my + 6, h.x + 5, h.y + 6); ctx.stroke();
-        ctx.strokeStyle = '#a3a29b';
-        ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.quadraticCurveTo(mx, my, h.x, h.y); ctx.stroke();
         ctx.lineCap = 'butt';
         ctx.fillStyle = 'rgba(0, 0, 0, .3)';
         ctx.fillRect(l.x - 5, l.y - 3, 13, 13);
         ctx.fillStyle = '#b4b2aa';
         ctx.fillRect(l.x - 7, l.y - 7, 14, 14); // concrete post, seen from above
+      }
+    }
+
+    /** Up in the air, over people and cars: the arm curving out from the post, the post's top and the lamp housing. */
+    function drawLampArms(night) {
+      for (const l of lamps) {
+        if (l.x < viewBox.l || l.x > viewBox.r || l.y < viewBox.t || l.y > viewBox.b) continue;
+        const h = lampHead(l);
+        const side = h.angle + Math.PI / 2;
+        const mx = (l.x + h.x) / 2 + Math.cos(side) * 8, my = (l.y + h.y) / 2 + Math.sin(side) * 8;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#a3a29b';
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(l.x, l.y); ctx.quadraticCurveTo(mx, my, h.x, h.y); ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.fillStyle = '#b4b2aa';
+        ctx.fillRect(l.x - 7, l.y - 7, 14, 14);
         ctx.fillStyle = '#8e8c85';
         ctx.fillRect(l.x - 3, l.y - 3, 6, 6);
         ctx.save();
@@ -4174,6 +4449,10 @@
           const head = lampHead(l);
           const x = head.x + ox, y = head.y + oy;
           if (onSky(x, y, w, h, 250)) lightHole(x, y, 20, 230, 0.9);
+        }
+        for (const f of fireplaces) { // a fire going in every home: a warm patch in the dark
+          const x = f.x + f.w / 2 + (f.nx ?? 0) * 20 + ox, y = f.y + f.h / 2 + (f.ny ?? 0) * 20 + oy;
+          if (onSky(x, y, w, h, 200)) lightHole(x, y, 0, 140 + 8 * Math.sin(now / 150 + f.x), 0.7);
         }
         for (const v of cars.values()) {
           if (!v.driver) continue;
@@ -6066,8 +6345,10 @@
       if (playing && e.code === 'KeyR') { reloadRequested = true; return; }
       if (playing && e.code === 'KeyB' && document.activeElement !== chatInput) {
         if (wh.open) closeWarehouse();
+        else if (homeOpen) closeHome();
         else if (nearWarehouse()) openWarehouse(nearWarehouse());
-        else toast('Walk up to a warehouse to buy or manage it');
+        else if (nearHome()) openHome(nearHome());
+        else toast('Walk up to a warehouse or a home to buy, rent or manage it');
         return;
       }
       if (playing && e.code === 'KeyX' && !me?.car && !e.repeat) { if (coins > 0) cashHoldStart = performance.now(); else toast('No cash to drop'); return; }
@@ -6128,6 +6409,7 @@
       if (e.code === 'Escape' && !bankEl.hidden) return closeBank();
       if (e.code === 'Escape' && econ.open) return closePlace();
       if (e.code === 'Escape' && wh.open) return closeWarehouse();
+      if (e.code === 'Escape' && homeOpen) return closeHome();
       if (e.code === 'Escape' && bodyOpen) return closeBody();
       if (e.code === 'Escape' && garageCars !== null) return closeGarage();
       if (e.code === 'Escape' && !jobsEl.hidden) return closeJobs();
@@ -6355,7 +6637,7 @@
       ['🗺️ Map', () => pressKey('keydown', 'KeyM')],
       ['📋 Jobs', () => pressKey('keydown', 'KeyJ')],
       ['👥 Team', () => pressKey('keydown', 'KeyT')],
-      ['🏬 Warehouse', () => pressKey('keydown', 'KeyB')],
+      ['🏬 Property', () => pressKey('keydown', 'KeyB')],
       [`💵 Drop ${CASH_DROP} ₽`, () => (coins > 0 ? send({ t: 'drop', cash: CASH_DROP }) : toast('No cash to drop'))],
       ['⛶ Full screen', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {})],
     ];
@@ -6720,6 +7002,7 @@
       econ.trunk = you.trunk ?? null;
       myHome = you.home ?? null;
       storedFactories = you.stored ?? [];
+      storedHomes = you.storedHomes ?? storedHomes;
       if (storedFactories.length && !storedReminded) {
         storedReminded = true;
         const names = [...new Set(storedFactories)].map((sz) => wh.cfg?.sizes?.[sz]?.name ?? sz).join(', ');
@@ -7590,6 +7873,15 @@
         for (const c of b.roofDecor) {
           if (!c.chimney) continue;
           const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+          if (c.small) { // a house chimney: a thin wisp (not while you're inside, under the faded roof)
+            if ((roofAlpha.get(b.id) ?? 1) < 0.5) continue;
+            for (let i = 0; i < 4; i++) {
+              const t = ((now / 1000 + i * 0.8 + c.x * 0.01) % 3.2) / 3.2;
+              ctx.fillStyle = `rgba(${snowAmount > 0.5 ? '235, 238, 242' : '140, 140, 145'}, ${0.35 * (1 - t)})`;
+              ctx.beginPath(); ctx.arc(cx + t * 50, cy - t * 26, 4 + t * 12, 0, Math.PI * 2); ctx.fill();
+            }
+            continue;
+          }
           for (let i = 0; i < 7; i++) {
             const t = ((now / 1000 + i * 0.6 + c.x * 0.01) % 4.2) / 4.2;
             ctx.fillStyle = `rgba(${snowAmount > 0.5 ? '235, 238, 242' : '120, 120, 125'}, ${0.4 * (1 - t)})`;
@@ -7826,6 +8118,7 @@
       if (step === 40) for (let x = b.x + step; x < b.x + b.w; x += step) { ctx.moveTo(x, b.y); ctx.lineTo(x, b.y + b.h); }
       ctx.stroke();
       for (const d of b.decor) drawDecor(d);
+      drawHearthGlow(b, performance.now());
       drawFurnishings(b);
       if (b.pattern === 'none' && snowAmount > 0.02) { // open-air yards: snow lies on them too
         ctx.fillStyle = `rgba(232, 238, 244, ${0.65 * snowAmount})`;
@@ -7989,6 +8282,7 @@
           for (const [lx, ly] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { ctx.fillStyle = '#5a4630'; ctx.fillRect(wall.x + lx * (wall.w - 8), wall.y + ly * (wall.h - 8), 8, 8); }
           continue;
         }
+        if (wall.fireplace) { drawFireplace(wall); continue; }
         if (wall.bunker) { // the boiler house's coal bunker: a concrete pit heaped with coal
           ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(wall.x + 4, wall.y + 5, wall.w, wall.h);
           ctx.fillStyle = '#8a857a'; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
@@ -8073,6 +8367,76 @@
 
     // Double doors hinged at each side of the doorway. Closed they sit in the wall line; open they swing outward.
     const DOOR_OPEN_ANGLE = (75 * Math.PI) / 180;
+
+    /**
+     * A small cobblestone fireplace against a wall: rounded stones in mortar, a sooty firebox opening
+     * toward the room (nx, ny), and a little fire flickering in it.
+     */
+    function drawFireplace(f) {
+      const now = performance.now();
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(f.x + 3, f.y + 4, f.w, f.h);
+      ctx.beginPath(); ctx.roundRect(f.x, f.y, f.w, f.h, 3); ctx.fillStyle = '#5a534c'; ctx.fill(); // the mortar
+      ctx.clip();
+      const rnd = seeded(Math.round(f.x * 7 + f.y * 3) % 2147483646 + 1);
+      const tones = ['#9a9188', '#857c72', '#a8a097', '#7b746c', '#938a7e'];
+      for (let y = f.y + 1; y < f.y + f.h; y += 6) { // cobbles, in staggered courses
+        for (let x = f.x + 1 - ((y - f.y) % 12 ? 3 : 0); x < f.x + f.w; x += 6.5) {
+          const sw = 5 + rnd() * 1.5, sh = 4.5 + rnd();
+          ctx.beginPath(); ctx.ellipse(x + sw / 2, y + sh / 2, sw / 2, sh / 2, rnd() * 0.6, 0, Math.PI * 2);
+          ctx.fillStyle = tones[Math.floor(rnd() * tones.length)]; ctx.fill();
+          ctx.fillStyle = 'rgba(255, 255, 255, .12)'; ctx.beginPath(); ctx.ellipse(x + sw * 0.4, y + sh * 0.35, sw * 0.22, sh * 0.15, 0, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.restore();
+      // The firebox: open on the room side.
+      const horizontal = f.w > f.h; // (against a horizontal wall: opens north or south)
+      const len = horizontal ? f.w : f.h, depth = horizontal ? f.h : f.w;
+      const ow = len * 0.56, od = depth * 0.7;
+      const ox = horizontal ? f.x + (f.w - ow) / 2 : f.nx > 0 ? f.x + f.w - od : f.x;
+      const oy = horizontal ? (f.ny > 0 ? f.y + f.h - od : f.y) : f.y + (f.h - ow) / 2;
+      const [bw, bh] = horizontal ? [ow, od] : [od, ow];
+      ctx.beginPath(); ctx.roundRect(ox, oy, bw, bh, 2); ctx.fillStyle = '#1d1714'; ctx.fill();
+      const cx = ox + bw / 2, cy = oy + bh / 2;
+      // Logs, embers, and flames licking toward the back.
+      ctx.save();
+      ctx.beginPath(); ctx.rect(ox, oy, bw, bh); ctx.clip();
+      const back = { x: -(f.nx ?? 0), y: -(f.ny ?? 0) }, across = { x: horizontal ? 1 : 0, y: horizontal ? 0 : 1 };
+      ctx.strokeStyle = '#4a2c16'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+      for (const k of [-1, 1]) { ctx.beginPath(); ctx.moveTo(cx + across.x * ow * 0.32 * k - back.x * 2, cy + across.y * ow * 0.32 * k - back.y * 2); ctx.lineTo(cx - across.x * ow * 0.1 * k + back.x * 2, cy - across.y * ow * 0.1 * k + back.y * 2); ctx.stroke(); }
+      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, ow * 0.6);
+      glow.addColorStop(0, 'rgba(255, 170, 60, .9)'); glow.addColorStop(1, 'rgba(200, 60, 10, 0)');
+      ctx.fillStyle = glow; ctx.fillRect(ox, oy, bw, bh);
+      for (let i = 0; i < 5; i++) {
+        const t = now / 1000 * (2.2 + i * 0.37) + i * 1.7;
+        const flick = 0.65 + 0.35 * Math.sin(t * 3.1) * Math.sin(t * 1.3 + i);
+        const off = (i - 2) * ow * 0.11 + Math.sin(t * 2) * 1.2;
+        const fx = cx + across.x * off + back.x * od * 0.15 * flick, fy = cy + across.y * off + back.y * od * 0.15 * flick;
+        const rl = od * 0.45 * flick, rw = ow * 0.09;
+        ctx.save(); ctx.translate(fx, fy); ctx.rotate(Math.atan2(back.y, back.x));
+        ctx.fillStyle = i % 2 ? 'rgba(255, 120, 30, .85)' : 'rgba(255, 190, 70, .9)';
+        ctx.beginPath(); ctx.ellipse(0, 0, rl, rw, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 245, 190, .85)';
+        ctx.beginPath(); ctx.ellipse(-rl * 0.2, 0, rl * 0.45, rw * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    /** The warm light a fire throws across the floor in front of it (flickering a little). */
+    function drawHearthGlow(b, now) {
+      for (const f of b.walls) {
+        if (!f.fireplace) continue;
+        const cx = f.x + f.w / 2 + (f.nx ?? 0) * 14, cy = f.y + f.h / 2 + (f.ny ?? 0) * 14;
+        const flick = 0.85 + 0.15 * Math.sin(now / 130 + f.x) * Math.sin(now / 310 + f.y);
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 95);
+        g.addColorStop(0, `rgba(255, 150, 60, ${0.34 * flick})`);
+        g.addColorStop(0.5, `rgba(255, 120, 40, ${0.13 * flick})`);
+        g.addColorStop(1, 'rgba(255, 110, 30, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, 95, 0, Math.PI * 2); ctx.fill();
+      }
+    }
 
     /** The concrete section of the prison's inner fence: cracking as it's dug at, rubble once it's through. */
     function drawPrisonWall(d) {
@@ -9198,6 +9562,7 @@
       }
       drawEmbers(frameTime, dt);
       drawDumpsters();
+      drawLampArms(1 - daylight(clockNow(frameTime))); // (over the cars and people, under the roofs and trees)
 
       for (const b of visibleBuildings) { drawWalls(b); drawDoors(b, dt); if (b.pumps) drawPumps(b, frameTime); }
       drawPlaceKeepers();
@@ -9330,7 +9695,7 @@
         drawKeyPrompt(spot.x + spot.w / 2, spot.y - 16);
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const t = `place ${{ cabinet: 'cabinet', bed: 'bed', furniture: 'sofa' }[toPlace.kind]} (aim to turn it)`;
+        const t = `place ${FURN_WORDS[toPlace.kind] ?? 'it'} (aim to turn it)`;
         ctx.strokeText(t, spot.x + spot.w / 2, spot.y - 36); ctx.fillText(t, spot.x + spot.w / 2, spot.y - 36);
       }
       const wallDoor = prisonState && me && playing && inv[selectedSlot]?.[1] === 'pickaxe' ? doorById.get(prisonWall.door) : null;

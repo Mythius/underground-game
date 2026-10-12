@@ -254,6 +254,8 @@ export const config = Object.freeze({
     furniture: { name: 'Furniture', icon: '🛋️', base: 140, weight: 3, tier: 'finished' }, // a sofa: place it in your home or warehouse
     cabinet: { name: 'Cabinet', icon: '🗄️', base: 200, weight: 3, tier: 'finished' }, // storage: place it, then keep 10 slots of anything in it
     bed: { name: 'Bed', icon: '🛏️', base: 180, weight: 3, tier: 'finished' },
+    table: { name: 'Table', icon: '🍽️', base: 120, weight: 3, tier: 'finished' }, // place it in your home or warehouse
+    chair: { name: 'Chair', icon: '🪑', base: 45, weight: 1, tier: 'finished' },
     bread: { name: 'Bread', icon: '🍞', base: 30, weight: 1, tier: 'finished' },
     bat: { name: 'Baseball bat', icon: '🏏', base: 60, weight: 1, tier: 'finished' }, // made from planks; E with it in hand to take it up as a weapon
     energy: { name: 'Energy drinks', icon: '🥤', base: 14, weight: 1, tier: 'finished' }, // by the crate, from markets (a mixing station mixes them into vodka)
@@ -284,7 +286,7 @@ export const config = Object.freeze({
   // `recipes` are tried in order (the foundry takes ore or scrap). Warehouse machines run these recipes too.
   factories: {
     sawmill: { name: 'Sawmill', recipes: [{ in: { logs: 1 }, out: { planks: 1 } }], sec: 8 },
-    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }, { in: { planks: 3, steel: 1 }, out: { cabinet: 1 } }, { in: { planks: 3, plastic: 2 }, out: { bed: 1 } }, { in: { planks: 2 }, out: { bat: 1 } }], sec: 20 },
+    furniture: { name: 'Furniture factory', recipes: [{ in: { planks: 4 }, out: { furniture: 1 } }, { in: { planks: 3, steel: 1 }, out: { cabinet: 1 } }, { in: { planks: 3, plastic: 2 }, out: { bed: 1 } }, { in: { planks: 2 }, out: { bat: 1 } }, { in: { planks: 3 }, out: { table: 1 } }, { in: { planks: 2 }, out: { chair: 2 } }], sec: 20 },
     flourmill: { name: 'Flour mill', recipes: [{ in: { wheat: 2 }, out: { flour: 1 } }], sec: 8 },
     bakery: { name: 'Bakery', recipes: [{ in: { flour: 1 }, out: { bread: 1 } }], sec: 6 },
     foundry: { name: 'Foundry', recipes: [{ in: { ore: 1 }, out: { steel: 1 } }, { in: { scrap: 2 }, out: { steel: 1 } }], sec: 12 },
@@ -339,7 +341,7 @@ export const config = Object.freeze({
     mill: { name: 'Mill', icon: '🌾', price: 700, recipes: ['flourmill:0'] },
     furnace: { name: 'Furnace', icon: '🔥', price: 3000, recipes: ['foundry:0', 'foundry:1', 'glassworks:0', 'bakery:0'] },
     press: { name: 'Press', icon: '🛢️', price: 4000, recipes: ['refinery:0', 'machineshop:0'] },
-    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'furniture:1', 'furniture:2', 'furniture:3', 'carfactory:0'] },
+    assembler: { name: 'Assembler', icon: '🏭', price: 7000, recipes: ['furniture:0', 'furniture:1', 'furniture:2', 'furniture:3', 'furniture:4', 'furniture:5', 'carfactory:0'] },
     // Illegal: their output is contraband, and running them draws the Militsiya (see `heat`).
     still: { name: 'Still', icon: '🍾', price: 1500, recipes: ['illegal:vodka'], illegal: true },
     mixer: { name: 'Mixing station', icon: '🍸', price: 2500, recipes: ['illegal:jetvodka', 'illegal:firewater', 'illegal:blackvodka'], illegal: true }, // vodka + energy drink / petrol / crude
@@ -456,6 +458,18 @@ export const config = Object.freeze({
     unlockedSec: 90, // a picked lock stays open this long
     garageReach: 140, // from the middle of the car pad outside
     saveCarsEverySec: 20, // fuel and trunk of saved cars out on the road
+    // Buying homes (on top of your free starter home): one of each type, from your bank. Like a factory,
+    // what you own is saved, and after a restart (the map is new) you load its furniture into a free home
+    // of the same type. Selling gives back sellBack of the price.
+    prices: { cabin: 8000, house: 15000, garages: 25000, panelka: 40000, mansion: 60000 },
+    sellBack: 0.5,
+    buyReach: 260, // from the building's edge (or inside it)
+    // Renting: a flat in a panelka or a box in a row of lock-up garages, as locked storage (its cabinet).
+    // Rent is taken from your bank at every dawn and goes to the building's owner; can't pay and you're
+    // out (what you'd stored is kept for your next rental of that kind). Owners of these also get npcRent
+    // a day from NPC tenants, less each room a player rents.
+    rent: { panelka: 100, garages: 60 },
+    npcRent: 300,
   },
 
   // ---- crime and police (stage 4) -------------------------------------------------

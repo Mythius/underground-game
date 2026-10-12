@@ -424,6 +424,9 @@ function handleMessage(client, msg) {
     case ClientMsg.FURNISH:
       client.room?.furnish(client, msg);
       break;
+    case ClientMsg.HOME:
+      client.room?.homeAction(client, msg);
+      break;
     case ClientMsg.RADIO:
       client.room?.radio(client, msg);
       break;

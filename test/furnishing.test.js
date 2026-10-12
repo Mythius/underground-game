@@ -38,11 +38,11 @@ function atHome(world, acc) {
 }
 
 /** Try setting `kind` down facing each way in turn, from a few spots; the first that works. */
-function placeSomewhere(world, p, kind, b) {
+function placeSomewhere(world, p, kind, b, step = 30) {
   hotbarOf(p).add(kind, 1);
   p.selected = p.inventory.findIndex((s) => s?.good === kind);
-  for (let y = b.y + 60; y < b.y + b.h - 60; y += 30) {
-    for (let x = b.x + 60; x < b.x + b.w - 60; x += 30) {
+  for (let y = b.y + 60; y < b.y + b.h - 60; y += step) {
+    for (let x = b.x + 60; x < b.x + b.w - 60; x += step) {
       if (world.isBlocked(x, y, p.radius)) continue;
       Object.assign(p, { x, y });
       for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) if (world.furnishings.place(p, a) === null) return [...world.furnishings.items.values()].at(-1);
@@ -99,7 +99,7 @@ test('up to three cabinets a building; beds and sofas too', () => {
   hotbarOf(p).add('cabinet', 1);
   p.selected = p.inventory.findIndex((s) => s?.good === 'cabinet');
   assert.equal(world.furnishings.place(p, 0), 'too_many_here');
-  assert.ok(placeSomewhere(world, p, 'bed', home) || placeSomewhere(world, p, 'furniture', home), 'a bed or a sofa fits too');
+  assert.ok(placeSomewhere(world, p, 'bed', home, 10) || placeSomewhere(world, p, 'furniture', home, 10), 'a bed or a sofa fits too');
 });
 
 test("other people only get into your cabinet after a break-in", () => {

@@ -47,6 +47,13 @@ export class AccountStore {
         account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
         slot TEXT NOT NULL               -- which starter house ("house-3"); another free one is used if it's gone or taken
       );
+      CREATE TABLE IF NOT EXISTS properties (
+        id INTEGER PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        kind TEXT NOT NULL,              -- 'own' (a bought home) or 'rent' (a rented flat or garage box)
+        data TEXT NOT NULL,              -- JSON: { type, spent, furnishings } or { type, slots } (Homes.toSave())
+        updated_at INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS cars (
         id INTEGER PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id),
@@ -175,7 +182,7 @@ export class AccountStore {
 
   /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
   setHomeItems(id, items) {
-    this.q.setHomeItems.run(items?.length ? JSON.stringify(items) : null, id);
+    this.q.setHomeItems.run(JSON.stringify(items ?? []), id); // ([] is "emptied it", not "never furnished")
     const live = this.liveAccounts.get(id);
     if (live) live.homeItems = items;
   }
@@ -230,6 +237,29 @@ export class AccountStore {
     try {
       this.db.exec('DELETE FROM warehouses');
       for (const r of rows) insert.run(r.accountId, r.slot, JSON.stringify(r.data), now);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Every bought home and rented room: [{ accountId, kind, slot: null, data }]. */
+  loadProperties() {
+    return this.db
+      .prepare('SELECT account_id, kind, data FROM properties ORDER BY id')
+      .all()
+      .map((r) => ({ accountId: r.account_id, kind: r.kind, slot: null, data: JSON.parse(r.data) }));
+  }
+
+  /** Replaces all saved properties with `rows` ([{ accountId, kind, data }]). */
+  saveProperties(rows) {
+    const insert = this.db.prepare('INSERT INTO properties (account_id, kind, data, updated_at) VALUES (?, ?, ?, ?)');
+    const now = Date.now();
+    this.db.exec('BEGIN');
+    try {
+      this.db.exec('DELETE FROM properties');
+      for (const r of rows) insert.run(r.accountId, r.kind, JSON.stringify(r.data), now);
       this.db.exec('COMMIT');
     } catch (err) {
       this.db.exec('ROLLBACK');

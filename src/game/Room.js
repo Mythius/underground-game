@@ -42,11 +42,13 @@ export class Room {
     this.store = store;
     this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
+    this.#restoreProperties();
     this.teams = new Teams();
     this.#wireWorld();
     this.carSaveTimer = 0;
     this.env = new Environment();
     this.lastOwners = '';
+    this.lastProps = '';
     this.sentLayouts = new Map(); // warehouse id -> layout version last broadcast
     this.saveTimer = 0;
     this.lastEnvBroadcast = 0;
@@ -83,6 +85,7 @@ export class Room {
     for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player);
     this.#saveHomes();
     this.#saveWarehouses();
+    this.#saveProperties();
     this.#saveCars();
     clearInterval(this.timer);
     this.timer = null;
@@ -215,6 +218,22 @@ export class Room {
     }
     this.saveTimer += dt;
     if (this.saveTimer >= config.warehouses.saveEverySec || (warehouses.changed && this.saveTimer >= 2)) this.#saveWarehouses();
+    // Homes: who owns and rents what (everyone sees), rent days, and saving.
+    const homes = this.world.homes;
+    if (this.world.tick % 5 === 0) {
+      const list = homes.describe();
+      const props = JSON.stringify(list);
+      if (props !== this.lastProps) {
+        this.lastProps = props;
+        this.broadcast({ t: ServerMsg.PROPS, list });
+      }
+    }
+    for (const e of homes.events.splice(0)) {
+      const { account, ...rest } = e;
+      for (const c of this.clients) if (c.account && c.account === account) c.send({ t: ServerMsg.POLICE, ...rest });
+    }
+    this.propSaveTimer = (this.propSaveTimer ?? 0) + dt;
+    if (this.propSaveTimer >= config.warehouses.saveEverySec || (homes.changed && this.propSaveTimer >= 2)) this.#saveProperties();
     // ATMs smashed with a bat: everyone sees which (and they mend themselves; clients count down).
     if (this.world.atmsChanged) {
       this.world.atmsChanged = false;
@@ -322,6 +341,24 @@ export class Room {
     });
   }
 
+  /** Bought homes and rented rooms back from the database: each waits for its owner (or tenant) to load it in. */
+  #restoreProperties() {
+    if (!this.store) return;
+    this.world.homes.stored = this.store.loadProperties();
+    if (this.world.homes.stored.length) logger.info('saved homes waiting to be loaded', { room: this.id, count: this.world.homes.stored.length });
+  }
+
+  #saveProperties() {
+    this.propSaveTimer = 0;
+    this.world.homes.changed = false;
+    if (!this.store) return;
+    try {
+      this.store.saveProperties(this.world.homes.toSave());
+    } catch (err) {
+      logger.error('saving homes failed', { err: err.message });
+    }
+  }
+
   /** Owned factories back from the database: each waits for its owner to load it into a free warehouse of the same size. */
   #restoreWarehouses() {
     if (!this.store) return;
@@ -360,7 +397,11 @@ export class Room {
       buildings: this.world.buildings,
       doorReach: config.world.doorReach,
       vehicles: { reach: config.vehicles.reach, types: config.vehicles.types, boost: config.vehicles.boost, knockDecay: config.vehicles.knockDecay },
-      homes: { lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach },
+      homes: {
+        lockedTypes: config.homes.lockedTypes, garageReach: config.homes.garageReach,
+        prices: config.homes.prices, rent: config.homes.rent, sellBack: config.homes.sellBack, npcRent: config.homes.npcRent, buyReach: config.homes.buyReach, // buying and renting homes
+        props: this.world.homes.describe(), // who owns and rents what
+      },
       brokenAtms: this.world.brokenAtmList(),
       visionSec: config.economy.visionSec,
       furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
@@ -438,11 +479,14 @@ export class Room {
     for (const c of this.clients) if (c.player?.alive) this.#saveCarried(c.player); // they keep what they carried
     for (const c of this.clients) c.player = null;
     this.#saveWarehouses();
+    this.#saveProperties();
     this.#saveCars();
     this.world = createWorld(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
+    this.#restoreProperties();
     this.#wireWorld();
     this.lastOwners = '';
+    this.lastProps = '';
     this.sentLayouts.clear();
     for (const c of [...this.clients]) {
       this.clients.delete(c);
@@ -588,6 +632,16 @@ export class Room {
   }
 
   /** Furniture: put it down, pick it up, and use a cabinet. */
+  /** Homes: buy one, load a saved one in, sell it; rent a flat or garage box, or leave it. */
+  homeAction(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const error = this.world.homes.action(p, msg);
+    if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+    client.send({ t: ServerMsg.DONE, what: `home_${msg.action}`, id: msg.id, room: msg.room });
+    this.#saveProperties();
+  }
+
   furnish(client, msg) {
     const p = client.player;
     if (!p?.alive) return;
@@ -817,6 +871,7 @@ export class Room {
       })(),
       slot: me.selected,
       stored: this.world.warehouses.storedFor(me.account), // sizes of my saved factories waiting to be loaded
+      storedHomes: this.world.homes.storedFor(me.account), // { own: [types], rent: [types] } my homes (and rented rooms' things) from before the restart
       home: (() => { // my home: [building id, garage spot x, y]
         const b = this.world.homes.homeOf(me.account);
         if (!b) return null;

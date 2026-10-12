@@ -32,6 +32,7 @@ export const ClientMsg = Object.freeze({
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot)
+  HOME: 'home', // { t, id, action: 'buy' | 'bring' (load your saved one of this type in) | 'sell' | 'rent' | 'leave', room? } homes for sale, rooms to rent
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
   PRISON: 'prison', // { t, action: 'bail', id (prisoner: yourself or anyone inside) } at the prison warden
   COP: 'cop', // { t, action: 'apply', answers: [option index per question] } | { t, action: 'resign' } at a Militsiya front desk | { t, action: 'arrest' | 'fine', id (player) } as an officer
@@ -51,7 +52,8 @@ export const ServerMsg = Object.freeze({
   PONG: 'pong', // { t, ts, serverTime }
   CHAT: 'chat', // { t, id, name, color, text }
   DOOR: 'door', // { t, id, open }
-  FURNISH: 'furnish', // { t, list: [[id, kind, x, y, w, h, rot, building, ownerName]] } placed cabinets, beds and sofas (on any change)
+  FURNISH: 'furnish', // { t, list: [[id, kind, x, y, w, h, rot, building, ownerName]] } placed cabinets, beds, sofas, tables and chairs (on any change)
+  PROPS: 'props', // { t, list: [[buildingId, ownerName | null, starter (1/0), [tenantName | null per room] | null]] } homes that are someone's (on any change)
   BOOM: 'boom', // { t, x, y } a vehicle exploded
   BOUGHT: 'bought', // { t, item, cash }
   BANKED: 'banked', // { t, action, amount, cash, bank }
@@ -185,6 +187,11 @@ const validators = {
   [ClientMsg.SIREN]: (m) => ({ t: m.t }),
 
   [ClientMsg.WORK]: (m) => (Number.isInteger(m.id) && ['tool', 'haul', 'buy', 'sell'].includes(m.action) ? { t: m.t, id: m.id, action: m.action } : null),
+
+  [ClientMsg.HOME]: (m) =>
+    Number.isInteger(m.id) && ['buy', 'bring', 'sell', 'rent', 'leave'].includes(m.action) && (m.room === undefined || (Number.isInteger(m.room) && m.room >= 0 && m.room < 16))
+      ? { t: m.t, id: m.id, action: m.action, room: m.room ?? 0 }
+      : null,
 
   [ClientMsg.GARAGE]: (m) => (m.action === 'list' ? { t: m.t, action: 'list' } : m.action === 'take' && Number.isInteger(m.id) ? { t: m.t, action: 'take', id: m.id } : null),
 
