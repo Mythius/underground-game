@@ -11,7 +11,6 @@ export const SOUNDS_DIR = fileURLToPath(new URL('../data/sounds/', import.meta.u
 /** Every sound in the game. loop: plays continuously (its volume follows the game: speed, rain…). */
 export const SOUND_SLOTS = [
   { group: 'Music & ambience', slots: [
-    { id: 'music', name: 'Background music', loop: true, note: 'Plays all the time (quietly). No default — silent until you upload one.' },
     { id: 'rain', name: 'Rain', loop: true, note: 'Louder the harder it rains (spring–autumn).' },
     { id: 'wind', name: 'Winter wind', loop: true, note: 'Plays in winter, louder while it snows. No default.' },
     { id: 'night', name: 'Night ambience', loop: true, note: 'Crickets / night noises after dark. No default.' },

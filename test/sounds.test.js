@@ -7,8 +7,8 @@ import { SLOT_IDS, SoundStore } from '../src/sounds.js';
 
 const store = () => new SoundStore(`${mkdtempSync(join(tmpdir(), 'ug-sounds-'))}/`);
 
-test('every sound slot has a unique id, and music, rain and the guns are among them', () => {
-  for (const id of ['music', 'rain', 'pistol', 'engine', 'siren', 'footstep', 'doorOpen']) assert.ok(SLOT_IDS.has(id), id);
+test('every sound slot has a unique id, and rain and the guns are among them', () => {
+  for (const id of ['rain', 'pistol', 'engine', 'siren', 'footstep', 'doorOpen']) assert.ok(SLOT_IDS.has(id), id);
 });
 
 test('upload a sound, serve it, change its volume, reset it', () => {

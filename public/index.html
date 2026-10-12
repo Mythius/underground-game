@@ -20,6 +20,7 @@
     .start input { background: #1b1b1b; color: #eee; }
     .start button { background: #3cb44b; color: #111; border-color: #3cb44b; font-weight: 600; cursor: pointer; }
     .start button:disabled { background: #333; color: #777; border-color: #444; cursor: default; }
+    #credits { position: fixed; right: 1rem; bottom: .75rem; color: #aaa; font-size: .8rem; opacity: .8; }
     main { position: relative; z-index: 1; background: rgba(17, 17, 17, .88); padding: 2rem; border-radius: .75rem; max-width: calc(100vw - 2rem); box-sizing: border-box; }
     .customize { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center; margin-top: 1.4rem; text-align: left; }
     #preview { width: 150px; height: 150px; border-radius: .6rem; background: #3d6633; }
@@ -469,6 +470,7 @@
       <button type="button" id="open-editor">🛠 Map editor</button>
       <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button>
     </div>
+    <small id="credits">🎵 Music by Steve Oxen</small>
   </main>
   <div id="chat">
     <div id="chat-log" aria-live="polite"></div>
@@ -1000,6 +1002,12 @@
           break;
         case 'atms':
           setBrokenAtms(msg.broken);
+          break;
+        case 'music_changed':
+          loadMusic();
+          break;
+        case 'prison_music_changed':
+          loadMusic('prison');
           break;
         case 'radio_changed':
           loadPlaylist();
@@ -4939,13 +4947,20 @@
           inner.append(row);
         }
         if (group.group === 'Vehicles') inner.append(radioPlaylistSection()); // the car radio's songs, with the car sounds
+        if (group.group === 'Music & ambience') inner.append(radioPlaylistSection('music'), radioPlaylistSection('prison'));
       }
       if (!custom.slots.some((g) => g.group === 'Vehicles')) inner.append(radioPlaylistSection()); // (normally right after Vehicles)
       soundsEl.append(inner);
     }
 
-    // ---- the car radio's playlist (in the sound editor): upload many songs at once, rename, reorder, delete ----
-    let radioUploading = null; // 'Uploading 3 of 40…' while a batch goes up
+    // ---- the car radio's and the background music's playlists (in the sound editor): upload many songs at once, rename, reorder, delete ----
+    const PLAYLIST_INFO = {
+      radio: { title: '📻 Car radio playlist', added: '📻 {n} added to the radio', intro: 'A car\'s radio (V on/off, N next song) plays one of these on repeat, and everyone near the car hears it; N moves on to the next. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.' },
+      music: { title: '🎵 Background music', added: '🎵 {n} added to the background music', intro: 'Played now and then in a shuffled order: each song fades in and out, with 1–6 minutes of silence between songs. Upload as many as you like — pick several files at once. Players set how loud it is with the Music slider in ⚙ settings.' },
+      prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, fading in and out, with 1–6 minutes of silence between songs. With none, prisoners hear the normal background music.' },
+    };
+    const songList = (kind) => (kind === 'radio' ? playlist : musicLists[kind]);
+    let songsUploading = null; // { kind, text: 'Uploading 3 of 40…' } while a batch goes up
     let radioPreview = null; // the <audio> playing a song's preview
     async function radioRequest(path, method, body, headers = {}) {
       const password = adminPassword();
@@ -4956,48 +4971,49 @@
         if (res.status === 401) { sessionStorage.removeItem('ug-admin'); toast('Wrong password'); return null; }
         if (!res.ok) { toast(`Couldn't save: ${data.error}`); return null; }
         sessionStorage.setItem('ug-admin', password);
-        playlist.songs = data.songs;
+        songList(path.split(/[/?]/)[1]).songs = data.songs;
         return data;
       } catch {
         toast("Couldn't reach the server");
         return null;
       }
     }
-    async function uploadSongs(files) {
+    async function uploadSongs(kind, files) {
       let done = 0;
       for (const file of files) {
-        radioUploading = `Uploading ${done + 1} of ${files.length}: ${file.name}…`;
+        songsUploading = { kind, text: `Uploading ${done + 1} of ${files.length}: ${file.name}…` };
         renderSoundEditor();
         const name = file.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
-        if (!(await radioRequest(`/radio?name=${encodeURIComponent(name)}`, 'POST', file, { 'content-type': file.type || 'audio/mpeg' }))) break;
+        if (!(await radioRequest(`/${kind}?name=${encodeURIComponent(name)}`, 'POST', file, { 'content-type': file.type || 'audio/mpeg' }))) break;
         done++;
       }
-      radioUploading = null;
+      songsUploading = null;
       renderSoundEditor();
-      if (done) toast(`📻 ${done} song${done === 1 ? '' : 's'} added to the radio`);
+      if (done) toast(PLAYLIST_INFO[kind].added.replace('{n}', `${done} song${done === 1 ? '' : 's'}`));
     }
     const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
-    function radioPlaylistSection() {
+    function radioPlaylistSection(kind = 'radio') {
+      const info = PLAYLIST_INFO[kind], list = songList(kind);
       const box = document.createElement('div');
-      box.append(Object.assign(document.createElement('h2'), { textContent: `📻 Car radio playlist (${playlist.songs.length} song${playlist.songs.length === 1 ? '' : 's'})` }));
+      box.append(Object.assign(document.createElement('h2'), { textContent: `${info.title} (${list.songs.length} song${list.songs.length === 1 ? '' : 's'})` }));
       const intro = document.createElement('div');
       intro.className = 'sub';
-      intro.textContent = 'A car\'s radio (V on/off, N next song) plays one of these on repeat, and everyone near the car hears it; N moves on to the next. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.';
+      intro.textContent = info.intro;
       const upload = document.createElement('label');
       upload.className = 'file';
-      upload.textContent = radioUploading ?? '⬆ Upload songs…';
+      upload.textContent = songsUploading?.kind === kind ? songsUploading.text : '⬆ Upload songs…';
       const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'audio/*', multiple: true });
-      input.onchange = () => input.files.length && !radioUploading && uploadSongs([...input.files]);
+      input.onchange = () => input.files.length && !songsUploading && uploadSongs(kind, [...input.files]);
       upload.append(input);
       box.append(intro, upload);
-      playlist.songs.forEach((song, i) => {
+      list.songs.forEach((song, i) => {
         const row = document.createElement('div');
         row.className = 'row';
         const name = document.createElement('div');
         name.className = 'name';
         const title = Object.assign(document.createElement('input'), { type: 'text', value: song.name, maxLength: 80, title: 'Rename (Enter to save)' });
         title.style.cssText = 'width:100%;font:inherit;background:#12151a;color:#eee;border:1px solid #3a3f48;border-radius:.3rem;padding:.2rem .4rem';
-        title.onchange = () => title.value.trim() && title.value.trim() !== song.name && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ name: title.value.trim() }), { 'content-type': 'application/json' });
+        title.onchange = () => title.value.trim() && title.value.trim() !== song.name && radioRequest(`/${kind}/${song.id}`, 'POST', JSON.stringify({ name: title.value.trim() }), { 'content-type': 'application/json' });
         name.append(title, Object.assign(document.createElement('small'), { textContent: `${i + 1}. · ${mmss(song.duration)}` }));
         const ctrls = document.createElement('div');
         ctrls.className = 'ctrls';
@@ -5010,12 +5026,14 @@
             if (!same) { radioPreview = new Audio(song.url); radioPreview.dataset.id = song.id; radioPreview.volume = Math.min(1, song.volume); radioPreview.play().catch(() => {}); }
             renderSoundEditor();
           }),
-          btn('↑', 'Earlier in the playlist', () => i > 0 && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ to: i - 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
-          btn('↓', 'Later in the playlist', () => i < playlist.songs.length - 1 && radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ to: i + 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
+        );
+        if (kind === 'radio') ctrls.append( // (background music is shuffled, so its order doesn't matter)
+          btn('↑', 'Earlier in the playlist', () => i > 0 && radioRequest(`/${kind}/${song.id}`, 'POST', JSON.stringify({ to: i - 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
+          btn('↓', 'Later in the playlist', () => i < list.songs.length - 1 && radioRequest(`/${kind}/${song.id}`, 'POST', JSON.stringify({ to: i + 1 }), { 'content-type': 'application/json' }).then(renderSoundEditor)),
         );
         const vol = Object.assign(document.createElement('input'), { type: 'range', min: 0, max: 200, step: 5, value: Math.round(song.volume * 100), title: 'Volume' });
-        vol.onchange = () => radioRequest(`/radio/${song.id}`, 'POST', JSON.stringify({ volume: vol.value / 100 }), { 'content-type': 'application/json' });
-        ctrls.append(vol, btn('🗑', 'Remove from the playlist', () => confirm(`Remove "${song.name}" from the radio?`) && radioRequest(`/radio/${song.id}`, 'DELETE').then(renderSoundEditor)));
+        vol.onchange = () => radioRequest(`/${kind}/${song.id}`, 'POST', JSON.stringify({ volume: vol.value / 100 }), { 'content-type': 'application/json' });
+        ctrls.append(vol, btn('🗑', 'Remove from the playlist', () => confirm(`Remove "${song.name}"?`) && radioRequest(`/${kind}/${song.id}`, 'DELETE').then(renderSoundEditor)));
         row.append(name, ctrls);
         box.append(row);
       });
@@ -5028,6 +5046,8 @@
       renderSoundEditor();
       loadSounds();
       loadPlaylist();
+      loadMusic();
+      loadMusic('prison');
     }
     function closeSoundEditor() {
       soundsEl.hidden = true;
@@ -5114,6 +5134,8 @@
     loadSounds();
     loadDialogue();
     loadPlaylist();
+    loadMusic();
+    loadMusic('prison');
 
     function sfx(name, at, volume = 1) {
       if (!audio.ctx || settings.mute || audio.ctx.state !== 'running') return;
@@ -5268,6 +5290,68 @@
       }
       return buf;
     }
+    // ---- background music: the uploaded songs, shuffled, each fading in and out, with 1–6 minutes of silence between.
+    // In prison, the prison music plays instead (if any's been uploaded). ----
+    const MUSIC_FADE_IN = 5, MUSIC_FADE_OUT = 8; // seconds
+    const MUSIC_GAP = [60, 360]; // silence between songs, seconds (random in this range)
+    const musicLists = { music: { songs: [] }, prison: { songs: [] } }; // GET /music, /prison: [{ id, name, url, duration, volume }]
+    const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null }; // now: { id, el, g }; nextAt: audio-clock time the next song starts
+    async function loadMusic(kind = 'music') {
+      try {
+        const data = await (await fetch(`/${kind}`)).json();
+        Object.assign(musicLists[kind], data);
+        if (!soundsEl.hidden) renderSoundEditor();
+      } catch {}
+    }
+    function stopMusic(gap) {
+      const m = music.now;
+      if (m) { m.el.pause(); m.el.removeAttribute('src'); m.el.load(); m.g.disconnect(); }
+      music.now = null;
+      music.nextAt = audio.ctx.currentTime + gap;
+    }
+    /** The next song to play: a shuffled pass through the playlist, never the same one twice in a row. */
+    function nextMusicSong(list) {
+      const ids = new Set(list.songs.map((s) => s.id));
+      music.queue = music.queue.filter((id) => ids.has(id));
+      if (!music.queue.length) {
+        music.queue = [...ids].sort(() => Math.random() - 0.5);
+        if (music.queue.length > 1 && music.queue[0] === music.last) music.queue.push(music.queue.shift());
+      }
+      return list.songs.find((s) => s.id === music.queue.shift());
+    }
+    function updateMusic(now) {
+      const a = audio.ctx;
+      const kind = prisonState && musicLists.prison.songs.length ? 'prison' : 'music';
+      if (kind !== music.kind) { // locked up or let out: the other playlist starts soon
+        if (music.now) stopMusic(0);
+        Object.assign(music, { kind, queue: [], nextAt: now + 5 });
+      }
+      const list = musicLists[kind];
+      if (!list.songs.length) { if (music.now) stopMusic(0); return; }
+      music.nextAt ??= now + 5; // the first song soon after the game starts
+      let m = music.now;
+      const song = m && list.songs.find((s) => s.id === m.id);
+      if (m && (!song || m.el.ended || m.el.error)) { stopMusic(m.el.error ? 10 : MUSIC_GAP[0] + Math.random() * (MUSIC_GAP[1] - MUSIC_GAP[0])); return; }
+      if (!m) {
+        if (now < music.nextAt) return;
+        const next = nextMusicSong(list);
+        if (!next) return;
+        const g = a.createGain(); g.gain.value = 0; g.connect(audio.master);
+        const el = new Audio();
+        el.preload = 'auto';
+        el.src = next.url;
+        a.createMediaElementSource(el).connect(g);
+        el.play().catch(() => {});
+        music.now = { id: next.id, el, g };
+        music.last = next.id;
+        return;
+      }
+      // Fade in at the start and out towards the end.
+      const t = m.el.currentTime, dur = Number.isFinite(m.el.duration) ? m.el.duration : song.duration;
+      const env = Math.max(0, Math.min(1, t / MUSIC_FADE_IN, (dur - t) / MUSIC_FADE_OUT));
+      m.g.gain.setTargetAtTime((settings.music ?? 40) / 100 * 0.5 * song.volume * env, now, 0.1);
+    }
+
     /** Stop and let go of a car's radio. */
     function dropRadio(id) {
       const r = radios.get(id);
@@ -5356,7 +5440,6 @@
       const rain = loop('rain', noiseLoop('lowpass', 1800, 0.5));
       const wind = loop('wind', null);
       const night = loop('night', null);
-      const music = loop('music', null);
       const boostLoop = loop('boost', () => { // a roar: low rumble plus a hiss
         const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
         const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 1;
@@ -5382,7 +5465,7 @@
       loopGain(rain, 'rain', (rain?.file ? 0.6 : 0.14) * sky.rain * (winter ? 0 : 1), now, 0.5); // snow falls silently
       loopGain(wind, 'wind', winter ? 0.12 + 0.3 * sky.rain : 0, now, 1);
       loopGain(night, 'night', playing ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
-      loopGain(music, 'music', (settings.music ?? 40) / 100 * 0.5, now, 0.5);
+      updateMusic(now);
       updateRadios(now);
       // The vodka boost: my own car's, or the nearest other car burning one.
       let boostNear = car?.boosting ? 0 : Infinity;

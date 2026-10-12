@@ -10,6 +10,10 @@ import { AUDIO_TYPES } from './sounds.js';
 // (they can be long) and everyone near the car hears the same point in the same song.
 
 export const RADIO_DIR = fileURLToPath(new URL('../data/radio/', import.meta.url));
+// The background music playlist is the same kind of store, in data/music/, served under /music.
+export const MUSIC_DIR = fileURLToPath(new URL('../data/music/', import.meta.url));
+// …and the prison camp's music (played instead while you're locked up), in data/prison-music/, under /prison.
+export const PRISON_MUSIC_DIR = fileURLToPath(new URL('../data/prison-music/', import.meta.url));
 const FALLBACK_SEC = 180; // a song whose length couldn't be measured is taken to be this long
 const NAME_MAX = 80;
 
@@ -38,8 +42,9 @@ export function radioAt(song, elapsed, durations) {
 }
 
 export class RadioStore {
-  constructor(dir = RADIO_DIR) {
+  constructor(dir = RADIO_DIR, route = 'radio') {
     this.dir = dir;
+    this.route = route; // its files are streamed from /<route>/file/…
     mkdirSync(dir, { recursive: true });
     try {
       this.songs = JSON.parse(readFileSync(`${dir}playlist.json`, 'utf8'));
@@ -55,7 +60,7 @@ export class RadioStore {
 
   /** What clients need: the playlist in order, with where to stream each song from. */
   list() {
-    return this.songs.map((s) => ({ id: s.id, name: s.name, url: `/radio/file/${s.file}`, duration: s.duration ?? FALLBACK_SEC, volume: s.volume ?? 1 }));
+    return this.songs.map((s) => ({ id: s.id, name: s.name, url: `/${this.route}/file/${s.file}`, duration: s.duration ?? FALLBACK_SEC, volume: s.volume ?? 1 }));
   }
 
   /** Every song's length, in playlist order (for working out what a radio is playing). */
