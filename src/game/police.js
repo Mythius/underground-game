@@ -3,6 +3,7 @@ import { segmentRectHit } from '../utils/math.js';
 import { Bullet } from './entities.js';
 import { hotbarOf, trunkOf } from './cargo.js';
 import { Vehicle, vehicleMotion } from './vehicles.js';
+import { nextWaypoint } from './pathfind.js';
 
 // Crime and the police.
 //
@@ -954,12 +955,14 @@ export class Police {
   #walk(o, tx, ty, dt, toCar = null) {
     const d = Math.hypot(tx - o.x, ty - o.y);
     if (d < 1) return;
-    const step = Math.min(d, config.police.footSpeed * dt);
-    const heading = Math.atan2(ty - o.y, tx - o.x);
+    const r = 16;
+    const next = nextWaypoint(this.world, o, tx, ty, 20, dt, r, (door) => this.#mayOpen(door)); // (round walls, through doors he can open)
+    const step = Math.min(d, Math.hypot(next.x - o.x, next.y - o.y), config.police.footSpeed * dt);
+    const heading = Math.atan2(next.y - o.y, next.x - o.x);
     const way = this.world.steerAroundCars?.(o.x, o.y, heading, toCar) ?? heading; // round parked cars, not into them
+    const [ox, oy] = [o.x, o.y];
     o.x += Math.cos(way) * step;
     o.y += Math.sin(way) * step;
-    const r = 16;
     // Officers open any public door they walk up to.
     for (const e of this.world.wallGrid.query(o.x, o.y, r + 24)) {
       const door = e.door;
@@ -979,11 +982,17 @@ export class Police {
         o.y += (dy / dd) * (r - dd);
       }
     }
+    o.stuckFor = step > 0.5 && Math.hypot(o.x - ox, o.y - oy) < step * 0.3 ? (o.stuckFor ?? 0) + dt : 0;
   }
 
-  /** Open a closed public door (not a privately owned warehouse's) and tell everyone. */
+  /** A public door (not a privately owned warehouse's, nor one in the prison wire)? */
+  #mayOpen(door) {
+    return !this.world.warehouses.all.get(door.building)?.owner && !this.world.prison?.isPrisonDoor(door);
+  }
+
+  /** Open a closed public door and tell everyone. */
   #openDoor(door) {
-    if (!door || door.open || this.world.warehouses.all.get(door.building)?.owner || this.world.prison?.isPrisonDoor(door)) return;
+    if (!door || door.open || !this.#mayOpen(door)) return;
     door.open = true;
     this.world.pendingDoors.push(door);
   }

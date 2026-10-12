@@ -49,6 +49,41 @@ test('two hands at each work site work the wheat and carry it to the foreman', (
   assert.equal(wheat.stock, 0, 'nothing to cut in winter');
 });
 
+test('hands find their way round the barn and the hut (rotated sites too), never stuck or popping about', () => {
+  for (const [type, rot] of [['farm', 2], ['logging', 1], ['farm', 0], ['logging', 3]]) {
+    const { map, error } = validateMap({
+      width: 4000, height: 4000,
+      roads: [{ x: 0, y: 1900, w: 4000, h: 270 }],
+      buildings: [{ type, x: 200, y: 200, rot, size: { w: 1400, h: 1400 } }],
+    });
+    assert.equal(error, undefined);
+    const world = new World({ ...config.world, foodCount: 0, pickupStart: 0, parkingLots: 0 }, config.player, config.weapons, map);
+    const site = world.buildings.find((b) => b.type === type);
+    const watcher = world.spawnPlayer('watcher'); // (nobody gets put where they're going while someone's watching)
+    Object.assign(watcher, { x: site.x + site.w / 2, y: site.y + site.h / 2 });
+    const market = world.economy.markets.get(site.id);
+    const good = Object.keys(market.goods)[0];
+    market.goods[good].stock = 0;
+    const hands = world.townsfolk.people.filter((p) => p.job?.kind === 'worker');
+    let jump = 0;
+    for (let i = 0; i < 150 * 15; i++) {
+      const before = hands.map((h) => [h.x, h.y]);
+      world.step(1 / 15);
+      hands.forEach((h, k) => { jump = Math.max(jump, Math.hypot(h.x - before[k][0], h.y - before[k][1])); });
+    }
+    assert.ok(jump < 40, `${type} rot ${rot}: nobody jumps about (${jump.toFixed(0)})`);
+    assert.ok(hands.every((h) => (h.stuckFor ?? 0) < 1), `${type} rot ${rot}: nobody stuck`);
+    assert.ok(market.goods[good].stock > 0, `${type} rot ${rot}: the haul reaches the foreman`);
+    // Nothing to work (winter on the farm): they wait in the open by the foreman, not stuck on the barn.
+    if (type !== 'farm') continue; // (trees grow back)
+    world.frozen = true;
+    for (const n of world.work.nodes.values()) if (n.site === site.id) n.hp = 0;
+    for (const h of hands) Object.assign(h.job, { carry: 0, bag: {}, target: null });
+    for (let i = 0; i < 40 * 15; i++) world.step(1 / 15);
+    assert.ok(hands.every((h) => Math.hypot(h.x - h.job.waitAt.x, h.y - h.job.waitAt.y) <= 30), `${type} rot ${rot}: waiting by the foreman`);
+  }
+});
+
 test('a killed hand is replaced a while later', () => {
   const { world } = chain();
   const hand = world.townsfolk.people.find((p) => p.job?.kind === 'worker');

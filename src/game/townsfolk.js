@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { bezierPoint } from './terrain.js';
 import { WAREHOUSE_SIZES } from './buildings.js';
 import { SIDEWALK, inBox } from './placement.js';
+import { nextWaypoint } from './pathfind.js';
 
 const STUCK_SEC = 2; // how often a walker's progress is checked
 const STUCK_MOVE = 25; // moving less than this in STUCK_SEC counts as stuck
@@ -126,34 +127,40 @@ export class RoadGraph {
 
 const JOB_CODES = { farm: 1, logging: 2, mine: 3, convict: 4, cook: 5 }; // (how the client dresses them)
 
+const BODY = 17; // a walker's radius against the walls
+
 /**
- * One step of someone with a job walking straight to (tx, ty) (sliding along walls, round parked
- * cars). True once they're within `near`. Stuck a while with nobody watching, they're just put there.
+ * One step of someone with a job walking to (tx, ty): straight there when the way is clear, otherwise
+ * round the walls by a found path (sliding along walls, round parked cars). True once they're within
+ * `near`. Stuck a while with nobody watching, they're just put there.
  */
 export function walkTo(world, person, tx, ty, speed, dt, near = 8) {
   const d = Math.hypot(tx - person.x, ty - person.y);
   if (d <= near) {
     person.stuckFor = 0;
+    person.walkPath = null;
     return true;
   }
-  const heading = Math.atan2(ty - person.y, tx - person.x);
+  const next = nextWaypoint(world, person, tx, ty, near, dt, BODY);
+  const heading = Math.atan2(next.y - person.y, next.x - person.x);
   const way = world.steerAroundCars?.(person.x, person.y, heading) ?? heading;
-  const step = Math.min(d, speed * dt);
+  const step = Math.min(Math.hypot(next.x - person.x, next.y - person.y), speed * dt);
   const [ox, oy] = [person.x, person.y];
   person.x += Math.cos(way) * step;
   person.y += Math.sin(way) * step;
   person.angle = way;
-  for (const w of world.wallsNear(person.x, person.y, 17)) {
+  for (const w of world.wallsNear(person.x, person.y, BODY)) {
     const cx = Math.min(Math.max(person.x, w.x), w.x + w.w), cy = Math.min(Math.max(person.y, w.y), w.y + w.h);
     const dx = person.x - cx, dy = person.y - cy, dd = Math.hypot(dx, dy);
-    if (dd > 0 && dd < 17) { person.x += (dx / dd) * (17 - dd); person.y += (dy / dd) * (17 - dd); }
+    if (dd > 0 && dd < BODY) { person.x += (dx / dd) * (BODY - dd); person.y += (dy / dd) * (BODY - dd); }
   }
   const moved = Math.hypot(person.x - ox, person.y - oy);
-  person.stuckFor = moved < step * 0.3 ? (person.stuckFor ?? 0) + dt : 0;
+  person.stuckFor = step > 0.5 && moved < step * 0.3 ? (person.stuckFor ?? 0) + dt : 0;
   if (person.stuckFor > 6 && ![...world.players.values()].some((p) => Math.hypot(p.x - person.x, p.y - person.y) < 1200 || Math.hypot(p.x - tx, p.y - ty) < 1200)) {
     person.x = tx;
     person.y = ty;
     person.stuckFor = 0;
+    person.walkPath = null;
     return true;
   }
   return false;

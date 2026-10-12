@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { trunkOf } from './cargo.js';
 import { Vehicle, vehicleMotion } from './vehicles.js';
 import { walkTo } from './townsfolk.js';
+import { clearWalk } from './pathfind.js';
 
 // The town's own supply chain: NPC hands at the work sites, the city mills working what's brought to
 // them, and the KAMAZ trucks carrying it all along:
@@ -70,11 +71,24 @@ export class Labour {
 
   // ---- the hands --------------------------------------------------------------------------
 
+  /** A clear spot out in the open by the foreman (not inside his hut or the barn, behind a closed door). */
+  #byForeman(b, a0 = Math.random() * Math.PI * 2) {
+    const at = b.npc;
+    for (const d of [50, 65, 80, 100, 130, 170]) {
+      for (let k = 0; k < 24; k++) {
+        const a = a0 + (k / 24) * Math.PI * 2;
+        const [px, py] = [at.x + Math.cos(a) * d, at.y + Math.sin(a) * d];
+        const [fx, fy] = [at.x + Math.cos(a) * 32, at.y + Math.sin(a) * 32]; // (from just in front of him: he's solid himself)
+        if (!this.world.isBlocked(px, py, 18) && clearWalk(this.world, fx, fy, px, py, 14)) return { x: px, y: py };
+      }
+    }
+    return { x: at.x, y: at.y + 60 };
+  }
+
   #hire(b) {
     const L = config.labour;
-    const at = b.npc;
-    const a = Math.random() * Math.PI * 2;
-    this.world.townsfolk.add(at.x + Math.cos(a) * 60, at.y + Math.sin(a) * 60, {
+    const { x, y } = this.#byForeman(b); // (turning up next to him)
+    this.world.townsfolk.add(x, y, {
       kind: 'worker', look: b.type, owner: this, site: b, tool: config.work.tools[b.type],
       carry: 0, bag: {}, target: null, swingT: L.swingSec * Math.random(), swinging: 0,
     }, { speed: L.speed * (0.85 + Math.random() * 0.3) });
@@ -109,8 +123,8 @@ export class Labour {
       return;
     }
     if (!j.target) { // nothing to work (winter on the farm, or all worked out): wait by the foreman
-      const n = b.npc;
-      walkTo(w, person, n.x + 70, n.y + 40, person.speed, dt, 30);
+      j.waitAt ??= this.#byForeman(b);
+      walkTo(w, person, j.waitAt.x, j.waitAt.y, person.speed, dt, 30);
       return;
     }
     const n = j.target;

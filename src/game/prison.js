@@ -48,7 +48,8 @@ export class Prison {
     // The tower snipers: they shoot from up in the towers (over the wire), and never come down.
     this.snipers = b.prison.towers.map((t) => ({ kind: 'officer', name: 'a tower sniper', x: t.x, y: t.y, vehicle: null, cooldown: Math.random() * 2 }));
     world.police.postPrisonGuards(b);
-    this.cellDoors = new Set((b.prison.cellDoors ?? []).map(doorAt));
+    this.cellDoorList = (b.prison.cellDoors ?? []).map(doorAt); // (cell i's door)
+    this.cellDoors = new Set(this.cellDoorList);
     this.lockdown = false; // the cell doors are locked (night)
     this.lockedAt = -Infinity;
     this.meal = null; // the meal being served: its id (one bowl each)
@@ -91,20 +92,36 @@ export class Prison {
     const w = this.world;
     j.swinging = Math.max(0, j.swinging - dt);
     const cell = this.spots.cells[j.cell];
-    // Night: into his cell (he's let in before the doors lock), out again at dawn.
+    // Night: into his cell (a guard lets him in if the door's shut already), out again at dawn.
     if (this.lockdown && cell) {
       if (!j.inCell) {
-        const door = this.#cellDoorPoint(j.cell);
-        if (!walkTo(w, person, door.x, door.y, person.speed * 1.5, dt, 30) && !this.#lockedLongAgo()) return;
-        Object.assign(person, { x: cell.x + cell.w / 2 + (j.cell % 2 ? 14 : -14), y: cell.y + cell.h / 2 });
+        const bunk = { x: cell.x + cell.w / 2 + (j.cell % 2 ? 14 : -14), y: cell.y + cell.h / 2 };
+        if (!j.atDoor) {
+          const door = this.#cellDoorPoint(j.cell);
+          if (!walkTo(w, person, door.x, door.y, person.speed * 1.5, dt, 30)) {
+            if (!this.#lockedLongAgo()) return;
+            Object.assign(person, bunk); // (still out long after lights-out: he's just there)
+            j.inCell = true;
+            return;
+          }
+          j.atDoor = true;
+          j.inT = 0;
+          const d = this.cellDoorList[j.cell];
+          if (d && !d.open) { d.open = true; w.pendingDoors.push(d); }
+        }
+        if (!walkTo(w, person, bunk.x, bunk.y, person.speed, dt, 8) && (j.inT += dt) < 6) return;
+        Object.assign(person, bunk);
         j.inCell = true;
+        j.atDoor = false;
       }
       return;
     }
-    if (j.inCell) {
+    if (j.inCell) { // morning: out into the corridor
       const door = this.#cellDoorPoint(j.cell);
-      Object.assign(person, { x: door.x, y: door.y });
+      j.outT = (j.outT ?? 0) + dt;
+      if (!walkTo(w, person, door.x, door.y, person.speed, dt, 20) && j.outT < 8) return;
       j.inCell = false;
+      j.outT = 0;
     }
     if (j.carry >= c.carry) { // to the bunker with it
       const hop = this.spots.hopper;
@@ -358,6 +375,7 @@ export class Prison {
       for (const door of this.cellDoors) {
         if (!door.open || this.unlockedUntil.has(door)) continue;
         if ([...w.players.values()].some((o) => o.alive && Math.abs(o.x - (door.x + door.w / 2)) < door.w / 2 + o.radius && Math.abs(o.y - (door.y + door.h / 2)) < door.h / 2 + o.radius)) continue;
+        if (w.townsfolk.people.some((o) => o.job?.kind === 'convict' && o.job.atDoor && this.cellDoorList[o.job.cell] === door)) continue; // (one still going in)
         door.open = false;
         w.pendingDoors.push(door);
       }
