@@ -84,6 +84,7 @@ export class Work {
 
   /** One hit at the nearest thing in front of you that this tool works on. */
   #swing(p, tool) {
+    if (tool.type === 'pickaxe' && this.world.prison?.digWall(p)) return; // a prisoner at the inner fence's concrete
     const kinds = KIND_OF_TOOL[tool.type] ?? [];
     const reach = config.work.reach + p.radius;
     const aim = p.input.aim ?? 0;

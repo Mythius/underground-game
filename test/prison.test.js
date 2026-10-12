@@ -120,7 +120,7 @@ test('mine coal and tip it into the bunker: your quota served, you go free', () 
   assert.equal(hotbarOf(p).count('coal'), 0, 'no coal out of the camp');
 });
 
-test('escape: lift a guard\'s key, open the inner door, pick the outer lock — wanted, and the towers shoot', () => {
+test('escape: lift a guard\'s key, dig through the inner fence, key the outer door — wanted, and the towers shoot', () => {
   const { world, b, p, prison, s } = camp();
   prison.jail(p, 1);
   const guard = world.police.prisonGuards()[0];
@@ -136,23 +136,31 @@ test('escape: lift a guard\'s key, open the inner door, pick the outer lock — 
   Object.assign(p, { x: guard.x - 40, y: guard.y });
   world.pickpocket(p);
   assert.ok(p.inventory.some((x) => x?.type === 'key'), 'got the key');
-  // The inner door: shut to anyone without a key, open with one.
+  // The inner fence: dig through its concrete with the pickaxe (no guard looking).
+  const wd = prison.wallDoor;
+  for (const g of world.police.prisonGuards()) { g.x = -9999; g.y = -9999; } // (out of the way)
+  Object.assign(p, { x: wd.x + wd.w / 2, y: wd.y + wd.h + 30 });
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, use: true });
+  world.step(1 / 30);
+  assert.equal(wd.open, false, 'no door to open: it has to be dug through');
+  p.selected = p.inventory.findIndex((x) => x?.type === 'pickaxe');
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, aim: -Math.PI / 2, fire: true });
+  for (let i = 0; i < 30 * config.work.swingSec * config.prison.wallHits * 1.2 && !wd.open; i++) world.step(1 / 30);
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, aim: -Math.PI / 2, fire: false });
+  assert.equal(wd.open, true, 'dug through');
+  // Through to the strip, along to the outer door: the key opens it.
+  walk(world, p, -Math.PI / 2, 0.6);
+  assert.ok(p.y < wd.y, 'in the strip');
   const kd = prison.keyDoor;
   Object.assign(p, { x: kd.x + kd.w / 2, y: kd.y + kd.h + 30 });
-  for (const g of world.police.prisonGuards()) { g.x = -9999; g.y = -9999; } // (out of the way)
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, rob: true });
+  for (let i = 0; i < (config.prison.lockpickSec + 0.5) * 30; i++) world.step(1 / 30);
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, rob: false });
+  assert.equal(kd.open, false, 'no picking this one');
   p.applyInput({ seq: seq++, angle: 0, throttle: 0, use: true });
   world.step(1 / 30);
   assert.equal(kd.open, true, 'the key opens it');
   assert.ok(!p.inventory.some((x) => x?.type === 'key'), 'key used up');
-  // Through to the strip, along to the outer door, and pick it.
-  walk(world, p, -Math.PI / 2, 0.6);
-  assert.ok(p.y < kd.y, 'in the strip');
-  const od = prison.outerDoor;
-  Object.assign(p, { x: od.x + od.w / 2, y: od.y + od.h + 30 });
-  p.applyInput({ seq: seq++, angle: 0, throttle: 0, rob: true });
-  for (let i = 0; i < (config.prison.lockpickSec + 0.5) * 30 && !od.open; i++) world.step(1 / 30);
-  assert.equal(od.open, true, 'picked');
-  p.applyInput({ seq: seq++, angle: 0, throttle: 0, rob: false });
   walk(world, p, -Math.PI / 2, 0.8);
   assert.ok(p.y < b.y, 'over the wire');
   assert.equal(p.jailed, null);
@@ -174,11 +182,51 @@ test('escape: lift a guard\'s key, open the inner door, pick the outer lock — 
 
 test('the escape doors swing shut and lock again', () => {
   const { world, prison } = camp();
-  prison.picked(prison.outerDoor);
-  assert.equal(prison.lockedFor(prison.outerDoor), false);
+  prison.picked(prison.keyDoor);
+  assert.equal(prison.lockedFor(prison.keyDoor), false);
   for (let i = 0; i < (config.prison.doorOpenSec + 1) * 30; i++) world.step(1 / 30);
-  assert.equal(prison.outerDoor.open, false);
-  assert.equal(prison.lockedFor(prison.outerDoor), true);
+  assert.equal(prison.keyDoor.open, false);
+  assert.equal(prison.lockedFor(prison.keyDoor), true);
+});
+
+test('digging at the inner fence: a guard who sees it fills the hole in and beats you; once through, it\'s filled in behind you', () => {
+  const { world, p, prison } = camp();
+  prison.jail(p, 1);
+  const quota = p.jailed.quota;
+  const wd = prison.wallDoor;
+  const [guard, ...rest] = world.police.prisonGuards();
+  for (const g of rest) { g.x = -9999; g.y = -9999; }
+  guard.x = -9999; guard.y = -9999;
+  Object.assign(p, { x: wd.x + wd.w / 2, y: wd.y + wd.h + 30 });
+  p.inventory.fill(null);
+  p.inventory[0] = { type: 'pickaxe', tool: true, site: prison.building.id };
+  p.selected = 0;
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, aim: -Math.PI / 2 });
+  for (let i = 0; i < 5; i++) assert.equal(prison.digWall(p), true);
+  assert.equal(prison.wallHits, 5);
+  // A guard comes round, facing you: seen.
+  Object.assign(guard, { x: p.x + 200, y: p.y, angle: Math.PI });
+  const health = p.health;
+  assert.equal(prison.digWall(p), true);
+  assert.equal(prison.wallHits, 0, 'the hole is filled in');
+  assert.equal(p.jailed.quota, quota + config.prison.caughtCoal);
+  assert.ok(prison.events.some((e) => e.kind === 'wall_caught'));
+  for (let i = 0; i < 30 * config.prison.clubEverySec * (config.prison.beatClubs + 2); i++) world.step(1 / 30);
+  assert.ok(p.health < health, 'beaten');
+  assert.ok(p.alive, 'but not killed');
+  assert.equal(p.jailed.beating, 0, 'and then left alone');
+  // Facing away, he doesn't see it: dig on through.
+  Object.assign(guard, { x: p.x + 200, y: p.y, angle: 0 });
+  p.health = p.maxHealth;
+  for (let i = 0; i < config.prison.wallHits; i++) prison.digWall(p);
+  assert.equal(wd.open, true, 'through');
+  assert.equal(prison.digWall(p), false, 'nothing left to dig');
+  // Nobody in the gap: it's filled in again, and the digging starts over.
+  p.x -= 300;
+  for (let i = 0; i < (config.prison.doorOpenSec + 1) * 30; i++) world.step(1 / 30);
+  assert.equal(wd.open, false);
+  assert.equal(prison.wallHits, 0);
+  assert.equal(prison.lockedFor(wd), true);
 });
 
 test('a sentence carries on after logging off (resume)', () => {

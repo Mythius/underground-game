@@ -70,7 +70,41 @@ test('a hold-up: stand still with your hands up and they take half your cash', (
   assert.equal(p.heldUp, null);
 });
 
-test('run off during a hold-up and he opens fire', () => {
+test('a hold-up: moving at first only starts the countdown over; still moving after the grace period and he opens fire', () => {
+  const world = town();
+  const g = oneGangster(world, 2000, 2000);
+  const p = player(world, 1, 2100, 2000);
+  p.cash = 400;
+  config.gangsters.robChance = 1;
+  const shotBy = () => [...world.bullets.values()].some((b) => b.owner === g);
+  try {
+    run(world, 0.8);
+    assert.ok(g.holdup?.started && p.heldUp, 'hands up');
+    // Shuffling about through most of the grace period: no shots, and the countdown keeps restarting.
+    const steps = Math.floor((config.gangsters.holdupGraceSec - 1) * 30);
+    for (let i = 0; i < steps; i++) {
+      if (i % 30 === 0) p.y += i % 60 ? 60 : -60; // (a step this way, a step that)
+      world.step(1 / 30);
+      assert.ok(!shotBy(), `no shots yet (${(i / 30).toFixed(1)}s)`);
+    }
+    assert.ok(p.heldUp, 'still at gunpoint');
+    assert.ok(p.heldUp.left > config.gangsters.holdupSec - 1.1, 'the countdown started over');
+    // Grace over and still moving: he shoots.
+    run(world, 1.2);
+    p.x += 120;
+    let shot = false;
+    for (let i = 0; i < 30 * 3 && !shot; i++) {
+      world.step(1 / 30);
+      shot = shotBy();
+    }
+    assert.ok(shot, 'he shoots');
+    assert.equal(p.cash, 400, 'nothing taken');
+  } finally {
+    config.gangsters.robChance = 0.2;
+  }
+});
+
+test('a hold-up: stop moving within the grace period, stand still, and he only takes the cash', () => {
   const world = town();
   const g = oneGangster(world, 2000, 2000);
   const p = player(world, 1, 2100, 2000);
@@ -78,15 +112,34 @@ test('run off during a hold-up and he opens fire', () => {
   config.gangsters.robChance = 1;
   try {
     run(world, 0.8);
-    assert.ok(g.holdup?.started && p.heldUp, 'hands up');
-    p.x += 120; // legging it
+    assert.ok(p.heldUp, 'hands up');
+    p.x += 100; // a step back…
+    run(world, 2);
+    run(world, config.gangsters.holdupSec + 0.5); // …then standing still
+    assert.equal(p.cash, 200);
+    assert.ok(![...world.bullets.values()].some((b) => b.owner === g), 'no shots');
+  } finally {
+    config.gangsters.robChance = 0.2;
+  }
+});
+
+test('a hold-up: attack him and he fires back at once', () => {
+  const world = town();
+  const g = oneGangster(world, 2000, 2000);
+  const p = player(world, 1, 2100, 2000);
+  p.cash = 400;
+  config.gangsters.robChance = 1;
+  try {
+    run(world, 0.8);
+    assert.ok(p.heldUp, 'hands up');
+    world.hires.damage(g, 10, p); // (a knife in his side)
     let shot = false;
-    for (let i = 0; i < 30 * 3 && !shot; i++) {
+    for (let i = 0; i < 30 && !shot; i++) {
       world.step(1 / 30);
       shot = [...world.bullets.values()].some((b) => b.owner === g);
     }
-    assert.ok(shot, 'he shoots');
-    assert.equal(p.cash, 400, 'nothing taken');
+    assert.ok(shot, 'he shoots within a second');
+    assert.equal(p.heldUp, null, 'no more hold-up: it is a fight');
   } finally {
     config.gangsters.robChance = 0.2;
   }

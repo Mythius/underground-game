@@ -214,3 +214,23 @@ test('hooking a player reels in something they carry — even a gun like one you
   assert.equal(f.fishing.events.find((e) => e.kind === 'fish_caught')?.item, 'pistol');
   assert.equal(f.p.inventory.filter((s) => s?.type === 'pistol').length, 2);
 });
+
+test('in winter the lakes are ice, but the rivers still run: cast into a river only (and both in summer)', () => {
+  const f = pond();
+  const { world, p, fishing } = f;
+  onBank(f);
+  world.water = { ...world.water, rivers: [{ points: [[3200, 0], [3200, 3000]], width: 200 }] }; // a river east of the pond
+  world.frozen = true;
+  assert.equal(fishing.cast(p, 0), 'no_water', 'the pond is frozen');
+  assert.equal(p.fishing, undefined);
+  Object.assign(p, { x: 3200 - 100 - 40, y: 1500 }); // the river's west bank
+  assert.equal(fishing.cast(p, 0), null, 'the river is open');
+  assert.ok(p.fishing);
+  // Summer again: the pond thaws, and both are open.
+  world.frozen = false;
+  p.fishing = null;
+  assert.equal(fishing.cast(p, 0), null, 'the river in summer');
+  p.fishing = null;
+  Object.assign(p, { x: 2000 - 300 - 40, y: 1500 });
+  assert.equal(fishing.cast(p, 0), null, 'the pond in summer');
+});

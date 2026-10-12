@@ -471,9 +471,9 @@ export const config = Object.freeze({
   },
   // The prison (ИТК, a gulag on the edge of town): every arrest ends up here. Half of it is a coal
   // mine. Get out by paying the warden your bail (or a friend pays it), by mining your quota of coal
-  // for the prison's power plant (tip it into the coal bunker), or by escaping: lift a guard's key,
-  // unlock the door in the inner fence, then pick the lock on the outer fence — the tower snipers
-  // open up on anyone wanted round the camp.
+  // for the prison's power plant (tip it into the coal bunker), or by escaping: dig through the
+  // concrete in the inner fence with your pickaxe (unseen), then open the outer fence's door with a
+  // key lifted off a guard — the tower snipers open up on anyone wanted round the camp.
   prison: {
     coalPerStar: 50, // the quota: this much coal per wanted star at the arrest
     minStars: 1, // (a player officer's arrest counts as at least this)
@@ -481,9 +481,12 @@ export const config = Object.freeze({
     hopperReach: 110, // stand this close to the coal bunker and your coal goes in
     wardenReach: 140,
     keyReach: 50, // lifting a guard's key (F, from behind)
-    caughtCoal: 25, // caught at it (from the front): this much more coal on your quota
-    doorOpenSec: 12, // the escape doors swing shut (and lock) after this
-    lockpickSec: 6, // the outer fence door
+    caughtCoal: 25, // caught at it (lifting a key from the front, or digging at the wall): this much more coal on your quota
+    wallHits: 40, // pickaxe swings to dig through the inner fence's concrete (a swing every work.swingSec)
+    wallSeenRange: 500, // a guard this close, facing you with nothing in the way, sees you digging
+    beatClubs: 3, // caught digging: the guard comes over and clubs you this many times (clubDamage each)
+    doorOpenSec: 12, // the hole in the wall is filled in, and the outer door swings shut (and locks), after this
+    lockpickSec: 6, // a cell door, picked by someone who isn't a prisoner (breaking a friend out)
     escapeStars: 3,
     sniperRange: 1100, // from each watchtower (out past this from the camp, an escape is done)
     sniperEverySec: 3, // each tower
@@ -634,7 +637,8 @@ export const config = Object.freeze({
   // Gangsters: a few hard men in trench coats with rifles, walking the town (see src/game/hires.js).
   //   They take armor less damage, don't heal on their own, and come back (new faces) a while after one's killed or arrested.
   //   Spotting you on foot, there's a robChance they hold you up: holdupSec standing still with your hands up
-  //   and they take `take` of your carried cash; run off or pull a trigger and they open fire.
+  //   and they take `take` of your carried cash. You get holdupGraceSec to stop and stand still; still
+  //   moving after that and they open fire — pull a trigger on them (or hit them) and they fire at once.
   //   Spotting a player's parked car with its owner away, they steal it, drive it off and leave it
   //   somewhere after joyrideSec (its owner is told where).
   //   They also buy any vodka (and the mixes) for vodkaPrice × base. The Militsiya only go after them
@@ -648,8 +652,9 @@ export const config = Object.freeze({
     sight: 520,
     robChance: 0.2,
     holdupRange: 120,
-    holdupSec: 4,
-    holdupMove: 45, // moving more than this during a hold-up counts as running off
+    holdupSec: 4, // stand still this long (with your hands up) and he takes his cut
+    holdupMove: 45, // moving more than this during a hold-up counts as moving (the countdown starts over)
+    holdupGraceSec: 8, // from the start of a hold-up, this long to stop and stand still before moving gets you shot (attack him and he shoots at once)
     take: 0.5,
     playerCooldownSec: 180, // once he's sized you up, he leaves you be this long
     theftCooldownSec: 240,

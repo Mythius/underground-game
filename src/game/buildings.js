@@ -540,7 +540,6 @@ export const BUILDING_TYPES = {
         { x: silo.x - silo.r, y: silo.y - silo.r, w: silo.r * 2, h: silo.r * 2, c: '#a9afb5', round: true },
         { x: silo.x - silo.r + 12, y: silo.y - silo.r + 12, w: (silo.r - 12) * 2, h: (silo.r - 12) * 2, c: '#c6ccd2', round: true },
         { x: silo.x - 16, y: silo.y - 16, w: 32, h: 32, c: '#7d838a', round: true },
-        { x: 60, y: h - 230, w: 140, h: 120, c: '#4f3a26' }, // a muddy yard by the gate
       ],
       props: [
         // The barn: red board walls, big doors facing the road.
@@ -608,20 +607,20 @@ export const BUILDING_TYPES = {
   // parade ground, and the gatehouse (КПП) in the south fence, where the warden stands at a counter
   // between the visitors' room (from the road) and the prisoners' side. Against the south fence: the
   // cell block west of the gatehouse (two rows of cells either side of a corridor) and the kitchen
-  // east of it. Escape: the door in the inner fence opens with a guard's key; the one in the outer
-  // fence has to be picked.
+  // east of it. Escape: dig through the concrete section of the inner fence with your pickaxe (unseen by
+  // the guards), then open the door in the outer fence with a key lifted off a guard.
   prison: (size = { w: 1800, h: 1800 }) => {
     const { w, h } = size;
     const T = 6, S = 100, gx = Math.round(w / 2);
     const gh = { x: gx - 150, y: h - S - 150, w: 300, h: S + 150 }; // the gatehouse
     const wire = (r) => ({ ...r, wire: true, low: true }); // people can't get through; bullets and eyes can
     const fences = [
-      ...wallLine(true, 0, 0, w, T, door(0.85, 60)), // outer, north: the door you pick
+      ...wallLine(true, 0, 0, w, T, door(0.85, 60)), // outer, north: the door a guard's key opens
       ...wallLine(false, 0, T, h - T, T),
       ...wallLine(false, w - T, T, h - T, T),
       ...wallLine(true, h - T, 0, gh.x, T),
       ...wallLine(true, h - T, gh.x + gh.w, w, T),
-      ...wallLine(true, S, S, w - S, T, door(0.6, 60)), // inner, north: the door a guard's key opens
+      ...wallLine(true, S, S, w - S, T, door(0.6, 60)), // inner, north: a concrete section you dig through
       ...wallLine(false, S, S + T, h - S, T),
       ...wallLine(false, w - S - T, S + T, h - S, T),
       ...wallLine(true, h - S - T, S, gh.x, T),
@@ -751,8 +750,8 @@ export const BUILDING_TYPES = {
         spawn: { x: gx, y: parade.y + parade.h / 2 },
         release: { x: gx, y: h + 70 }, // out on the road side of the gatehouse
         hopper,
-        keyDoor: { x: S + 0.6 * (w - 2 * S), y: S + T / 2 },
-        outerDoor: { x: 0.85 * w, y: T / 2 },
+        wallDoor: { x: S + 0.6 * (w - 2 * S), y: S + T / 2 },
+        keyDoor: { x: 0.85 * w, y: T / 2 },
         inner: { x: S, y: S, w: w - 2 * S, h: h - 2 * S },
         patrol: [[S + 56, S + 56], [w - S - 56, S + 56], [w - S - 56, blockTop - 45], [S + 56, blockTop - 45]].map(([x, y]) => ({ x, y })),
         cells, // inside each cell (rects)

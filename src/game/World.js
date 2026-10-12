@@ -961,7 +961,7 @@ export class World {
   /** A door locked to p within reach, for lock picking. */
   lockedDoorNear(p, reach = 90) {
     for (const d of this.doors) {
-      if (d.open || !this.lockedFor(d, p) || this.prison.keyOnly(d)) continue; // (the prison's inner door: only a guard's key)
+      if (d.open || !this.lockedFor(d, p) || this.prison.keyOnly(d) || this.prison.wallOnly(d)) continue; // (the prison's outer door: only a guard's key; the inner fence: a pickaxe)
       if (Math.hypot(d.x + d.w / 2 - p.x, d.y + d.h / 2 - p.y) < reach + p.radius) return d;
     }
     return null;
@@ -1160,9 +1160,9 @@ export class World {
         p.y = best.y;
         continue;
       }
-      if (this.prison.useKey(best, p)) continue; // a guard's key in the inner fence's door
+      if (this.prison.useKey(best, p)) continue; // a guard's key in the outer fence's door
       if (this.lockedFor(best, p)) {
-        this.police.events.push({ player: p, kind: 'error', code: this.prison.keyOnly(best) ? 'prison_key_door' : this.prison.isPrisonDoor(best) ? 'prison_pick_door' : 'locked' });
+        this.police.events.push({ player: p, kind: 'error', code: this.prison.keyOnly(best) ? 'prison_key_door' : this.prison.wallOnly(best) ? 'prison_wall' : this.prison.isPrisonDoor(best) ? 'prison_pick_door' : 'locked' });
         continue;
       }
       // Don't shut a door on someone standing in the doorway.

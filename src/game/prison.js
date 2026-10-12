@@ -10,8 +10,9 @@ import { walkTo } from './townsfolk.js';
 //   - bail: pay the warden at the gatehouse counter (cash, then bank) — or a friend pays it from the
 //     visitors' side of the counter;
 //   - work: mine your quota of coal at the coal face and tip it into the boiler house's coal bunker;
-//   - escape: lift a key off a patrolling guard (F, from behind), open the door in the inner fence
-//     with it, then pick the lock on the door in the outer fence. Out past the wire you're wanted, and
+//   - escape: dig through the concrete section of the inner fence with your pickaxe — if a guard sees
+//     you at it, the hole's filled in and he beats you (more coal on your quota) — then open the door
+//     in the outer fence with a key lifted off a patrolling guard (F, from behind). Out past the wire you're wanted, and
 //     the snipers in the watchtowers shoot at anyone wanted round the camp. Whatever the warden was
 //     keeping for you stays with him. Shot down (or logged off) before you're out of their range,
 //     you're back inside.
@@ -43,8 +44,9 @@ export class Prison {
     const b = this.building;
     const doors = world.doors.filter((d) => d.building === b.id);
     const doorAt = ({ x, y }) => doors.reduce((best, d) => (Math.hypot(d.x + d.w / 2 - x, d.y + d.h / 2 - y) < Math.hypot(best.x + best.w / 2 - x, best.y + best.h / 2 - y) ? d : best));
-    this.keyDoor = doorAt(b.prison.keyDoor);
-    this.outerDoor = doorAt(b.prison.outerDoor);
+    this.wallDoor = doorAt(b.prison.wallDoor); // the inner fence: dug through with a pickaxe
+    this.keyDoor = doorAt(b.prison.keyDoor); // the outer fence: a guard's key
+    this.wallHits = 0; // how far the digging's got (the hole's filled in when a guard sees, or once it's been used)
     // The tower snipers: they shoot from up in the towers (over the wire), and never come down.
     this.snipers = b.prison.towers.map((t) => ({ kind: 'officer', name: 'a tower sniper', x: t.x, y: t.y, vehicle: null, cooldown: Math.random() * 2 }));
     world.police.postPrisonGuards(b);
@@ -294,10 +296,10 @@ export class Prison {
 
   // ---- the doors in the wire ---------------------------------------------------------------
 
-  /** The door in the inner fence (a guard's key) and the one in the outer fence (pick it) are locked; the cells at night. */
+  /** The concrete in the inner fence (dig through it) and the outer fence's door (a guard's key) are shut; the cells at night. */
   lockedFor(door) {
     if (this.cellDoors?.has(door)) return this.lockdown && !this.unlockedUntil.has(door);
-    if (door !== this.keyDoor && door !== this.outerDoor) return false;
+    if (door !== this.wallDoor && door !== this.keyDoor) return false;
     return !this.unlockedUntil.has(door);
   }
 
@@ -306,11 +308,54 @@ export class Prison {
     return door === this.keyDoor;
   }
 
-  isPrisonDoor(door) {
-    return Boolean(door) && (door === this.keyDoor || door === this.outerDoor || Boolean(this.cellDoors?.has(door)));
+  /** The concrete section of the inner fence: only a pickaxe gets through it. */
+  wallOnly(door) {
+    return door === this.wallDoor;
   }
 
-  /** E at the inner door with a guard's key in your hotbar: it opens (and the key's used up). */
+  isPrisonDoor(door) {
+    return Boolean(door) && (door === this.keyDoor || door === this.wallDoor || Boolean(this.cellDoors?.has(door)));
+  }
+
+  /**
+   * A prisoner's pickaxe swing: at the concrete in the inner fence, if it's in reach and in front of
+   * them (true: the swing went into the wall). A guard who sees it: the hole's filled in and he comes
+   * over and beats you, and there's more coal on your quota. Enough hits unseen and you're through.
+   */
+  digWall(p) {
+    const door = this.wallDoor;
+    if (!door || !p.jailed?.prison || this.unlockedUntil.has(door)) return false;
+    const c = config.prison;
+    const cx = door.x + door.w / 2, cy = door.y + door.h / 2;
+    const dx = Math.max(door.x - p.x, 0, p.x - (door.x + door.w)), dy = Math.max(door.y - p.y, 0, p.y - (door.y + door.h));
+    if (Math.hypot(dx, dy) > config.work.reach + p.radius) return false;
+    const aim = p.input.aim ?? 0, d = Math.hypot(cx - p.x, cy - p.y);
+    if (d > 10 && ((cx - p.x) * Math.cos(aim) + (cy - p.y) * Math.sin(aim)) / d < 0.3) return false; // has to be in front of you
+    const police = this.world.police;
+    const guard = police.prisonGuards().find((o) => police.sees(o.x, o.y, o.angle, p.x, p.y, c.wallSeenRange));
+    if (guard) {
+      this.#setWall(0);
+      p.jailed.quota += c.caughtCoal;
+      p.jailed.beating = c.beatClubs;
+      this.#saveSentence(p);
+      this.events.push({ player: p, kind: 'wall_caught', extra: c.caughtCoal, quota: p.jailed.quota });
+      return true;
+    }
+    this.#setWall(this.wallHits + 1);
+    if (this.wallHits >= c.wallHits) {
+      this.#unlock(door);
+      this.events.push({ player: p, kind: 'wall_through' });
+    }
+    return true;
+  }
+
+  #setWall(hits) {
+    if (hits === this.wallHits) return;
+    this.wallHits = hits;
+    this.events.push({ kind: 'prison_wall', hits, max: config.prison.wallHits }); // (everyone sees the hole)
+  }
+
+  /** E at the outer door with a guard's key in your hotbar: it opens (and the key's used up). */
   useKey(door, p) {
     if (door !== this.keyDoor || door.open) return false;
     const i = p.inventory.findIndex((s) => s?.type === 'key');
@@ -320,7 +365,7 @@ export class Prison {
     return true;
   }
 
-  /** The outer door's (or a cell's) lock is picked: it swings open. */
+  /** A cell's lock is picked: it swings open. */
   picked(door) {
     this.#unlock(door);
   }
@@ -332,24 +377,33 @@ export class Prison {
     return { at: this.world.dayClock ?? null, day: this.world.dayNumber ?? 0 };
   }
 
-  /** The prison guard `guard` (on his rounds): a prisoner out after lights-out for him to deal with, if any. */
+  /** The prison guard `guard` (on his rounds): a prisoner for him to deal with (caught at the wall, or out after lights-out), if any. */
   curfewTarget(guard) {
-    if (!this.lockdown) return null;
     let best = null, bestD = Infinity;
     for (const p of this.world.players.values()) {
-      if (!p.alive || !p.jailed?.prison || !p.jailed.out || this.time < p.jailed.out.warnUntil) continue;
+      if (!p.alive || !p.jailed?.prison) continue;
+      if (!(p.jailed.beating > 0) && (!this.lockdown || !p.jailed.out || this.time < p.jailed.out.warnUntil)) continue;
       const d = Math.hypot(p.x - guard.x, p.y - guard.y);
       if (d < bestD) [best, bestD] = [p, d];
     }
     return best;
   }
 
-  /** A guard's baton: it hurts (never kills) and there's more coal on the quota. */
+  /** A guard's baton: it hurts (never kills); out after lights-out, there's more coal on the quota each time. */
   club(guard, p) {
     const c = config.prison;
-    const out = p.jailed?.out;
-    if (!out || (out.clubbed ?? -Infinity) > this.time - c.clubEverySec) return false;
-    out.clubbed = this.time;
+    const j = p.jailed;
+    if (!j || (j.clubbed ?? -Infinity) > this.time - c.clubEverySec) return false;
+    if (j.beating > 0) { // caught at the wall: a few blows (the coal's already on the quota)
+      j.clubbed = this.time;
+      j.beating--;
+      p.hurt(Math.min(c.clubDamage, Math.max(0, p.health - 1)));
+      this.events.push({ player: p, kind: 'beaten', left: j.beating });
+      return true;
+    }
+    const out = j.out;
+    if (!out) return false;
+    j.clubbed = this.time;
     p.hurt(Math.min(c.clubDamage, Math.max(0, p.health - 1)));
     p.jailed.quota += c.curfewCoal;
     this.#saveSentence(p);
@@ -499,6 +553,7 @@ export class Prison {
       if (this.time < until) continue;
       if ([...w.players.values()].some((o) => o.alive && Math.abs(o.x - (door.x + door.w / 2)) < door.w / 2 + o.radius && Math.abs(o.y - (door.y + door.h / 2)) < door.h / 2 + o.radius)) continue;
       this.unlockedUntil.delete(door);
+      if (door === this.wallDoor) this.#setWall(0); // the hole's bricked up again
       if (door.open) {
         door.open = false;
         w.pendingDoors.push(door);

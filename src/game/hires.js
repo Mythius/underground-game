@@ -896,7 +896,11 @@ export class Hires {
     this.#walk(h, next.x, next.y, config.gangsters.walkSpeed, dt);
   }
 
-  /** Walk up, rifle raised: hands up and stand still for holdupSec and they take your cash; run or shoot and it's a fight. */
+  /**
+   * Walk up, rifle raised: hands up and stand still for holdupSec and they take your cash. You've
+   * holdupGraceSec to stop and stand still (moving just starts the countdown over, and he keeps up with
+   * you); still moving after that and it's a fight. Shoot at him and it's a fight at once.
+   */
   #holdUp(h, dt) {
     const g = config.gangsters, hu = h.holdup, p = hu.p;
     const end = () => { p.heldUp = null; h.holdup = null; };
@@ -907,17 +911,24 @@ export class Hires {
     if (!hu.started) {
       if (d > g.sight * 1.5) return end(); // got away before he got there
       if (d > g.holdupRange) return this.#walk(h, p.x, p.y, config.hires.runSpeed, dt);
-      Object.assign(hu, { started: true, at: { x: p.x, y: p.y }, left: g.holdupSec });
-      p.heldUp = { by: h, left: g.holdupSec, of: g.holdupSec };
+      Object.assign(hu, { started: true, at: { x: p.x, y: p.y }, left: g.holdupSec, grace: g.holdupGraceSec });
+      p.heldUp = { by: h, left: g.holdupSec, of: g.holdupSec, grace: g.holdupGraceSec };
       (p.foes ??= new Map()).set(h, this.time + config.hires.foeSec); // (your goons, if any, see the threat)
-      this.events.push({ player: p, kind: 'holdup', sec: g.holdupSec });
+      this.events.push({ player: p, kind: 'holdup', sec: g.holdupSec, grace: g.holdupGraceSec });
       return;
     }
     hu.left -= dt;
-    p.heldUp.left = hu.left;
-    const ran = Math.hypot(p.x - hu.at.x, p.y - hu.at.y) > g.holdupMove || d > g.holdupRange * 2;
+    hu.grace = Math.max(0, hu.grace - dt);
+    const moved = Math.hypot(p.x - hu.at.x, p.y - hu.at.y) > g.holdupMove || d > g.holdupRange * 2;
     const drew = p.input?.fire && p.weapon && !config.weapons[p.weapon.type]?.melee;
-    if (ran || drew) { // resisting: he opens fire
+    if (moved && !drew && hu.grace > 0) { // not standing still yet: the countdown starts over from here (and he keeps close)
+      hu.at = { x: p.x, y: p.y };
+      hu.left = g.holdupSec;
+    }
+    if (d > g.holdupRange && hu.grace > 0) this.#walk(h, p.x, p.y, config.hires.runSpeed, dt);
+    h.angle = Math.atan2(p.y - h.y, p.x - h.x); // (the rifle stays on you)
+    Object.assign(p.heldUp, { left: hu.left, grace: hu.grace });
+    if ((moved && hu.grace <= 0) || drew) { // resisting: he opens fire
       end();
       this.noteAttack(p, h);
       this.events.push({ player: p, kind: 'holdup_resisted' });

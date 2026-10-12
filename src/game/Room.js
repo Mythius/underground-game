@@ -159,6 +159,7 @@ export class Room {
     for (const e of this.world.prison.events.splice(0)) {
       const { player, ...rest } = e;
       if (player) this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+      else this.broadcast({ t: ServerMsg.POLICE, ...rest }); // (the hole in the wall: everyone sees it)
     }
     for (const e of this.world.roadblocks.events.splice(0)) {
       const { player, ...rest } = e;
@@ -380,6 +381,7 @@ export class Room {
       owners: [...this.world.warehouses.ownership(), ...this.world.economy.siteOwners()],
       // Rocks, trees and wheat at the work sites: [id, kind, x, y, r, hp, max].
       nodes: [...this.world.work.nodes.values()].map((n) => [n.id, n.kind, n.x, n.y, n.r, n.hp, n.max]),
+      prisonWall: [this.world.prison.wallHits ?? 0, config.prison.wallHits], // how far the digging at the inner fence has got
       railway: this.world.railway?.station
         ? { y: this.world.railway.y, stopX: this.world.railway.stopX, length: this.world.railway.length, station: this.world.railway.station.id, smuggler: this.world.railway.smuggler, wagons: config.railway.wagons, reach: config.railway.reach, ...this.world.railway.state() }
         : null,
@@ -830,7 +832,7 @@ export class Room {
       cop: me.account?.cop ? 1 : 0, // I've joined the Militsiya
       buzz: Math.ceil(me.buzz ?? 0), // seconds of vodka buzz left (less damage taken)
       visions: Object.entries(me.visions ?? {}).map(([kind, left]) => [kind, Math.ceil(left)]),
-      holdup: me.heldUp ? [Math.max(0, Math.round(me.heldUp.left * 10) / 10), me.heldUp.of] : null, // a gangster's got me at gunpoint: [seconds left, of] // vodka's (and the mixes') effects on how I see, stacked: [[kind, seconds left]]
+      holdup: me.heldUp ? [Math.max(0, Math.round(me.heldUp.left * 10) / 10), me.heldUp.of, Math.ceil(me.heldUp.grace ?? 0)] : null, // a gangster's got me at gunpoint: [seconds left, of, seconds left to stop moving] // vodka's (and the mixes') effects on how I see, stacked: [[kind, seconds left]]
       cabinet: me.openCabinet ? this.world.furnishings.contents(me, me.openCabinet) : null, // [id, slots] while I have one open
       fish: this.world.fishing.view(me), // my line: [x, y] waiting, or [x, y, t, cycle, from, to, pulls] while a fish fights
       inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10, s.illegal ? 1 : 0] : null)), // (a gun: [type, ammo, reload, unregistered])

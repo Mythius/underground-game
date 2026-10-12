@@ -707,6 +707,13 @@
     function applyWelcome(msg) {
       world = msg.world;
       buildings = msg.buildings ?? [];
+      // The prison's inner fence: a concrete section where its door would be, dug through with a pickaxe.
+      prisonWall.door = null;
+      for (const b of buildings) {
+        const at = b.prison?.wallDoor;
+        if (at && b.doors.length) prisonWall.door = b.doors.reduce((best, x) => (Math.hypot(x.x + x.w / 2 - at.x, x.y + x.h / 2 - at.y) < Math.hypot(best.x + best.w / 2 - at.x, best.y + best.h / 2 - at.y) ? x : best)).id;
+      }
+      [prisonWall.hits, prisonWall.max] = msg.prisonWall ?? [0, 1];
       terrain = { ...terrain, ...msg.terrain };
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
       doorReach = msg.doorReach ?? doorReach;
@@ -736,7 +743,7 @@
       rail = msg.railway ? { ...msg.railway, at: performance.now() } : null;
       if (rail?.smuggler) econ.places.push({ id: -rail.station, type: 'black', role: 'smuggler', ...rail.smuggler });
       roadblocks = msg.roadblocks ?? { list: [], bribe: 500 };
-      if (msg.env) env = { ...msg.env, at: performance.now() };
+      if (msg.env) { env = { ...msg.env, at: performance.now() }; syncClock(env.clock, env.at, true); }
       rainGrip = msg.rainGrip ?? rainGrip;
       gravelGrip = msg.gravelGrip ?? gravelGrip;
       lamps = terrain.lamps ?? [];
@@ -820,6 +827,7 @@
           break;
         case 'env':
           env = { ...msg, at: performance.now() };
+          syncClock(env.clock, env.at, false);
           break;
         case 'boom':
           explosions.push({ x: msg.x, y: msg.y, start: performance.now() });
@@ -857,7 +865,11 @@
           if (msg.kind === 'meal_bell') { sfx('campBell'); toast(`🔔 ${msg.meal === 'supper' ? 'Supper' : 'Breakfast'} — slop at the kitchen hatch (east of the gatehouse)`, 5000); }
           if (msg.kind === 'slop') toast('🥣 A bowl of slop. It\'s… warm.');
           if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
-          if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the inner fence (north side) opens with it', 5000); }
+          if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the outer fence (north side) opens with it', 5000); }
+          if (msg.kind === 'prison_wall') prisonWall.hits = msg.hits;
+          if (msg.kind === 'wall_caught') { sfx('error'); toast(`👮 A guard saw you digging — the hole's filled in, and he's coming with his baton · ${msg.extra} more coal on your quota (${msg.quota})`, 5000); }
+          if (msg.kind === 'beaten') sfx('bat');
+          if (msg.kind === 'wall_through') { sfx('alarm'); toast('⛏ Through the wall! Into the strip — the door in the outer fence opens with a guard\'s key', 5000); }
           if (msg.kind === 'key_caught') { sfx('error'); toast(`👮 The guard caught your hand — ${msg.extra} more coal on your quota (${msg.quota})`, 4000); }
           if (msg.kind === 'escaped') { sfx('alarm'); toast('🚨 Over the wire! The towers have snipers — run, and get well clear of the camp', 6000); }
           if (msg.kind === 'got_away') toast('🏃 You got away from the camp');
@@ -866,7 +878,7 @@
           if (msg.kind === 'cop_fired') { sfx('error'); toast('🚔 You broke the law — you\'ve been thrown out of the Militsiya. Badge and uniform gone.'); }
           if (msg.kind === 'cop_fined') { sfx('error'); toast(`🚔 Officer ${msg.by} fined you ${money(msg.amount)}`); }
           if (msg.kind === 'illegal_gun_seen') toast('🚨 A cop saw the unregistered gun in your hand!');
-          if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. Run or shoot and he opens fire.`); }
+          if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. You've ${msg.grace ?? 8}s to stop moving; shoot and he opens fire.`); }
           if (msg.kind === 'held_up') { sfx('error'); toast(msg.amount ? `🕴️ He took ${money(msg.amount)} and walked off` : '🕴️ Your pockets were empty — he walked off'); }
           if (msg.kind === 'holdup_resisted') toast('🔫 You didn\'t play along — he\'s shooting!');
           if (msg.kind === 'car_stolen') { sfx('alarm'); toast(`🚗 A gangster just stole your ${vehicleTypes[msg.type]?.name ?? 'car'}!`); }
@@ -1144,6 +1156,14 @@
           P(g, [[10, 44], [16, 22], [32, 12], [50, 18], [56, 38], [44, 54], [20, 54]], '#6e6862', 'rgba(0,0,0,.3)');
           P(g, [[18, 26], [30, 18], [40, 22], [30, 30]], '#8a847d');
           for (const [x, y, r] of [[26, 38, 5], [40, 32, 4], [36, 46, 4], [46, 42, 3], [20, 46, 3]]) { C(g, x, y, r, '#c8682a'); C(g, x - 1, y - 1, r * 0.45, '#e8925a'); }
+        },
+        coal: (g) => { // a heap of black lumps, glossy where the light catches the facets
+          for (const [x, y, r, a] of [[20, 44, 14, 0.2], [44, 46, 13, 1.1], [32, 28, 15, 0.6], [16, 26, 9, 2.0], [48, 26, 9, 2.6]]) {
+            const pts = Array.from({ length: 6 }, (_, i) => { const t = a + (i / 6) * Math.PI * 2, rr = r * (0.8 + ((i * 7 + x) % 5) * 0.06); return [x + Math.cos(t) * rr, y + Math.sin(t) * rr]; });
+            P(g, pts, '#1f1e1d', '#0b0b0b');
+            P(g, [pts[3], pts[4], [x, y]], '#3a3836'); // a face turned to the light
+            P(g, [[x - r * 0.35, y - r * 0.45], [x + r * 0.05, y - r * 0.6], [x - r * 0.1, y - r * 0.2]], 'rgba(170, 180, 195, .55)'); // the glint
+          }
         },
         crude: (g) => {
           RR(g, 14, 10, 36, 46, 5, '#1d1f22', '#000'); R(g, 14, 18, 36, 3, '#3a3d42'); R(g, 14, 44, 36, 3, '#3a3d42');
@@ -1594,6 +1614,7 @@
     const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force' };
     const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
+    const prisonWall = { door: null, hits: 0, max: 1 }; // the inner fence's concrete section (its door id) and how far the digging's got
     let rail = null; // the railway: { y, stopX, length, station, smuggler, wagons, x, speed, state, nextIn, at }
     let roadblocks = { list: [], bribe: 500 };
     let checkDueUntil = 0; // a checkpoint is waiting for you to stop until then
@@ -1693,6 +1714,7 @@
       cant_afford_bail: "You can't afford the bail (cash and bank together)",
       have_key: 'You already have a key',
       prison_key_door: '🔒 Locked — it opens with a guard\'s key',
+      prison_wall: '🧱 Solid concrete — dig through it with your pickaxe (where the guards can\'t see)',
       prison_pick_door: '🔒 Locked — hold F to pick the lock',
     };
 
@@ -2256,7 +2278,7 @@
       jailScreen.hidden = !jail;
       if (jail) document.getElementById('jail-time').textContent = `— ${jail}s`;
       const holdup = playing ? crimeState.holdup : null;
-      const [label, progress, arresting] = holdup ? [`🔫 HANDS UP — stand still (${Math.ceil(holdup[0])}s) or he shoots`, 1 - holdup[0] / holdup[1], true] : arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], robProgress(rob, at), false] : [null, 0, false];
+      const [label, progress, arresting] = holdup ? [`🔫 HANDS UP — stand still (${Math.ceil(holdup[0])}s)${holdup[2] > 0 ? ` · ${holdup[2]}s to stop moving` : ' — move and he shoots'}`, 1 - holdup[0] / holdup[1], true] : arrest > 0 ? ['🚨 Being arrested — get away!', arrest, true] : rob ? [ROB_NAMES[rob[0]], robProgress(rob, at), false] : [null, 0, false];
       crimeBar.hidden = !label;
       if (label) {
         crimeBar.classList.toggle('arrest', arresting);
@@ -2360,14 +2382,6 @@
           const x = d.x + d.w / 2, y = d.y + d.h / 2;
           if (!d.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
         }
-      }
-      // The prison's outer fence door (picked from either side: an escape, or a break-out).
-      for (const b of buildings) {
-        if (!b.prison) continue;
-        const od = b.prison.outerDoor;
-        const d = b.doors.reduce((best, x) => (Math.hypot(x.x + x.w / 2 - od.x, x.y + x.h / 2 - od.y) < Math.hypot(best.x + best.w / 2 - od.x, best.y + best.h / 2 - od.y) ? x : best));
-        const x = d.x + d.w / 2, y = d.y + d.h / 2;
-        if (!(doorById.get(d.id) ?? d).open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
       }
       // Homes that aren't mine: their outside doors are locked (from outside).
       for (const b of buildings) {
@@ -3695,8 +3709,22 @@
 
     const TRANSITION = 60; // seconds of dawn / dusk
 
+    // The client keeps its own smooth clock rather than jumping to every server update (a lagging
+    // server tick would otherwise snap it backwards, flashing between day and night at dusk and dawn).
+    // Small differences are eased out over a few seconds; only a big one (new room, long pause) snaps.
+    const skyClock = { t: env.clock, at: env.at, drift: 0, over: 1 };
     function clockNow(now = performance.now()) {
-      return (env.clock + (now - env.at) / 1000) % (env.daySec + env.nightSec);
+      const e = Math.max(0, (now - skyClock.at) / 1000);
+      const t = skyClock.t + e + skyClock.drift * Math.min(1, e / skyClock.over);
+      const cycle = env.daySec + env.nightSec;
+      return ((t % cycle) + cycle) % cycle;
+    }
+    function syncClock(serverClock, now, snap) {
+      const cycle = env.daySec + env.nightSec;
+      const mine = clockNow(now);
+      const diff = ((((serverClock - mine) % cycle) + cycle * 1.5) % cycle) - cycle / 2; // shortest way round
+      if (snap || Math.abs(diff) > 20) Object.assign(skyClock, { t: serverClock, at: now, drift: 0, over: 1 });
+      else Object.assign(skyClock, { t: mine, at: now, drift: diff, over: Math.max(8, Math.abs(diff) * 2) }); // never runs backwards
     }
 
     /** 1 in daylight, 0 at night, fading over dawn (start of day) and dusk (end of day). */
@@ -8046,8 +8074,51 @@
     // Double doors hinged at each side of the doorway. Closed they sit in the wall line; open they swing outward.
     const DOOR_OPEN_ANGLE = (75 * Math.PI) / 180;
 
+    /** The concrete section of the prison's inner fence: cracking as it's dug at, rubble once it's through. */
+    function drawPrisonWall(d) {
+      const horizontal = d.w > d.h;
+      const len = horizontal ? d.w : d.h, thick = 16;
+      const x = horizontal ? d.x : d.x + d.w / 2 - thick / 2, y = horizontal ? d.y + d.h / 2 - thick / 2 : d.y;
+      const w = horizontal ? len : thick, h = horizontal ? thick : len;
+      const rnd = seeded(Math.round(d.x * 3 + d.y * 7) % 2147483646 + 1);
+      if (d.open) { // dug through: broken concrete either side of the gap
+        for (let i = 0; i < 10; i++) {
+          const k = rnd() < 0.5 ? rnd() * len * 0.22 : len - rnd() * len * 0.22, off = (rnd() - 0.5) * 30;
+          circle(horizontal ? x + k : x + thick / 2 + off, horizontal ? y + thick / 2 + off : y + k, 2.5 + rnd() * 4, rnd() < 0.5 ? '#8a877f' : '#6f6c66');
+        }
+        return;
+      }
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 3, y + 4, w, h);
+      ctx.fillStyle = '#8f8b83'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = 'rgba(0, 0, 0, .25)'; ctx.lineWidth = 1; // the joins between the slabs
+      ctx.beginPath();
+      for (let k = 15; k < len; k += 15) { if (horizontal) { ctx.moveTo(x + k, y); ctx.lineTo(x + k, y + h); } else { ctx.moveTo(x, y + k); ctx.lineTo(x + w, y + k); } }
+      ctx.stroke();
+      ctx.strokeStyle = '#5f5b54'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+      // Cracks spreading from the middle, more of them the further the digging's got.
+      const dug = Math.min(1, prisonWall.hits / prisonWall.max);
+      if (dug <= 0) return;
+      const cx = x + w / 2, cy = y + h / 2;
+      ctx.fillStyle = `rgba(40, 36, 32, ${0.25 + dug * 0.5})`; // the hole being chipped out
+      ctx.beginPath(); ctx.ellipse(cx, cy, (horizontal ? len : thick) * 0.42 * dug, (horizontal ? thick : len) * 0.42 * dug, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#2f2c28'; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      for (let i = 0; i < 3 + Math.round(dug * 8); i++) {
+        let px = cx, py = cy, a = rnd() * Math.PI * 2;
+        ctx.moveTo(px, py);
+        for (let s = 0; s < 4; s++) {
+          a += (rnd() - 0.5) * 1.2;
+          px = Math.max(x, Math.min(x + w, px + Math.cos(a) * len * 0.12 * (0.4 + dug)));
+          py = Math.max(y, Math.min(y + h, py + Math.sin(a) * len * 0.12 * (0.4 + dug)));
+          ctx.lineTo(px, py);
+        }
+      }
+      ctx.stroke();
+    }
+
     function drawDoors(b, dt) {
       for (const d of b.doors) {
+        if (d.id === prisonWall.door) { drawPrisonWall(doorById.get(d.id) ?? d); continue; }
         d.anim += ((d.open ? 1 : 0) - d.anim) * (1 - Math.exp(-dt * 12));
         const OPEN = d.anim * DOOR_OPEN_ANGLE;
         const horizontal = d.w > d.h;
@@ -8079,6 +8150,7 @@
       const reach = radiusOf(me.mass) + doorReach;
       let best = null, bestDist = Infinity;
       for (const d of doorById.values()) {
+        if (d.id === prisonWall.door) continue; // (the prison's concrete: no door to use, it's dug through)
         const cx = Math.min(Math.max(me.x, d.x), d.x + d.w);
         const cy = Math.min(Math.max(me.y, d.y), d.y + d.h);
         const dist = Math.hypot(me.x - cx, me.y - cy);
@@ -8812,11 +8884,11 @@
     const WORKER_LOOK = { 1: { skin: '#e0ac69', shirt: '#7a8a4a', pants: '#3a3f5c', hat: 'cap' }, 2: { skin: '#c68642', shirt: '#9b3b2e', pants: '#3a3a3a', hat: 'beanie' }, 3: { skin: '#f1c27d', shirt: '#5d6470', pants: '#2c2c2c', hat: 'miner' } };
     const COOK_LOOK = { skin: '#f1c27d', shirt: '#e8e6df', pants: '#6d6d6d', hat: 'none' };
     function drawWorker(n, id) {
-      const swing = n.work === 1 ? Math.max(0, Math.sin(frameTime / 90 + id)) : 0;
+      const swing = n.work === 1 ? Math.max(0, Math.sin(performance.now() / 90 + id)) : 0;
       if (n.job === 5) return drawPerson({ x: n.x, y: n.y, r: 19, aim: n.angle, weapon: n.armed ? 'purse' : null }, COOK_LOOK);
       if (n.job === 4) { // a convict: big, and the pickaxe swaps for his fists in a fight
-        drawPerson({ x: n.x, y: n.y, r: 25, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : 'pickaxe', thrust: n.armed ? Math.max(0, Math.sin(frameTime / 140 + id)) : swing }, { ...PRISONER_LOOK, skin: resolveLook({ skin: id * 7 }).skin });
-      } else drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : JOB_TOOLS[n.job], thrust: n.armed ? Math.max(0, Math.sin(frameTime / 170 + id)) : swing }, WORKER_LOOK[n.job] ?? WORKER_LOOK[1]);
+        drawPerson({ x: n.x, y: n.y, r: 25, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : 'pickaxe', thrust: n.armed ? Math.max(0, Math.sin(performance.now() / 140 + id)) : swing }, { ...PRISONER_LOOK, skin: resolveLook({ skin: id * 7 }).skin });
+      } else drawPerson({ x: n.x, y: n.y, r: 17, aim: n.angle, weapon: n.armed ? 'purse' : n.work === 2 ? null : JOB_TOOLS[n.job], thrust: n.armed ? Math.max(0, Math.sin(performance.now() / 170 + id)) : swing }, WORKER_LOOK[n.job] ?? WORKER_LOOK[1]);
       if (n.work === 2) { // the haul: a sack (or a load of coal) on his back
         ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(n.angle);
         ctx.fillStyle = n.job === 4 ? '#1f1d1c' : n.job === 2 ? '#7a5534' : '#b89a62';
@@ -9260,6 +9332,13 @@
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
         const t = `place ${{ cabinet: 'cabinet', bed: 'bed', furniture: 'sofa' }[toPlace.kind]} (aim to turn it)`;
         ctx.strokeText(t, spot.x + spot.w / 2, spot.y - 36); ctx.fillText(t, spot.x + spot.w / 2, spot.y - 36);
+      }
+      const wallDoor = prisonState && me && playing && inv[selectedSlot]?.[1] === 'pickaxe' ? doorById.get(prisonWall.door) : null;
+      if (wallDoor && !wallDoor.open && Math.hypot(wallDoor.x + wallDoor.w / 2 - me.x, wallDoor.y + wallDoor.h / 2 - me.y) < 130) { // a prisoner at the inner fence, pickaxe in hand
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
+        const t = `⛏ click to dig through (${Math.round((100 * prisonWall.hits) / prisonWall.max)}%) — don't let a guard see you`;
+        ctx.strokeText(t, me.x, me.y + 44); ctx.fillText(t, me.x, me.y + 44); // (under me: the wall's above)
       }
       if (me && playing && !me.car && !riding && holdingRod() && (!myFish || myFish.v.length <= 2)) { // rod in hand: what a click does
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
