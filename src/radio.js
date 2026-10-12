@@ -14,6 +14,9 @@ export const RADIO_DIR = fileURLToPath(new URL('../data/radio/', import.meta.url
 export const MUSIC_DIR = fileURLToPath(new URL('../data/music/', import.meta.url));
 // …and the prison camp's music (played instead while you're locked up), in data/prison-music/, under /prison.
 export const PRISON_MUSIC_DIR = fileURLToPath(new URL('../data/prison-music/', import.meta.url));
+// …and the action music: in a fight (data/fight-music/, /fight) and in a car chase with the Militsiya (data/chase-music/, /chase).
+export const FIGHT_MUSIC_DIR = fileURLToPath(new URL('../data/fight-music/', import.meta.url));
+export const CHASE_MUSIC_DIR = fileURLToPath(new URL('../data/chase-music/', import.meta.url));
 const FALLBACK_SEC = 180; // a song whose length couldn't be measured is taken to be this long
 const NAME_MAX = 80;
 

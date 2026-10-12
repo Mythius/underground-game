@@ -74,6 +74,8 @@ export const ServerMsg = Object.freeze({
   RADIO_CHANGED: 'radio_changed', // { t } the radio playlist changed; fetch GET /radio again
   MUSIC_CHANGED: 'music_changed', // { t } the background music playlist changed; fetch GET /music again
   PRISON_MUSIC_CHANGED: 'prison_music_changed', // { t } the prison music playlist changed; fetch GET /prison again
+  FIGHT_MUSIC_CHANGED: 'fight_music_changed', // { t } the fight music playlist changed; fetch GET /fight again
+  CHASE_MUSIC_CHANGED: 'chase_music_changed', // { t } the car chase music playlist changed; fetch GET /chase again
   DIALOGUE_CHANGED: 'dialogue_changed', // { t } the dialogue editor changed what NPCs say; fetch GET /dialogue again
   MAP_CHANGED: 'map_changed', // { t } the admin saved a new map; back to the menu (a new welcome follows)
   TEAM: 'team', // { t, members: [{id (client), name, player (player id, 0 if dead), me}], invites: [{id (client), name}], max } your team panel

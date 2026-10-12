@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import { AccountStore } from './accounts.js';
 import { SoundStore } from './sounds.js';
 import { DialogueStore } from './dialogue.js';
-import { MUSIC_DIR, PRISON_MUSIC_DIR, RadioStore } from './radio.js';
+import { CHASE_MUSIC_DIR, FIGHT_MUSIC_DIR, MUSIC_DIR, PRISON_MUSIC_DIR, RadioStore } from './radio.js';
 import { World } from './game/World.js';
 import { createReadStream } from 'node:fs';
 import { config } from './config.js';
@@ -43,6 +43,8 @@ const PLAYLISTS = {
   radio: { store: radio, changed: ServerMsg.RADIO_CHANGED },
   music: { store: music, changed: ServerMsg.MUSIC_CHANGED },
   prison: { store: prisonMusic, changed: ServerMsg.PRISON_MUSIC_CHANGED },
+  fight: { store: new RadioStore(FIGHT_MUSIC_DIR, 'fight'), changed: ServerMsg.FIGHT_MUSIC_CHANGED }, // while shots fly near you
+  chase: { store: new RadioStore(CHASE_MUSIC_DIR, 'chase'), changed: ServerMsg.CHASE_MUSIC_CHANGED }, // wanted, in a car, sirens behind you
 };
 World.radioDurations = () => radio.durations(); // (so a car's radio knows when one song ends and the next begins)
 // Songs uploaded to the old fixed radio slots (radio1…radio10) move into the playlist, once.
@@ -212,10 +214,10 @@ const server = http.createServer(async (req, res) => {
     rooms.broadcastAll({ t: ServerMsg.SOUNDS_CHANGED }); // everyone playing picks it up right away
     return json(200, { ok: true, ...sounds.list() });
   }
-  // ---- radio, background music and prison music playlists: list and stream for everyone; upload, rename / volume / move, delete (admin) ----
-  const listRoute = req.method === 'GET' && req.url.match(/^\/(radio|music|prison)$/);
+  // ---- radio and music playlists (background, prison, fight, chase): list and stream for everyone; upload, rename / volume / move, delete (admin) ----
+  const listRoute = req.method === 'GET' && req.url.match(/^\/(radio|music|prison|fight|chase)$/);
   if (listRoute) return json(200, { songs: PLAYLISTS[listRoute[1]].store.list(), canSave: Boolean(config.adminPassword) });
-  const songFile = req.method === 'GET' && req.url.match(/^\/(radio|music|prison)\/file\/([^?]*)/);
+  const songFile = req.method === 'GET' && req.url.match(/^\/(radio|music|prison|fight|chase)\/file\/([^?]*)/);
   if (songFile) {
     const f = PLAYLISTS[songFile[1]].store.file(decodeURIComponent(songFile[2]));
     if (!f) return json(404, { error: 'not_found' });
@@ -232,7 +234,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { ...headers, 'content-length': f.size });
     return createReadStream(f.path).pipe(res);
   }
-  const radioRoute = req.url.match(/^\/(radio|music|prison)(?:\/([a-f0-9]{12}))?(?:\?name=([^&]*))?$/);
+  const radioRoute = req.url.match(/^\/(radio|music|prison|fight|chase)(?:\/([a-f0-9]{12}))?(?:\?name=([^&]*))?$/);
   if (radioRoute && ['POST', 'DELETE'].includes(req.method)) {
     if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
     if (!passwordMatches(req.headers['x-admin-password'])) {

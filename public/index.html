@@ -1009,6 +1009,12 @@
         case 'prison_music_changed':
           loadMusic('prison');
           break;
+        case 'fight_music_changed':
+          loadMusic('fight');
+          break;
+        case 'chase_music_changed':
+          loadMusic('chase');
+          break;
         case 'radio_changed':
           loadPlaylist();
           break;
@@ -4947,7 +4953,7 @@
           inner.append(row);
         }
         if (group.group === 'Vehicles') inner.append(radioPlaylistSection()); // the car radio's songs, with the car sounds
-        if (group.group === 'Music & ambience') inner.append(radioPlaylistSection('music'), radioPlaylistSection('prison'));
+        if (group.group === 'Music & ambience') inner.append(radioPlaylistSection('music'), radioPlaylistSection('prison'), radioPlaylistSection('fight'), radioPlaylistSection('chase'));
       }
       if (!custom.slots.some((g) => g.group === 'Vehicles')) inner.append(radioPlaylistSection()); // (normally right after Vehicles)
       soundsEl.append(inner);
@@ -4957,6 +4963,8 @@
     const PLAYLIST_INFO = {
       radio: { title: '📻 Car radio playlist', added: '📻 {n} added to the radio', intro: 'A car\'s radio (V on/off, N next song) plays one of these on repeat, and everyone near the car hears it; N moves on to the next. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.' },
       music: { title: '🎵 Background music', added: '🎵 {n} added to the background music', intro: 'Played now and then in a shuffled order: each song fades in and out, with 1–6 minutes of silence between songs. Upload as many as you like — pick several files at once. Players set how loud it is with the Music slider in ⚙ settings.' },
+      fight: { title: '👊 Fight music', added: '👊 {n} added to the fight music', intro: 'Fades in when shots are fired or someone gets hurt near you, plays straight on while the fighting lasts, and fades out about 15 seconds after it stops. Shuffled. With none, the normal music carries on.' },
+      chase: { title: '🚨 Car chase music', added: '🚨 {n} added to the car chase music', intro: 'Fades in when you\'re wanted, in a car, with a Militsiya siren close behind, and fades out about 8 seconds after you lose them. Takes priority over fight music. Shuffled. With none, the normal music carries on.' },
       prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, fading in and out, with 1–6 minutes of silence between songs. With none, prisoners hear the normal background music.' },
     };
     const songList = (kind) => (kind === 'radio' ? playlist : musicLists[kind]);
@@ -5048,6 +5056,8 @@
       loadPlaylist();
       loadMusic();
       loadMusic('prison');
+      loadMusic('fight');
+      loadMusic('chase');
     }
     function closeSoundEditor() {
       soundsEl.hidden = true;
@@ -5136,6 +5146,8 @@
     loadPlaylist();
     loadMusic();
     loadMusic('prison');
+    loadMusic('fight');
+    loadMusic('chase');
 
     function sfx(name, at, volume = 1) {
       if (!audio.ctx || settings.mute || audio.ctx.state !== 'running') return;
@@ -5212,13 +5224,12 @@
         if (!bursts.has(key)) bursts.set(key, { x, y, weapon });
       }
       if (heardBullets.size > 2000) heardBullets.clear();
-      for (const b of bursts.values()) sfx(SOUNDS[b.weapon] ? b.weapon : 'pistol', b, 0.8);
+      for (const b of bursts.values()) { sfx(SOUNDS[b.weapon] ? b.weapon : 'pistol', b, 0.8); heardFight(b); }
 
       for (const [id, p] of players) {
         const before = lastHp.get(id);
         if (before !== undefined && p.hp < before) {
-          if (id === myId) sfx('hurt');
-          else sfx('hit', p, 0.7);
+          if (id === myId) { sfx('hurt'); heardFight(null); } else { sfx('hit', p, 0.7); heardFight(p); }
         }
         lastHp.set(id, p.hp);
       }
@@ -5290,12 +5301,17 @@
       }
       return buf;
     }
-    // ---- background music: the uploaded songs, shuffled, each fading in and out, with 1–6 minutes of silence between.
-    // In prison, the prison music plays instead (if any's been uploaded). ----
-    const MUSIC_FADE_IN = 5, MUSIC_FADE_OUT = 8; // seconds
-    const MUSIC_GAP = [60, 360]; // silence between songs, seconds (random in this range)
-    const musicLists = { music: { songs: [] }, prison: { songs: [] } }; // GET /music, /prison: [{ id, name, url, duration, volume }]
-    const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null }; // now: { id, el, g }; nextAt: audio-clock time the next song starts
+    // ---- music: the uploaded songs, shuffled, each fading in and out. Which playlist plays, first that has songs:
+    // chase (wanted, in a car, a siren close behind), fight (shots or hits near me), prison (locked up), background.
+    // Background and prison music leave 1–6 minutes of silence between songs; fight and chase music play straight on
+    // while the action lasts, then fade out. Switching playlists crossfades. ----
+    const MUSIC_FADE_IN = 5, MUSIC_FADE_OUT = 8; // seconds, at a song's start and end
+    const ACTION_FADE_IN = 2, SWITCH_FADE = 3; // fight/chase music comes in quicker; a song cut short fades over this
+    const MUSIC_GAP = [60, 360]; // silence between background / prison songs, seconds (random in this range)
+    const FIGHT_HOLD = 15, CHASE_HOLD = 8; // seconds the action music keeps going after the last shot / siren
+    const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] } }; // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
+    const ACTION_MUSIC = new Set(['fight', 'chase']);
+    const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null, fightUntil: 0, chaseUntil: 0 }; // now: { id, el, g }; times on the audio clock
     async function loadMusic(kind = 'music') {
       try {
         const data = await (await fetch(`/${kind}`)).json();
@@ -5303,11 +5319,26 @@
         if (!soundsEl.hidden) renderSoundEditor();
       } catch {}
     }
-    function stopMusic(gap) {
-      const m = music.now;
-      if (m) { m.el.pause(); m.el.removeAttribute('src'); m.el.load(); m.g.disconnect(); }
+    /** Something violent near me (a shot, a hit, me getting hurt): fight music for a while. */
+    function heardFight(at) {
+      if (!audio.ctx || !me || !playing) return;
+      if (at && Math.hypot(at.x - me.x, at.y - me.y) > 700) return;
+      music.fightUntil = audio.ctx.currentTime + FIGHT_HOLD;
+    }
+    /** Let the current song go, fading it out over `fade` seconds; the next one may start after `gap`. */
+    function stopMusic(gap, fade = 0) {
+      const m = music.now, now = audio.ctx.currentTime;
+      if (m) {
+        const end = () => { m.el.pause(); m.el.removeAttribute('src'); m.el.load(); m.g.disconnect(); };
+        if (fade > 0) {
+          m.g.gain.cancelScheduledValues(now);
+          m.g.gain.setValueAtTime(m.g.gain.value, now);
+          m.g.gain.linearRampToValueAtTime(0, now + fade);
+          setTimeout(end, fade * 1000 + 100);
+        } else end();
+      }
       music.now = null;
-      music.nextAt = audio.ctx.currentTime + gap;
+      music.nextAt = now + gap;
     }
     /** The next song to play: a shuffled pass through the playlist, never the same one twice in a row. */
     function nextMusicSong(list) {
@@ -5319,19 +5350,32 @@
       }
       return list.songs.find((s) => s.id === music.queue.shift());
     }
+    const musicGap = () => MUSIC_GAP[0] + Math.random() * (MUSIC_GAP[1] - MUSIC_GAP[0]);
     function updateMusic(now) {
       const a = audio.ctx;
-      const kind = prisonState && musicLists.prison.songs.length ? 'prison' : 'music';
-      if (kind !== music.kind) { // locked up or let out: the other playlist starts soon
-        if (music.now) stopMusic(0);
-        Object.assign(music, { kind, queue: [], nextAt: now + 5 });
+      // A chase: wanted, in a car, and a Militsiya car with its siren on close by.
+      if (me && playing && (me.car || riding) && crimeState.wanted > 0) {
+        for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
+          if (v.siren && Math.hypot(v.x - me.x, v.y - me.y) < 1400) { music.chaseUntil = now + CHASE_HOLD; break; }
+        }
+      }
+      const has = (k) => musicLists[k].songs.length > 0;
+      const kind = now < music.chaseUntil && has('chase') ? 'chase'
+        : now < music.fightUntil && has('fight') ? 'fight'
+        : prisonState && has('prison') ? 'prison' : 'music';
+      if (kind !== music.kind) {
+        const was = music.kind;
+        // Action starts at once; after it, the calm music comes back after the usual silence; prison <-> outside soon.
+        const gap = ACTION_MUSIC.has(kind) ? 0 : ACTION_MUSIC.has(was) ? musicGap() : 5;
+        if (music.now) stopMusic(gap, SWITCH_FADE);
+        Object.assign(music, { kind, queue: [], nextAt: now + gap });
       }
       const list = musicLists[kind];
-      if (!list.songs.length) { if (music.now) stopMusic(0); return; }
+      if (!list.songs.length) { if (music.now) stopMusic(0, SWITCH_FADE); return; }
       music.nextAt ??= now + 5; // the first song soon after the game starts
-      let m = music.now;
+      const m = music.now;
       const song = m && list.songs.find((s) => s.id === m.id);
-      if (m && (!song || m.el.ended || m.el.error)) { stopMusic(m.el.error ? 10 : MUSIC_GAP[0] + Math.random() * (MUSIC_GAP[1] - MUSIC_GAP[0])); return; }
+      if (m && (!song || m.el.ended || m.el.error)) { stopMusic(m.el.error ? 10 : ACTION_MUSIC.has(kind) ? 0 : musicGap(), song ? 0 : SWITCH_FADE); return; }
       if (!m) {
         if (now < music.nextAt) return;
         const next = nextMusicSong(list);
@@ -5348,7 +5392,7 @@
       }
       // Fade in at the start and out towards the end.
       const t = m.el.currentTime, dur = Number.isFinite(m.el.duration) ? m.el.duration : song.duration;
-      const env = Math.max(0, Math.min(1, t / MUSIC_FADE_IN, (dur - t) / MUSIC_FADE_OUT));
+      const env = Math.max(0, Math.min(1, t / (ACTION_MUSIC.has(kind) ? ACTION_FADE_IN : MUSIC_FADE_IN), (dur - t) / MUSIC_FADE_OUT));
       m.g.gain.setTargetAtTime((settings.music ?? 40) / 100 * 0.5 * song.volume * env, now, 0.1);
     }
 
