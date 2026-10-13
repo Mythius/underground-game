@@ -253,7 +253,7 @@ export class Hires {
     h.alive = false;
     if (h.side === 'state') {
       this.stateTimers.push([h.role, h.slot ?? 0, config.governor.respawnSec]); // someone new, in a while
-      if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason }); // (his successor makes the visit)
+      if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason, warehouse: h.task.spot?.warehouse, by: h.task.by, snitch: h.task.snitch }); // (his successor makes the visit)
       if (h.vehicle) { h.vehicle.ai = null; }
     }
     if (h.role === 'gangster') {
@@ -921,7 +921,8 @@ export class Hires {
   }
 
   // The inspector's rounds. He keeps an eye on everyone's day: more than depositLimit paid into the bank
-  // (laundered cash doesn't count), or abandonLimit delivery jobs dropped, and he comes to fine you.
+  // (laundered cash doesn't count), or abandonLimit delivery jobs dropped, and he comes to check one of
+  // your factories — a fine and the contraband seized if there's anything illegal in it.
 
   #watchOf(account) {
     const day = this.world.dayNumber ?? 0;
@@ -948,6 +949,7 @@ export class Hires {
   #flag(account, w, reason) {
     if (w.flagged.has(reason)) return; // (once a day for each)
     w.flagged.add(reason);
+    if (![...this.world.warehouses.all.values()].some((x) => x.owner === account)) return; // (no factory to go through)
     this.inspections.push({ account, reason });
     const p = this.#playerOf(account);
     if (p) this.events.push({ player: p, kind: 'inspector_coming', reason, fine: config.governor.fine });
@@ -958,30 +960,88 @@ export class Hires {
     return null;
   }
 
-  /** Where he goes to fine `account`: outside the door of their warehouse, else their home. Null: neither. */
-  #visitSpot(account) {
-    let b = null;
-    for (const w of this.world.warehouses.all.values()) if (w.owner === account) { b = this.world.buildings[w.id - 1]; break; }
-    b ??= this.world.homes.homeOf(account);
+  /** Where he goes: outside the door of one of account's factories (`warehouse`, or one at random). Null: none. */
+  #visitSpot(account, warehouse) {
+    const owned = [...this.world.warehouses.all.values()].filter((w) => w.owner === account && (!warehouse || w.id === warehouse));
+    const w = owned[Math.floor(Math.random() * owned.length)];
+    const b = w && this.world.buildings[w.id - 1];
     const d = b?.doors.find((x) => x.exterior);
     if (!d) return null;
-    return { x: d.x + d.w / 2 + d.nx * 70, y: d.y + d.h / 2 + d.ny * 70, building: b };
+    return { x: d.x + d.w / 2 + d.nx * 70, y: d.y + d.h / 2 + d.ny * 70, building: b, warehouse: w.id };
   }
 
-  /** The fine: from the bank, any shortfall from cash on you. */
-  #fine(task) {
+  /** He goes through the factory: anything illegal and it's the fine, the contraband seized; else nothing. */
+  #check(task) {
     task.fined = true;
-    const amount = config.governor.fine, acc = task.account;
+    const wh = this.world.warehouses.all.get(task.spot?.warehouse);
+    const acc = task.account;
+    const p = this.#playerOf(acc);
+    const snitch = task.snitch ? this.#playerOf(task.snitch) : null;
+    if (!wh || wh.owner !== acc || !wh.hasIllegal()) {
+      if (p) this.events.push({ player: p, kind: 'inspector_clean', reason: task.reason, post: task.post ?? false });
+      if (snitch) this.events.push({ player: snitch, kind: 'snitch_result', found: false, name: acc.name });
+      return;
+    }
+    const seized = wh.raid();
+    const amount = config.governor.fine;
     const fromBank = Math.min(amount, Math.max(0, acc.bank));
     acc.bank -= fromBank;
     this.world.onBankChange?.(acc);
-    const p = this.#playerOf(acc);
     let fromCash = 0;
     if (p && fromBank < amount) {
       fromCash = Math.min(amount - fromBank, p.cash);
       p.cash -= fromCash;
     }
-    if (p) this.events.push({ player: p, kind: 'inspector_fined', amount: fromBank + fromCash, reason: task.reason, post: task.post ?? false });
+    this.world.warehouses.changed = true;
+    if (p) this.events.push({ player: p, kind: 'inspector_fined', amount: fromBank + fromCash, reason: task.reason, post: task.post ?? false, seized, by: task.by ?? null });
+    if (snitch) this.events.push({ player: snitch, kind: 'snitch_result', found: true, name: acc.name, seized });
+  }
+
+  /** The governor, if he's in reach of p (and not at war with them). */
+  #governorFor(p) {
+    const h = this.list.find((x) => x.role === 'governor');
+    if (!h || p.vehicle || Math.hypot(h.x - p.x, h.y - p.y) > config.governor.talkReach + p.radius + h.radius) return null;
+    return h;
+  }
+
+  /** Talking to the governor: everyone else's factories, to snitch on. */
+  describeGovernor(p) {
+    const h = this.#governorFor(p);
+    if (!h) return null;
+    const pending = new Set(this.#pendingWarehouses());
+    const targets = [...this.world.warehouses.all.values()]
+      .filter((w) => w.owner && w.owner !== p.account)
+      .map((w) => [w.id, w.owner.name, pending.has(w.id) ? 1 : 0]);
+    return { kind: 'governor', id: this.residence.id, fee: config.governor.snitchFee, fine: config.governor.fine, hostile: this.#isFoe(h, p), targets };
+  }
+
+  /** Factories the inspector is already going to (or on his way to). */
+  #pendingWarehouses() {
+    const out = this.inspections.map((t) => t.warehouse).filter(Boolean);
+    const busy = this.list.find((x) => x.role === 'inspector')?.task;
+    if (busy?.spot?.warehouse && !busy.fined) out.push(busy.spot.warehouse);
+    return out;
+  }
+
+  /** Snitch on someone else's factory: for the fee, the governor sends the inspector round. */
+  snitch(p, warehouseId) {
+    if (!p.account) return 'no_account';
+    const h = this.#governorFor(p);
+    if (!h) return 'too_far';
+    if (this.#isFoe(h, p)) return 'governor_hostile';
+    const wh = this.world.warehouses.all.get(warehouseId);
+    if (!wh?.owner) return 'snitch_nobody';
+    if (wh.owner === p.account) return 'snitch_self';
+    if (this.#pendingWarehouses().includes(wh.id)) return 'snitch_already';
+    const fee = config.governor.snitchFee;
+    if (p.cash + Math.max(0, p.account.bank) < fee) return 'not_enough_cash';
+    const fromCash = Math.min(fee, p.cash);
+    p.cash -= fromCash;
+    if (fromCash < fee) { p.account.bank -= fee - fromCash; this.world.onBankChange?.(p.account); }
+    this.inspections.push({ account: wh.owner, reason: 'snitch', warehouse: wh.id, by: p.name, snitch: p.account });
+    const target = this.#playerOf(wh.owner);
+    if (target) this.events.push({ player: target, kind: 'inspector_coming', reason: 'snitch', by: p.name, fine: config.governor.fine });
+    return { name: wh.owner.name, fee };
   }
 
   #inspector(h, dt) {
@@ -995,15 +1055,15 @@ export class Hires {
     if (!h.task) {
       const next = this.inspections.shift();
       if (next) {
-        const spot = this.#visitSpot(next.account);
-        h.task = { ...next, spot, stage: spot ? 'out' : 'post', started: this.time, wait: 0 };
+        const spot = this.#visitSpot(next.account, next.warehouse);
+        h.task = spot ? { ...next, spot, stage: 'out', started: this.time, wait: 0 } : null; // (no factory: nothing to inspect)
       }
     }
     const t = h.task;
     if (!t) return this.#goHome(h, dt);
-    if (t.stage === 'post' || this.time - t.started > g.tripSec) { // nowhere to go, or stuck: it comes in the post
-      t.post = t.stage === 'post';
-      if (!t.fined) this.#fine(t);
+    if (this.time - t.started > g.tripSec) { // stuck: he goes through the books instead, and it comes in the post
+      t.post = true;
+      if (!t.fined) this.#check(t);
       h.task = null;
       return this.#teleportHome(h);
     }
@@ -1015,7 +1075,7 @@ export class Hires {
     if (t.stage === 'walk') { // on foot to the door
       if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h); }
       if (Math.hypot(t.spot.x - h.x, t.spot.y - h.y) > 40) return this.#walkState(h, t.spot.x, t.spot.y, config.hires.speed, dt);
-      this.#fine(t);
+      this.#check(t);
       t.stage = 'wait';
       t.wait = 3; // writes it up
       return;

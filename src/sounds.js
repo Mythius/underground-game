@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from '
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 
-// Custom sound effects and music, uploaded from the sound editor (admin password).
+// Custom sound effects and music, uploaded from the sound editor (admin login).
 // Every slot has a built-in synthesised default in the client; an uploaded file replaces it.
 // Files live in data/sounds/, with manifest.json recording which slots are custom and their volume.
 

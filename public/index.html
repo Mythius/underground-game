@@ -279,6 +279,9 @@
     }
     #toast.show { opacity: 1; }
     .editor-buttons { display: flex; gap: .5rem; justify-content: center; }
+    .editor-buttons[hidden] { display: none; }
+    #open-admin { margin-top: 1rem; font: inherit; font-size: .85rem; padding: .45rem .9rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
+    #open-admin:hover { border-color: #f4c430; }
     #open-sounds { margin-top: 1rem; font: inherit; font-size: .85rem; padding: .45rem .9rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
     #open-sounds:hover { border-color: #f4c430; }
     #sounds, #dialogue { position: fixed; inset: 0; z-index: 20; overflow-y: auto; background: rgba(14, 16, 20, .97); color: #ddd; padding: 1.2rem; font-size: .88rem; text-align: left; }
@@ -466,7 +469,8 @@
         <button type="button" id="randomize">🎲 Random look</button>
       </div>
     </div>
-    <div class="editor-buttons">
+    <button type="button" id="open-admin">🔐 Admin</button>
+    <div class="editor-buttons" id="admin-panel" hidden>
       <button type="button" id="open-editor">🛠 Map editor</button>
       <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button>
     </div>
@@ -947,7 +951,7 @@
           if (msg.kind === 'roadblock_bribed') { sfx('bribe'); toast(`💵 Bribe paid — checkpoints wave you through for a couple of minutes`); }
           if (msg.kind === 'roadblock_seized') { sfx('busted'); toast(`🚨 Checkpoint search: contraband seized (${Object.entries(msg.seized).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')})`); }
           if (msg.kind === 'warehouse_raid') {
-            const what = Object.entries(msg.seized ?? {}).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ');
+            const what = seizedList(msg.seized);
             sfx('alarm');
             toast(`🚨 The Militsiya raided your ${wh.cfg.sizes[wh.layouts.get(msg.building)?.size]?.name ?? 'warehouse'}${what ? ` and seized ${what}` : ''}`);
           }
@@ -965,8 +969,10 @@
           if (msg.kind === 'hire_busted') toast(`🚔 The Militsiya arrested your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}`);
           if (msg.kind === 'hire_quit') toast(`👋 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} walked off — no pay, no work`);
           if (msg.kind === 'traced') { sfx('alarm'); toast(`🚨 A witness tied your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}'s crime to you — the Militsiya want you too`); }
-          if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(`🧾 The tax inspector has noticed ${msg.reason === 'jobs' ? 'all those delivery jobs you dropped today' : 'how much you\'ve paid into the bank today'} — he\'s on his way to fine you ${money(msg.fine)}`, 6000); }
-          if (msg.kind === 'inspector_fined') { sfx('busted'); toast(`🧾 ${msg.post ? 'A letter from the tax inspector' : 'The tax inspector'}: fined ${money(msg.amount)} for ${msg.reason === 'jobs' ? 'abandoning delivery jobs' : 'suspicious deposits'}`, 6000); }
+          if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(msg.reason === 'snitch' ? `🧾 ${msg.by} has reported your factory to the governor — the tax inspector is on his way to check it (${money(msg.fine)} fine if he finds anything illegal)` : `🧾 The tax inspector has noticed ${msg.reason === 'jobs' ? 'all those delivery jobs you dropped today' : 'how much you\'ve paid into the bank today'} — he\'s on his way to check one of your factories (${money(msg.fine)} fine if he finds anything illegal)`, 6000); }
+          if (msg.kind === 'inspector_fined') { const what = seizedList(msg.seized); sfx('busted'); toast(`🧾 ${msg.post ? 'A letter from the tax inspector' : 'The tax inspector'}: illegal production — fined ${money(msg.amount)}${what ? `, seized ${what}` : ''}${msg.by ? ` (reported by ${msg.by})` : ''}`, 6000); }
+          if (msg.kind === 'inspector_clean') toast(`🧾 ${msg.post ? 'The tax inspector went through your books' : 'The tax inspector went through your factory'} and found nothing illegal — no fine`, 5000);
+          if (msg.kind === 'snitch_result') { if (msg.found) sfx('coin'); toast(msg.found ? `🧾 The inspector caught ${msg.name} red-handed${seizedList(msg.seized) ? ` — seized ${seizedList(msg.seized)}` : ''}` : `🧾 The inspector found nothing illegal at ${msg.name}'s factory`, 5000); }
           if (msg.kind === 'contract_on_you') { sfx('alarm'); toast('🎯 Word on the street: someone has put a contract on you. Watch your back.'); }
           if (msg.kind === 'contract_over') toast('😮‍💨 The contract on you is off');
           if (msg.kind === 'contract_done') toast(`🎯 The job is done — ${msg.name} is dead`);
@@ -1044,7 +1050,8 @@
         case 'done':
           sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what === 'hire_vodka' ? 'coin' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
-          if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine — ${money(msg.amount - msg.cut)} in the bank, no questions asked`); }
+          if (msg.what === 'snitched') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } toast(`🏛️ "Leave it with me." The inspector is on his way to ${msg.name}'s factory (−${money(msg.fee)})`, 5000); }
+          if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
@@ -1492,6 +1499,17 @@
     // what you carry, factories, cars and home follow you to any device. Without it, it lives in this browser.
     let casInfo = null; // { url, clientId } from the server
     let linked = null; // { provider, email } once signed in
+    let isAdmin = false; // signed in with Google as the admin account: the 🔐 Admin menu opens
+
+    // The editors live behind the 🔐 Admin button; the server checks the login again on every save.
+    document.getElementById('open-admin').onclick = () => {
+      const panel = document.getElementById('admin-panel');
+      if (!isAdmin) {
+        panel.hidden = true;
+        return toast(linked ? 'This Google account is not an admin' : 'Sign in with Google as the admin first');
+      }
+      panel.hidden = !panel.hidden;
+    };
 
     function showWho() {
       const who = document.getElementById('acct-who');
@@ -1523,6 +1541,8 @@
       try { localStorage.removeItem('ug-device'); } catch {}
       session = null;
       linked = null;
+      isAdmin = false;
+      document.getElementById('admin-panel').hidden = true;
       await loadSession(); // a fresh account for this browser; signing in again brings yours back
       toast('Signed out');
     }
@@ -1558,6 +1578,7 @@
           if (res.ok) {
             session = { token, bank: data.account.bank };
             linked = data.linked ?? null;
+            isAdmin = Boolean(data.admin);
           }
         }
         session ??= await newDeviceAccount();
@@ -1681,7 +1702,7 @@
     // ---- economy: markets, factories, cargo, fuel ------------------------------------
 
     const econ = {
-      goods: {}, factories: {}, rules: { storage: 60, reach: 130, marketReach: 130, pumpReach: 220 },
+      goods: {}, factories: {}, rules: { storage: 60, reach: 130, marketReach: 130, pumpReach: 220, governorReach: 90, snitchFee: 1000 },
       owners: new Map(), // factory building id -> owner name (null = for sale)
       places: [], // markets and factories: { id, type, role, x, y, angle }
       open: null, // the panel that's open: { id, role, type, data }
@@ -1728,6 +1749,11 @@
       already_cop: 'You\'re already in the Militsiya',
       not_cop: 'You\'re not in the Militsiya',
       nothing_to_launder: '🧺 Put some cash in first',
+      governor_hostile: '🏛️ The governor won\'t talk to you after what you did',
+      snitch_nobody: '🏛️ Nobody owns that factory',
+      snitch_self: '🏛️ "Your own factory? Very public-spirited of you."',
+      snitch_already: '🏛️ "My inspector\'s already looking into that one."',
+      not_laundry_owner: '🧺 The machine belongs to whoever owns this panelka — buy the block to use it',
       no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
       gangster_hostile: '🕴️ He isn\'t in a talking mood',
       atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
@@ -1932,6 +1958,8 @@
         barSection(d, h, sub);
       } else if (d.kind === 'laundry') {
         laundrySection(d, h, sub);
+      } else if (d.kind === 'governor') {
+        governorSection(d, h, sub);
       } else if (d.kind === 'prison') {
         prisonSection(d, h, sub);
       } else if (d.kind === 'police') {
@@ -2046,20 +2074,52 @@
       return box;
     }
 
+    const seizedList = (seized) => Object.entries(seized ?? {}).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ');
+
+    // ---- the governor: snitch on a factory --------------------------------------------------
+
+    const residence = () => buildings.find((b) => b.type === 'governor') ?? null;
+    /** Am I still close enough to the governor to talk? */
+    function governorNear() {
+      if (!me) return false;
+      const h = [...(snapshots.at(-1)?.crew?.values() ?? [])].find((x) => x.role === 4);
+      return !!h && Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 19 < econ.rules.governorReach + 40;
+    }
+
+    let snitchTargets = null; // picking a factory on the full map to report: Map(building id -> [id, owner, pending])
+
+    function governorSection(d, h, sub) {
+      h.textContent = '🏛️ The governor';
+      if (d.hostile) { sub.textContent = '"Guards!" — he won\'t talk to you after what you did.'; placeEl.append(h, sub); return; }
+      sub.textContent = `"Someone running a still, a printing press? Tell me where. For ${money(d.fee)} I'll send my inspector round — if he finds anything illegal, they're fined ${money(d.fine)} and it's all seized." (Your fee's gone either way, and they'll be told it was you.)`;
+      const n = d.targets.length;
+      const pick = button(n ? `🗺️ Pick a factory on the map (${n})` : 'Nobody else owns a factory yet', () => openSnitchMap(d.targets), { cls: 'big go', disabled: !n || coins + bankBalance < d.fee });
+      placeEl.append(h, sub, pick);
+    }
+
+    function openSnitchMap(targets) {
+      snitchTargets = new Map(targets.map((t) => [t[0], t]));
+      closePlace();
+      minimap.classList.add('expanded');
+      toast('🗺️ Tap a 🎯 factory to report it — anywhere else to cancel', 4000);
+    }
+
     // ---- the laundry shed: cash into the bank, quietly ------------------------------------
 
     function laundrySection(d, h, sub) {
       h.textContent = '🧺 Прачечная';
-      sub.textContent = `An old note-counting machine wired to somebody's bank account. Feed it cash and it lands in your bank — less a ${Math.round(d.cut * 100)}% cut — without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
+      if (!d.owner) {
+        sub.textContent = `An old note-counting machine wired to somebody's bank account. It belongs to whoever owns this panelka — buy the block and it banks your cash without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
+        placeEl.append(h, sub);
+        return;
+      }
+      sub.textContent = `Your note-counting machine, wired to your bank account. Feed it cash and it lands in your bank without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
       const row = document.createElement('div');
       row.className = 'cargo';
       const input = document.createElement('input');
       input.type = 'number'; input.min = '1'; input.step = '100'; input.max = String(Math.floor(coins));
       input.value = String(Math.floor(coins)); input.style.width = '8rem';
-      const out = document.createElement('span');
-      const update = () => { const n = Math.max(0, Math.floor(Number(input.value) || 0)); out.textContent = ` → ${money(n - Math.ceil(n * d.cut))} into the bank`; };
-      input.oninput = update; update();
-      row.append(`💵 ${money(coins)} on you · 🏦 ${money(bankBalance)} in the bank`, document.createElement('br'), input, out);
+      row.append(`💵 ${money(coins)} on you · 🏦 ${money(bankBalance)} in the bank`, document.createElement('br'), input);
       const go = button('Launder', () => { const n = Math.floor(Number(input.value) || 0); if (n > 0) send({ t: 'launder', amount: Math.min(n, Math.floor(coins)) }); }, { cls: 'big go', disabled: coins < 1 });
       const all = button('All of it', () => { if (coins >= 1) send({ t: 'launder', amount: Math.floor(coins) }); }, { disabled: coins < 1 });
       placeEl.append(h, sub, row, go, ' ', all);
@@ -3860,7 +3920,25 @@
     const mctx = minimap.getContext('2d');
     const mapImage = document.createElement('canvas'); // the static map, drawn once per room
     const MAP_PX = 1000;
-    minimap.onclick = () => minimap.classList.toggle('expanded');
+    minimap.onclick = (e) => {
+      if (snitchTargets) { // reporting a factory to the governor: the 🎯 tapped, or cancel
+        const r = minimap.getBoundingClientRect();
+        const mx = (e.clientX - r.left) * (minimap.width / r.width), my = (e.clientY - r.top) * (minimap.height / r.height);
+        let best = null, bestDist = 18 * devicePixelRatio;
+        for (const [x, y, b] of mapIconsDrawn) {
+          const dd = Math.hypot(x - mx, y - my);
+          if (snitchTargets.has(b.id) && dd < bestDist) [best, bestDist] = [b, dd];
+        }
+        const t = best && snitchTargets.get(best.id);
+        snitchTargets = null;
+        minimap.classList.remove('expanded');
+        if (!t) return toast('🏛️ Never mind');
+        if (t[2]) return toast(ECON_ERRORS.snitch_already);
+        if (confirm(`Report ${t[1]}'s factory to the governor for ${money(econ.rules.snitchFee)}?`)) send({ t: 'governor', building: t[0] });
+        return;
+      }
+      minimap.classList.toggle('expanded');
+    };
     // Hovering an icon names it.
     const mapTip = document.getElementById('maptip');
     minimap.addEventListener('mousemove', (e) => {
@@ -3962,6 +4040,7 @@
       if (b.id === myHome?.[0]) return '🏠 Your home — garage on the car pad outside';
       const icon = mapIcon(b);
       if (icon === '📦') return '📦 Your warehouse';
+      if (icon === '🎯') { const t = snitchTargets.get(b.id); return `🎯 ${t[1]}'s factory${t[2] ? ' (already being inspected)' : ' — tap to report it'}`; }
       const name = MAP_NAMES[b.type] ?? RAW_NAMES[b.type]?.replace(/^\S+\s/, '') ?? econ.factories[b.type]?.name ?? b.type;
       return `${icon} ${name}`;
     }
@@ -3969,6 +4048,7 @@
 
     function mapIcon(b) {
       if (b.id === myHome?.[0]) return null; // drawn bigger, last
+      if (snitchTargets?.has(b.id)) return '🎯';
       if (MAP_ICONS[b.type]) return MAP_ICONS[b.type];
       if (econ.factories[b.type]) return '🏭';
       const l = wh.layouts.get(b.id); // my warehouses
@@ -4967,7 +5047,7 @@
 
     }
 
-    // ---- sound editor: every sound slot, with preview, upload, volume and reset (admin password) ----
+    // ---- sound editor: every sound slot, with preview, upload, volume and reset (admin login) ----
 
     const soundsEl = document.getElementById('sounds');
     const LOOP_PREVIEWS = { // what the built-in loops sound like, for the preview button
@@ -5009,21 +5089,21 @@
       } else SOUNDS[slot.id]?.(out);
     }
 
+    /** This browser's session token, if it's signed in as the admin (saving from the editors needs it). */
     function adminPassword() {
-      let password = sessionStorage.getItem('ug-admin');
-      if (!password) password = prompt('Admin password (the same one as the map editor):');
-      return password || null;
+      if (session && isAdmin) return session.token;
+      toast('Sign in with Google as the admin to save');
+      return null;
     }
 
     async function soundRequest(slot, method, body, headers = {}, path = '') {
       const password = adminPassword();
       if (!password) return;
       try {
-        const res = await fetch(`/sounds/${slot}${path}`, { method, headers: { 'x-admin-password': password, ...headers }, body });
+        const res = await fetch(`/sounds/${slot}${path}`, { method, headers: { authorization: `Bearer ${password}`, ...headers }, body });
         const data = await res.json();
-        if (res.status === 401) { sessionStorage.removeItem('ug-admin'); return toast('Wrong password'); }
+        if (res.status === 401) { return toast('Admin login required'); }
         if (!res.ok) return toast(`Couldn't save: ${data.error}`);
-        sessionStorage.setItem('ug-admin', password);
         custom.sounds = data.custom;
         await decodeCustomSounds();
         renderSoundEditor();
@@ -5133,11 +5213,10 @@
       const password = adminPassword();
       if (!password) return null;
       try {
-        const res = await fetch(path, { method, headers: { 'x-admin-password': password, ...headers }, body });
+        const res = await fetch(path, { method, headers: { authorization: `Bearer ${password}`, ...headers }, body });
         const data = await res.json();
-        if (res.status === 401) { sessionStorage.removeItem('ug-admin'); toast('Wrong password'); return null; }
+        if (res.status === 401) { toast('Admin login required'); return null; }
         if (!res.ok) { toast(`Couldn't save: ${data.error}`); return null; }
-        sessionStorage.setItem('ug-admin', password);
         songList(path.split(/[/?]/)[1]).songs = data.songs;
         return data;
       } catch {
@@ -5169,7 +5248,7 @@
       u.state = 'uploading';
       const xhr = (u.xhr = new XMLHttpRequest()); // (XHR, not fetch, so we can show progress)
       xhr.open('POST', `/${u.kind}?name=${encodeURIComponent(u.name)}`);
-      xhr.setRequestHeader('x-admin-password', password);
+      xhr.setRequestHeader('authorization', `Bearer ${password}`);
       xhr.setRequestHeader('content-type', u.file.type || 'audio/mpeg');
       xhr.upload.onprogress = (e) => {
         if (!e.lengthComputable) return;
@@ -5182,8 +5261,7 @@
           uploadQueue.splice(uploadQueue.indexOf(u), 1);
           uploadsDone[u.kind] = (uploadsDone[u.kind] ?? 0) + 1;
         } else if (error === 'wrong password') { // no point trying the rest
-          sessionStorage.removeItem('ug-admin');
-          toast('Wrong password');
+          toast('Admin login required');
           for (const q of [...uploadQueue]) { q.xhr?.abort(); uploadQueue.splice(uploadQueue.indexOf(q), 1); }
         } else Object.assign(u, { state: 'failed', error });
         pumpUploads();
@@ -5194,7 +5272,6 @@
         try { data = JSON.parse(xhr.responseText); } catch {}
         if (xhr.status === 401) return finish('wrong password');
         if (xhr.status !== 200) return finish(data.error ?? `server said ${xhr.status}`);
-        sessionStorage.setItem('ug-admin', password);
         songList(u.kind).songs = data.songs;
         finish(null);
       };
@@ -5296,18 +5373,17 @@
     }
     document.getElementById('open-sounds').onclick = openSoundEditor;
 
-    // ---- dialogue editor: what every kind of NPC says, one line per row (admin password to save) ----
+    // ---- dialogue editor: what every kind of NPC says, one line per row (admin login to save) ----
 
     const dialogueEl = document.getElementById('dialogue');
     async function dialogueRequest(kind, method, body) {
       const password = adminPassword();
       if (!password) return false;
       try {
-        const res = await fetch(`/dialogue/${kind}`, { method, headers: { 'x-admin-password': password, 'content-type': 'application/json' }, body });
+        const res = await fetch(`/dialogue/${kind}`, { method, headers: { authorization: `Bearer ${password}`, 'content-type': 'application/json' }, body });
         const data = await res.json();
-        if (res.status === 401) { sessionStorage.removeItem('ug-admin'); toast('Wrong password'); return false; }
+        if (res.status === 401) { toast('Admin login required'); return false; }
         if (!res.ok) { toast(`Couldn't save: ${data.error}`); return false; }
-        sessionStorage.setItem('ug-admin', password);
         await loadDialogue();
         return true;
       } catch {
@@ -5474,6 +5550,8 @@
       let made = null;
       if (buffer) {
         const src = a.createBufferSource(); src.buffer = buffer; src.loop = true;
+        let offset = 0;
+        if (name.startsWith('engine')) { const b = engineLoopBounds(buffer); src.loopStart = b.start; src.loopEnd = b.end; offset = b.start; }
         const g = a.createGain(); g.gain.value = 0;
         src.connect(g); g.connect(audio.master); src.start(0, offset);
         made = { src, g, file: true };
@@ -5525,6 +5603,30 @@
       setTimeout(() => { try { c.voice.stop(0); } catch {} c.voice.g.disconnect(); c.pan?.disconnect(); }, 600);
       carEngines.delete(id);
     }
+    /**
+     * Where an uploaded engine file should loop: the silence at either end (mp3 padding, a fade) skipped, then
+     * a little more cropped off each end, with both points snapped to an upward zero crossing so the seam
+     * doesn't click. Worked out once per file.
+     */
+    function engineLoopBounds(buffer) {
+      if (buffer.engineLoop) return buffer.engineLoop;
+      const d = buffer.getChannelData(0), n = d.length, rate = buffer.sampleRate;
+      let peak = 0;
+      for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+      const quiet = peak * 0.05;
+      let s = 0, e = n - 1;
+      while (s < e && Math.abs(d[s]) < quiet) s++;
+      while (e > s && Math.abs(d[e]) < quiet) e--;
+      const crop = Math.min(Math.floor(rate * 0.05), Math.floor((e - s) * 0.03)); // up to 50 ms off each end
+      s += crop; e -= crop;
+      const rising = (i, step) => { // the nearest upward zero crossing, within 20 ms
+        for (let k = 0, lim = rate * 0.02; k < lim && i > 0 && i < n - 1; k++, i += step) if (d[i - 1] < 0 && d[i] >= 0) return i;
+        return null;
+      };
+      s = rising(s, 1) ?? s; e = rising(e, -1) ?? e;
+      if (e - s < rate * 0.05) { s = 0; e = n; } // too short to crop: loop the lot
+      return (buffer.engineLoop = { start: s / rate, end: e / rate });
+    }
     /** A file engine (the sound editor's upload) as a voice: it pitches by playback rate. */
     function fileEngineVoice(buffer, dest) {
       const a = audio.ctx, src = a.createBufferSource(); src.buffer = buffer; src.loop = true;
@@ -5537,8 +5639,6 @@
       const a = audio.ctx;
       const ear = me && playing && !settings.mute ? me : null;
       const mine = me?.car?.id ?? riding ?? null; // (my own car's engine is the loop above)
-        let offset = 0;
-        if (name.startsWith('engine')) { const b = engineLoopBounds(buffer); src.loopStart = b.start; src.loopEnd = b.end; offset = b.start; }
       const near = [];
       if (ear) for (const [id, v] of snapshots.at(-1)?.vehicles ?? []) {
         if (id === mine || !v.driver) continue;
@@ -5590,30 +5690,6 @@
     let builtInSong = null;
     const playlist = { songs: [], canSave: true }; // GET /radio: [{ id, name, url, duration, volume }] in order
     async function loadPlaylist() {
-    /**
-     * Where an uploaded engine file should loop: the silence at either end (mp3 padding, a fade) skipped, then
-     * a little more cropped off each end, with both points snapped to an upward zero crossing so the seam
-     * doesn't click. Worked out once per file.
-     */
-    function engineLoopBounds(buffer) {
-      if (buffer.engineLoop) return buffer.engineLoop;
-      const d = buffer.getChannelData(0), n = d.length, rate = buffer.sampleRate;
-      let peak = 0;
-      for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
-      const quiet = peak * 0.05;
-      let s = 0, e = n - 1;
-      while (s < e && Math.abs(d[s]) < quiet) s++;
-      while (e > s && Math.abs(d[e]) < quiet) e--;
-      const crop = Math.min(Math.floor(rate * 0.05), Math.floor((e - s) * 0.03)); // up to 50 ms off each end
-      s += crop; e -= crop;
-      const rising = (i, step) => { // the nearest upward zero crossing, within 20 ms
-        for (let k = 0, lim = rate * 0.02; k < lim && i > 0 && i < n - 1; k++, i += step) if (d[i - 1] < 0 && d[i] >= 0) return i;
-        return null;
-      };
-      s = rising(s, 1) ?? s; e = rising(e, -1) ?? e;
-      if (e - s < rate * 0.05) { s = 0; e = n; } // too short to crop: loop the lot
-      return (buffer.engineLoop = { start: s / rate, end: e / rate });
-    }
       try {
         const data = await (await fetch('/radio')).json();
         Object.assign(playlist, data);
@@ -6465,16 +6541,13 @@
     }
 
     async function saveToGame() {
-      if (!ed.canSave) return toast('Saving is turned off on this server (no ADMIN_PASSWORD set)');
-      let password = sessionStorage.getItem('ug-admin');
-      if (!password) password = prompt('Admin password to save this map to the live game:');
+      const password = adminPassword();
       if (!password) return;
       try {
-        const res = await fetch('/map', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-password': password }, body: JSON.stringify(ed.map) });
+        const res = await fetch('/map', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${password}` }, body: JSON.stringify(ed.map) });
         const body = await res.json().catch(() => ({}));
-        if (res.status === 401) { sessionStorage.removeItem('ug-admin'); return toast('Wrong password'); }
+        if (res.status === 401) { return toast('Admin login required'); }
         if (!res.ok) return toast(`Not saved: ${body.error ?? res.status}`);
-        sessionStorage.setItem('ug-admin', password);
         ed.dirty = false;
         toast('Saved! The game is now using this map.');
       } catch (err) {
@@ -6927,6 +7000,7 @@
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
           else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him all of it
+          else if (t?.kind === 'governor') openPlace({ id: residence().id, governor: true }); // snitch on a factory
           else if (t?.kind === 'cat') send({ t: 'cat', action: t.feed ? 'feed' : 'pickup', id: t.target }); // a fish for it, or up into my arms
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
@@ -9249,6 +9323,12 @@
         const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 18;
         if (gd < 110) options.push({ kind: 'gangster', target: id, dist: gd - 20, x: h.x, y: h.y - 52 });
       }
+      // The governor: E to talk (snitch on someone's factory).
+      for (const [, h] of snapshots.at(-1)?.crew ?? []) {
+        if (h.role !== 4 || !residence()) continue;
+        const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 19;
+        if (gd < econ.rules.governorReach) options.push({ kind: 'governor', dist: gd - 20, x: h.x, y: h.y - 52 });
+      }
       if (heldCat()) return { kind: 'catDown', dist: 0, x: me.x, y: me.y - 46 }; // a cat in my arms: E puts it down
       const cat = nearestCat();
       if (cat && (holdingFish() || cat.knows)) options.push({ kind: 'cat', target: cat.id, dist: cat.d - 25, x: cat.x, y: cat.y - 32, feed: holdingFish() });
@@ -9257,7 +9337,7 @@
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
-      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'cat'].includes(o.kind))) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'governor', 'cat'].includes(o.kind))) best = o;
       return best;
     }
 
@@ -10072,6 +10152,7 @@
     let editing = false; // map editor open (see the editor section)
     let zoom = 1; // the editor's zoom
     let viewZ = 1; // the zoom this frame (phones see further: VIEW_ZOOM_TOUCH)
+    const MAX_VIEW_AREA = 1920 * 1080; // the most world (px²) anyone's screen shows, whatever the window size or page zoom
     let viewBox = { l: 0, t: 0, r: 0, b: 0 };
 
     function draw(frameTime) {
@@ -10132,7 +10213,9 @@
         camera.x += (world.width / 2 - camera.x) * k;
         camera.y += (world.height / 2 - camera.y) * k;
       }
-      const z = viewZ = editing ? zoom : touchMode ? VIEW_ZOOM_TOUCH : 1;
+      // Never more of the map than a 1920×1080 screen shows: zooming the page out (Ctrl −) or a huge window
+      // just draws the same area bigger, so nobody sees further than anyone else.
+      const z = viewZ = editing ? zoom : Math.max(touchMode ? VIEW_ZOOM_TOUCH : 1, Math.sqrt((w * h) / MAX_VIEW_AREA));
       const vw = w / z, vh = h / z; // visible world size
 
       if (playing) {
@@ -10495,7 +10578,7 @@
       updateCashHold(performance.now());
       if (!shopEl.hidden && !keeper) closeShop(); // walked away
       if (!bankEl.hidden && !banker) closeBank();
-      if (econ.open && !place) closePlace();
+      if (econ.open && (econ.open.governor ? !governorNear() : !place)) closePlace();
       updateJobHud();
       updateCrimeHud();
       drawJobArrow(frameTime);

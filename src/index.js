@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
@@ -59,10 +58,11 @@ World.radioDurations = () => radio.durations(); // (so a car's radio knows when 
   }
 })().catch((err) => logger.warn('radio migration failed', { err: err.message }));
 
-function passwordMatches(given) {
-  if (!config.adminPassword || typeof given !== 'string') return false;
-  const hash = (s) => createHash('sha256').update(s).digest();
-  return timingSafeEqual(hash(given), hash(config.adminPassword));
+/** Whether a session (its bearer token) is signed in with Google as one of the admin accounts. */
+function isAdminToken(token) {
+  const account = accounts.accountForToken(token);
+  const login = account && accounts.linkedLogin(account.id);
+  return login?.provider === 'google' && config.adminEmails.includes((login.email ?? '').toLowerCase());
 }
 
 /** The raw request body as a Buffer (up to `limit` bytes). */
@@ -146,7 +146,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(readFileSync(new URL(`..${req.url}`, import.meta.url)));
   }
   if (req.method === 'GET' && req.url === '/map') {
-    return json(200, { map: rooms.currentMap(), canSave: Boolean(config.adminPassword) });
+    return json(200, { map: rooms.currentMap(), canSave: true });
   }
   if (req.method === 'GET' && req.url.startsWith('/map/random')) {
     // Generating takes a few hundred ms; don't let anyone hammer it.
@@ -167,10 +167,9 @@ const server = http.createServer(async (req, res) => {
     return json(200, { map: createWorld(opts).toMap() });
   }
   if (req.method === 'POST' && req.url === '/map') {
-    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
-    if (!passwordMatches(req.headers['x-admin-password'])) {
-      logger.warn('map save with wrong password', { ip: req.socket.remoteAddress });
-      return json(401, { error: 'wrong password' });
+    if (!isAdminToken(bearer(req))) {
+      logger.warn('map save without admin login', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'admin login required' });
     }
     let body;
     try {
@@ -186,7 +185,7 @@ const server = http.createServer(async (req, res) => {
     return json(200, { ok: true });
   }
   // ---- sound editor: list, serve, upload (admin), volume (admin), reset (admin) ----
-  if (req.method === 'GET' && req.url === '/sounds') return json(200, { ...sounds.list(), canSave: Boolean(config.adminPassword) });
+  if (req.method === 'GET' && req.url === '/sounds') return json(200, { ...sounds.list(), canSave: true });
   if (req.method === 'GET' && req.url.startsWith('/sounds/file/')) {
     const file = sounds.read(decodeURIComponent(req.url.slice('/sounds/file/'.length).split('?')[0]));
     if (!file) return json(404, { error: 'not_found' });
@@ -195,10 +194,9 @@ const server = http.createServer(async (req, res) => {
   }
   const soundRoute = req.url.match(/^\/sounds\/([A-Za-z0-9]+)(\/volume)?$/);
   if (soundRoute && (req.method === 'POST' || req.method === 'DELETE')) {
-    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
-    if (!passwordMatches(req.headers['x-admin-password'])) {
-      logger.warn('sound edit with wrong password', { ip: req.socket.remoteAddress });
-      return json(401, { error: 'wrong password' });
+    if (!isAdminToken(bearer(req))) {
+      logger.warn('sound edit without admin login', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'admin login required' });
     }
     const [, slot, volume] = soundRoute;
     let error;
@@ -216,7 +214,7 @@ const server = http.createServer(async (req, res) => {
   }
   // ---- radio and music playlists (background, prison, fight, chase): list and stream for everyone; upload, rename / volume / move, delete (admin) ----
   const listRoute = req.method === 'GET' && req.url.match(/^\/(radio|music|prison|fight|chase)$/);
-  if (listRoute) return json(200, { songs: PLAYLISTS[listRoute[1]].store.list(), canSave: Boolean(config.adminPassword) });
+  if (listRoute) return json(200, { songs: PLAYLISTS[listRoute[1]].store.list(), canSave: true });
   const songFile = req.method === 'GET' && req.url.match(/^\/(radio|music|prison|fight|chase)\/file\/([^?]*)/);
   if (songFile) {
     const f = PLAYLISTS[songFile[1]].store.file(decodeURIComponent(songFile[2]));
@@ -236,10 +234,9 @@ const server = http.createServer(async (req, res) => {
   }
   const radioRoute = req.url.match(/^\/(radio|music|prison|fight|chase)(?:\/([a-f0-9]{12}))?(?:\?name=([^&]*))?$/);
   if (radioRoute && ['POST', 'DELETE'].includes(req.method)) {
-    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
-    if (!passwordMatches(req.headers['x-admin-password'])) {
-      logger.warn('playlist edit with wrong password', { ip: req.socket.remoteAddress });
-      return json(401, { error: 'wrong password' });
+    if (!isAdminToken(bearer(req))) {
+      logger.warn('playlist edit without admin login', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'admin login required' });
     }
     const [, which, id, name] = radioRoute;
     const { store, changed } = PLAYLISTS[which];
@@ -257,13 +254,12 @@ const server = http.createServer(async (req, res) => {
     return json(200, { ok: true, songs: store.list() });
   }
   // ---- dialogue editor: what NPCs say (GET for everyone; change or reset a kind of line: admin) ----
-  if (req.method === 'GET' && req.url === '/dialogue') return json(200, { ...dialogue.list(), canSave: Boolean(config.adminPassword) });
+  if (req.method === 'GET' && req.url === '/dialogue') return json(200, { ...dialogue.list(), canSave: true });
   const lineRoute = req.url.match(/^\/dialogue\/([A-Za-z]+)$/);
   if (lineRoute && (req.method === 'POST' || req.method === 'DELETE')) {
-    if (!config.adminPassword) return json(403, { error: 'saving is disabled: set ADMIN_PASSWORD in .env' });
-    if (!passwordMatches(req.headers['x-admin-password'])) {
-      logger.warn('dialogue edit with wrong password', { ip: req.socket.remoteAddress });
-      return json(401, { error: 'wrong password' });
+    if (!isAdminToken(bearer(req))) {
+      logger.warn('dialogue edit without admin login', { ip: req.socket.remoteAddress });
+      return json(401, { error: 'admin login required' });
     }
     let error;
     try {
@@ -285,7 +281,7 @@ const server = http.createServer(async (req, res) => {
     const account = accounts.accountForToken(bearer(req));
     const cas = { url: config.cas.url, clientId: config.cas.clientId };
     if (!account) return json(401, { error: 'not logged in', cas });
-    return json(200, { account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id), cas });
+    return json(200, { account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id), admin: isAdminToken(bearer(req)), cas });
   }
   if (req.method === 'POST' && req.url === '/auth/cas') {
     // Finishing Google sign-in: check the CAS token, then link or switch this browser's account.
@@ -303,7 +299,7 @@ const server = http.createServer(async (req, res) => {
     const provider = user.provider === 'google' || !user.provider ? 'google' : `cas-${user.provider}`;
     const { token, account } = accounts.signIn(provider, String(user.sub), { name: user.name || (user.email ?? '').split('@')[0] || 'player', email: user.email ?? null, currentId: current?.id ?? null });
     logger.info('signed in', { provider, account: account.id, linked: current?.id === account.id });
-    return json(200, { token, account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id) });
+    return json(200, { token, account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id), admin: isAdminToken(token) });
   }
   if (req.url === '/health') return json(200, { ok: true });
   if (req.url === '/stats') {
@@ -444,6 +440,9 @@ function handleMessage(client, msg) {
       break;
     case ClientMsg.GANGSTER:
       client.room?.gangster(client, msg);
+      break;
+    case ClientMsg.GOVERNOR:
+      client.room?.governor(client, msg);
       break;
     case ClientMsg.LAUNDER:
       client.room?.launder(client, msg);

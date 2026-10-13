@@ -536,7 +536,9 @@ export class World {
         if (r.x < 100 || r.y < 100 || r.x + w > this.width - 100 || r.y + h > this.height - 100) continue;
         if (this.city && !(inBox(this.city, r.x, r.y) && inBox(this.city, r.x + w, r.y + h))) continue; // (in town, like its panelka)
         if (this.buildings.some((o) => o !== b && overlaps(r, o, 20)) || this.roads.some((o) => overlaps(r, o, SIDEWALK + 8)) || avoid.some((o) => overlaps(r, o, 10))) continue;
-        this.buildings.push(buildBuilding('laundry', r.x, r.y, rot, this.buildings.length + 1));
+        const shed = buildBuilding('laundry', r.x, r.y, rot, this.buildings.length + 1);
+        shed.panelka = b.id; // whoever owns the block owns the machine
+        this.buildings.push(shed);
         return;
       }
     }
@@ -590,16 +592,31 @@ export class World {
     return this.buildings.find((b) => b.type === 'laundry' && b.npc && Math.hypot(b.npc.x - p.x, b.npc.y - p.y) < config.hires.reach + p.radius) ?? null;
   }
 
-  /** Put `amount` of carried cash through the laundry machine: into the bank, less the cut, unseen by the inspector. */
+  /** The panelka a laundry shed is tacked onto (its owner owns the machine). */
+  laundryBlock(shed) {
+    const b = shed.panelka && this.buildings[shed.panelka - 1];
+    if (b?.type === 'panelka') return b;
+    const touches = (o) => o.x <= shed.x + shed.w + 1 && shed.x <= o.x + o.w + 1 && o.y <= shed.y + shed.h + 1 && shed.y <= o.y + o.h + 1;
+    return this.buildings.find((o) => o.type === 'panelka' && touches(o)) ?? null;
+  }
+
+  /** Whether p owns the panelka this laundry shed belongs to (only its owner may use the machine). */
+  ownsLaundry(p, shed) {
+    const block = this.laundryBlock(shed);
+    return !!(block && p.account && this.homes.ownerOf(block) === p.account);
+  }
+
+  /** Put `amount` of carried cash through the laundry machine: into the bank, unseen by the inspector. */
   launder(p, amount) {
     if (!p.account) return 'no_account';
-    if (p.vehicle || !this.laundryNear(p)) return 'too_far';
+    const shed = p.vehicle ? null : this.laundryNear(p);
+    if (!shed) return 'too_far';
+    if (!this.ownsLaundry(p, shed)) return 'not_laundry_owner';
     if (!(amount > 0)) return 'nothing_to_launder';
     if (amount > p.cash) return 'not_enough_cash';
-    const cut = Math.ceil(amount * config.governor.launderCut);
     p.cash -= amount;
-    p.account.bank += amount - cut;
-    return { amount, cut };
+    p.account.bank += amount;
+    return { amount };
   }
 
   /** Robbery (hold your ground until it's done) and pickpocketing: see Police. */

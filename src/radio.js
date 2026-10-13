@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync
 import { fileURLToPath } from 'node:url';
 import { AUDIO_TYPES } from './sounds.js';
 
-// The car radio's playlist: as many songs as you like, uploaded in the sound editor (admin password).
+// The car radio's playlist: as many songs as you like, uploaded in the sound editor (admin login).
 // Files live in data/radio/ with a playlist.json listing them in order: { id, name, file, duration, volume }.
 // A car's radio plays one song over and over until someone skips (N); clients stream the files
 // (they can be long) and everyone near the car hears the same point in the same song.

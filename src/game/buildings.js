@@ -488,7 +488,7 @@ export const BUILDING_TYPES = {
   },
 
   // A little brick shed tacked onto the end of a panelka: a cash-counting machine that turns your
-  // cash into a bank balance with no questions asked (for a cut). Placed beside a panelka, not on its own.
+  // cash into a bank balance with no questions asked, for the panelka's owner only. Placed beside a panelka, not on its own.
   laundry: () => ({
     w: 140, h: 120,
     walls: perimeter(140, 120, 10, { s: door(0.5, 50) }),

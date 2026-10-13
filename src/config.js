@@ -28,8 +28,8 @@ export const config = Object.freeze({
   host: env.HOST || '0.0.0.0',
   logLevel: env.LOG_LEVEL || 'info',
   allowedOrigins: list('ALLOWED_ORIGINS'),
-  // Needed to save maps from the editor. Unset = saving is disabled.
-  adminPassword: env.ADMIN_PASSWORD || null,
+  // Google accounts (signed in through CAS) that may open the admin menu and save from the editors.
+  adminEmails: (list('ADMIN_EMAILS') ?? ['formaxius@gmail.com']).map((e) => e.toLowerCase()),
   // Google sign-in goes through our CAS server (msouthwick-cas): it sends the browser back to
   // <this site>/auth/callback/cas with a signed token, which we check with the CAS server's /auth/verify.
   // The game must be listed as `clientId` in the CAS server's clients.json, with that callback address.
@@ -663,9 +663,12 @@ export const config = Object.freeze({
   // The governor's residence, just outside town. The governor (who takes armor less damage) potters about
   // his house with a pistol; two big guards stand outside the gate; the tax inspector lives there too.
   // Hurt any of them and all of them come for you. Each is replaced respawnSec after being killed.
-  // The inspector drives out to fine you `fine` (from your bank) at your warehouse (or home) when, in one
-  // game day, you deposit more than depositLimit at banks and ATMs, or abandon abandonLimit delivery jobs.
-  // The laundry shed on a panelka banks your cash without the inspector noticing, less launderCut.
+  // The inspector drives out to one of your factories (picked at random) when, in one game day, you deposit
+  // more than depositLimit at banks and ATMs, or abandon abandonLimit delivery jobs. Only if it has illegal
+  // machines or contraband does he fine you `fine` (from your bank) and seize the contraband.
+  // Talk to the governor to snitch on someone else's factory: for snitchFee he sends the inspector there
+  // (the owner is told who reported them). The fee's gone whatever he finds.
+  // The laundry shed on a panelka banks your cash without the inspector noticing (only for the panelka's owner).
   governor: {
     governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19 },
     govguard: { health: 220, armor: 0.5, weapon: 'rifle', radius: 27 },
@@ -675,11 +678,12 @@ export const config = Object.freeze({
     guardLeash: 700, // guards don't chase further than this from their post
     walkSpeed: 90,
     fine: 3000,
+    snitchFee: 1000,
+    talkReach: 90, // how close you get to talk to the governor
     depositLimit: 10000,
     abandonLimit: 3,
     car: 'sedan',
     tripSec: 300, // a visit taking longer than this (stuck somewhere): the fine goes by post and he's home
-    launderCut: 0.1,
   },
   gangsters: {
     count: 4,

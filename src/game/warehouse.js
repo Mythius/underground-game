@@ -382,6 +382,16 @@ export class Warehouse {
     }
   }
 
+  /** Anything illegal inside: an illegal machine, or contraband anywhere on the floor? */
+  hasIllegal() {
+    const bad = (bag) => Object.keys(bag ?? {}).some((g) => config.goods[g]?.illegal && bag[g] >= 1);
+    for (const p of this.pieces.values()) {
+      if (config.machines[p.kind]?.illegal) return true;
+      if (bad(p.stock) || bad(p.in) || bad(p.out) || (p.item && config.goods[p.item.good]?.illegal)) return true;
+    }
+    return false;
+  }
+
   /** The Militsiya raid: every bit of contraband inside is seized. Returns { good: qty } taken. */
   raid() {
     const seized = {};
