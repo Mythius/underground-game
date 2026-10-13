@@ -31,6 +31,7 @@ export const ClientMsg = Object.freeze({
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
+  LAUNDER: 'launder', // { t, amount } put cash through the laundry machine (into the bank, less a cut)
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot) | 'sleep' (in your bed, at night)
   HOME: 'home', // { t, id, action: 'buy' | 'bring' (load your saved one of this type in) | 'sell' | 'rent' | 'leave', room? } homes for sale, rooms to rent
   FISH: 'fish', // { t, action: 'cast', angle } | { t, action: 'pull', seen (seconds into the fight, as you saw it) } with a rod in hand
@@ -214,6 +215,8 @@ const validators = {
         : null,
 
   [ClientMsg.PRISON]: (m) => (m.action === 'bail' && Number.isInteger(m.id) ? { t: m.t, action: 'bail', id: m.id } : null),
+
+  [ClientMsg.LAUNDER]: (m) => (Number.isInteger(m.amount) && m.amount > 0 && m.amount < 1e9 ? { t: m.t, amount: m.amount } : null),
 
   [ClientMsg.GANGSTER]: (m) => (Number.isInteger(m.id) && m.action === 'sell' ? { t: m.t, id: m.id, action: 'sell' } : null),
 

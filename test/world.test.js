@@ -504,7 +504,7 @@ test('vehicles are parked on roads (or in parking lots) when a full map is made'
   const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 });
   assert.ok(world.vehicles.size >= config.vehicles.count - 2, `${world.vehicles.size} vehicles`);
   for (const v of world.vehicles.values()) {
-    if (v.police) continue; // cruisers start at their station
+    if (v.police || v.official) continue; // cruisers start at their station; the inspector's car at the governor's
     const inside = (r) => v.x >= r.x && v.x <= r.x + r.w && v.y >= r.y && v.y <= r.y + r.h;
     assert.ok(world.roads.some(inside) || world.lots.some(inside), 'on a road or in a lot');
   }

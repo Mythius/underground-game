@@ -21,7 +21,8 @@ import { Vehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 // whoever hired them. Hitmen are never traced.
 
 const ROLES = ['goon', 'guard', 'hitman']; // the ones the barman hires out
-const ALL_ROLES = [...ROLES, 'gangster']; // (gangsters work for nobody: employer null)
+const STATE = ['governor', 'govguard', 'inspector']; // the governor's household (employer null, side 'state')
+const ALL_ROLES = [...ROLES, 'gangster', ...STATE]; // (gangsters work for nobody: employer null)
 const inside = (b, x, y, m = 0) => x > b.x + m && x < b.x + b.w - m && y > b.y + m && y < b.y + b.h - m;
 
 export class Hires {
@@ -35,6 +36,16 @@ export class Hires {
     this.events = []; // { player | account, kind, … } for the room to tell people
     this.gangsterTimers = []; // seconds until each missing gangster is replaced
     for (let i = 0; i < config.gangsters.count; i++) this.#spawnGangster();
+    // The governor's household, at his residence (if the map has one).
+    this.residence = world.buildings.find((b) => b.type === 'governor' && b.spots) ?? null;
+    this.stateTimers = []; // [role, index, seconds] until a killed member of the household is replaced
+    this.inspections = []; // visits the inspector has still to make: { account, reason }
+    this.watch = new Map(); // account -> { day, deposited, abandoned, flagged: Set } (what the inspector keeps an eye on)
+    if (this.residence) {
+      this.#spawnState('governor', 0);
+      this.residence.spots.guards.forEach((_, i) => this.#spawnState('govguard', i));
+      this.#spawnState('inspector', 0);
+    }
     this.started = true;
   }
 
@@ -56,6 +67,7 @@ export class Hires {
     const acc = (x) => (x.kind === 'hire' ? x.employer : x.kind === 'player' ? x.account : null);
     const [aa, ab] = [acc(a), acc(b)];
     if (aa && aa === ab) return true;
+    if (a.side === 'state' && b.side === 'state') return true;
     if (a.role === 'hitman' || b.role === 'hitman') return false; // a hitman spares only whoever hired him
     const pa = a.kind === 'hire' ? this.bossOf(a) : a;
     const pb = b.kind === 'hire' ? this.bossOf(b) : b;
@@ -65,6 +77,9 @@ export class Hires {
   /** `attacker` hurt `victim`: each is fair game for the other's side for a while. */
   noteAttack(attacker, victim) {
     if (!attacker || !victim || attacker === victim) return;
+    if (victim.side === 'state' && attacker.side !== 'state') { // hurt one of the governor's people: all of them come for you
+      for (const h of this.list) if (h.side === 'state' && h !== victim) this.#foe(h, attacker);
+    }
     const until = this.time + config.hires.foeSec;
     for (const [a, b] of [[attacker, victim], [victim, attacker]]) {
       if (a.kind !== 'player' && a.kind !== 'hire') continue;
@@ -72,6 +87,11 @@ export class Hires {
       if (a.foes.size > 8) for (const [k, t] of a.foes) if (t < this.time) a.foes.delete(k);
       a.foes.set(b, until);
     }
+  }
+
+  #foe(a, b) {
+    a.foes ??= new Map();
+    a.foes.set(b, this.time + config.hires.foeSec);
   }
 
   #isFoe(of, x) {
@@ -186,7 +206,8 @@ export class Hires {
     for (const h of this.list) {
       if (h.vehicle || h === shooter) continue;
       if (shooter && (shooter.kind === 'player' || shooter.kind === 'hire') && h.employer && h.employer === (shooter.employer ?? shooter.account)) continue; // no shooting your own
-      if (h.role === 'gangster' && (shooter?.role === 'gangster' || shooter?.kind === 'officer')) continue; // (nor your own crew; and the Militsiya leave gangsters be)
+      if (h.role === 'gangster' && (shooter?.role === 'gangster' || shooter?.kind === 'officer')) continue;
+      if (h.side === 'state' && (shooter?.side === 'state' || shooter?.kind === 'officer')) continue; // (the Militsiya and the governor's people are on the same side) // (nor your own crew; and the Militsiya leave gangsters be)
       if (segmentDistSq(ax, ay, bx, by, h.x, h.y) < (h.radius + r) ** 2) return h;
     }
     return null;
@@ -195,9 +216,9 @@ export class Hires {
   /** Hurt hire h (armour soaks up part of it). Returns true if it killed them. */
   damage(h, amount, attacker) {
     if (!this.list.includes(h)) return false;
-    h.health -= amount * (1 - (h.role === 'gangster' ? config.gangsters.armor : config.hires.armor));
+    h.health -= amount * (1 - (h.role === 'gangster' ? config.gangsters.armor : h.side === 'state' ? config.governor[h.role].armor : config.hires.armor));
     if (attacker) this.noteAttack(attacker, h);
-    if (attacker?.kind === 'player' || attacker?.kind === 'hire') this.world.police.crime(attacker, h.health <= 0 ? 'murder' : 'assault');
+    if ((attacker?.kind === 'player' || attacker?.kind === 'hire') && attacker.side !== 'state') this.world.police.crime(attacker, h.health <= 0 ? 'murder' : 'assault');
     if (h.health > 0) return false;
     this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items: [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }], cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     this.#tell(h, 'hire_died');
@@ -230,6 +251,11 @@ export class Hires {
     if (i === -1) return;
     this.list.splice(i, 1);
     h.alive = false;
+    if (h.side === 'state') {
+      this.stateTimers.push([h.role, h.slot ?? 0, config.governor.respawnSec]); // someone new, in a while
+      if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason }); // (his successor makes the visit)
+      if (h.vehicle) { h.vehicle.ai = null; }
+    }
     if (h.role === 'gangster') {
       if (h.holdup?.p) h.holdup.p.heldUp = null;
       if (h.vehicle) { h.vehicle.ai = null; h.vehicle.stolenBy = null; }
@@ -254,15 +280,19 @@ export class Hires {
     this.time += dt;
     this.#wages(dt);
     for (let i = this.gangsterTimers.length - 1; i >= 0; i--) if ((this.gangsterTimers[i] -= dt) <= 0 && this.#spawnGangster()) this.gangsterTimers.splice(i, 1);
+    for (let i = this.stateTimers.length - 1; i >= 0; i--) if ((this.stateTimers[i][2] -= dt) <= 0) { this.#spawnState(this.stateTimers[i][0], this.stateTimers[i][1]); this.stateTimers.splice(i, 1); }
     for (const h of [...this.list]) {
       if (!this.list.includes(h)) continue;
       if (h.jailed) continue;
-      if (h.role !== 'gangster') h.health = Math.min(h.maxHealth, h.health + config.hires.regenPerSec * dt); // (gangsters don't heal)
+      if (h.role !== 'gangster' && h.side !== 'state') h.health = Math.min(h.maxHealth, h.health + config.hires.regenPerSec * dt); // (gangsters don't heal)
       h.fireCooldown = Math.max(0, h.fireCooldown - dt);
       if (h.reload > 0 && (h.reload -= dt) <= 0) h.ammo = config.weapons[h.weapon].magazineSize;
       if (h.role === 'goon') this.#goon(h, dt);
       else if (h.role === 'guard') this.#guard(h, dt);
       else if (h.role === 'gangster') this.#gangster(h, dt);
+      else if (h.role === 'governor') this.#governor(h, dt);
+      else if (h.role === 'govguard') this.#govGuard(h, dt);
+      else if (h.role === 'inspector') this.#inspector(h, dt);
       else this.#hitman(h, dt);
     }
   }
@@ -591,7 +621,7 @@ export class Hires {
     const b = new Bullet(this.world.nextEntityId++, h, h.x + Math.cos(angle) * off, h.y + Math.sin(angle) * off, angle, h.weapon);
     this.world.bullets.set(b.id, b);
     if (--h.ammo <= 0) h.reload = gun.reloadSec;
-    if ((h.nextFireCrime ?? 0) <= this.time) {
+    if (h.side !== 'state' && (h.nextFireCrime ?? 0) <= this.time) {
       h.nextFireCrime = this.time + 1;
       this.world.police.crime(h, 'fire');
     }
@@ -804,6 +834,273 @@ export class Hires {
       if (!w.lineOfSight(cx, cy, x, y)) return { x, y };
     }
     return fallback ?? { x: cx + 1200, y: cy };
+  }
+
+  // ---- the governor's household ---------------------------------------------------------------
+
+  /** The governor, one of his guards (slot: which post) or the inspector, at the residence. */
+  #spawnState(role, slot) {
+    const b = this.residence, cfg = config.governor[role];
+    if (!b) return;
+    const at = role === 'governor' ? b.spots.governor[0] : role === 'inspector' ? b.spots.inspector : b.spots.guards[slot];
+    const h = {
+      kind: 'hire', role, side: 'state', slot, id: this.nextId++, employer: null,
+      name: { governor: 'the governor', govguard: "the governor's guard", inspector: 'the tax inspector' }[role],
+      x: at.x, y: at.y, angle: at.angle ?? Math.PI / 2, health: cfg.health, maxHealth: cfg.health, radius: cfg.radius,
+      weapon: cfg.weapon, fireCooldown: 0, ammo: config.weapons[cfg.weapon].magazineSize, reload: 0,
+      vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
+      foes: new Map(), offline: 0, pick: null, route: [], post: at, next: 0, task: null,
+    };
+    if (role === 'inspector') h.car = this.#officialCar();
+    this.list.push(h);
+  }
+
+  /** The inspector's black Lada, parked along the front of the residence (a fresh one if his is gone). */
+  #officialCar() {
+    const w = this.world, at = this.residence.spots.car;
+    const v = new Vehicle(w.nextEntityId++, config.governor.car, at.x, at.y, at.angle);
+    Object.assign(v, { owner: { id: null, name: null }, color: '#141414', fuel: 100, official: true });
+    w.vehicles.set(v.id, v);
+    return v;
+  }
+
+  /** Someone who's hurt any of the household, near enough to deal with. */
+  #stateThreat(h, range) {
+    return this.#threat(h, null, range);
+  }
+
+  /** The governor: strolls between his study, the hall and the dining room; shoots back if attacked. */
+  #governor(h, dt) {
+    const threat = this.#stateThreat(h, config.governor.fightRange);
+    if (threat) return this.#fightThreat(h, threat, dt, 0);
+    if ((h.next -= dt) <= 0) {
+      const spots = this.residence.spots.governor;
+      h.post = spots[Math.floor(Math.random() * spots.length)];
+      h.next = 15 + Math.random() * 25;
+    }
+    if (Math.hypot(h.post.x - h.x, h.post.y - h.y) > 20) this.#walkState(h, h.post.x, h.post.y, config.governor.walkSpeed, dt);
+    else h.angle += dt * 0.2;
+  }
+
+  /**
+   * Walking about the residence: through the gate, up to the porch, in through the hall and the wing
+   * doors (the house's doors are inside the grounds, so plain #walk wouldn't find them).
+   */
+  #walkState(h, tx, ty, speed, dt, toCar = null) {
+    const s = this.residence.spots;
+    const level = (x, y) => (inside(s.house, x, y) ? 0 : inside(s.grounds, x, y) ? 1 : 2); // in the house, the grounds, outside
+    // Which part of the house: along the line from the west wing's door to the east's (any rotation).
+    const ax = s.doorE.x - s.doorW.x, ay = s.doorE.y - s.doorW.y, len = Math.hypot(ax, ay);
+    const wing = (x, y) => { const t = ((x - s.doorW.x) * ax + (y - s.doorW.y) * ay) / len; return t < 0 ? 'W' : t > len ? 'E' : 'H'; };
+    const from = level(h.x, h.y), to = level(tx, ty);
+    const near = (p) => Math.hypot(p.x - h.x, p.y - h.y) < 30;
+    // a, then b: once at a (or anywhere past it, nearer b than a is), straight on to b.
+    const pair = (a, b) => (Math.hypot(b.x - h.x, b.y - h.y) < Math.hypot(b.x - a.x, b.y - a.y) + 10 ? b : a);
+    let via = null;
+    if (from < to) via = from === 0 ? (wing(h.x, h.y) !== 'H' && !near(s.doorW) && !near(s.doorE) ? (wing(h.x, h.y) === 'W' ? s.doorW : s.doorE) : pair(s.hall, s.porch)) : pair(s.gateIn, s.gateOut);
+    else if (from > to) via = from === 2 ? pair(s.gateOut, s.gateIn) : pair(s.porch, s.hall);
+    else if (from === 0 && wing(h.x, h.y) !== wing(tx, ty)) { // across the house: through the wing door
+      const [a, b] = [wing(h.x, h.y), wing(tx, ty)];
+      const door = a === 'W' || (a === 'H' && b === 'W') ? s.doorW : s.doorE;
+      if (a !== 'H' && b !== 'H' && near(door)) via = s.hall;
+      else if (!near(door)) via = door;
+    }
+    if (via) this.#walk(h, via.x, via.y, speed, dt);
+    else this.#walk(h, tx, ty, speed, dt, toCar);
+  }
+
+  /** A guard: stands at his post by the gate; goes after anyone who's attacked the household, but not far. */
+  #govGuard(h, dt) {
+    const g = config.governor;
+    const threat = this.#stateThreat(h, g.fightRange);
+    const fromPost = threat ? Math.hypot((threat.vehicle ?? threat).x - h.post.x, (threat.vehicle ?? threat).y - h.post.y) : 0;
+    if (threat && fromPost < g.guardLeash) return this.#fightThreat(h, threat, dt, 240);
+    if (threat) return this.#fightThreat(h, threat, dt, 0); // (too far to chase: shoot from where he is)
+    if (Math.hypot(h.post.x - h.x, h.post.y - h.y) > 15) this.#walk(h, h.post.x, h.post.y, config.hires.runSpeed * 0.8, dt);
+    else h.angle = h.post.angle ?? h.angle;
+  }
+
+  // The inspector's rounds. He keeps an eye on everyone's day: more than depositLimit paid into the bank
+  // (laundered cash doesn't count), or abandonLimit delivery jobs dropped, and he comes to fine you.
+
+  #watchOf(account) {
+    const day = this.world.dayNumber ?? 0;
+    let w = this.watch.get(account);
+    if (!w || w.day !== day) this.watch.set(account, (w = { day, deposited: 0, abandoned: 0, flagged: new Set() }));
+    return w;
+  }
+
+  /** A deposit at a bank or ATM. */
+  noteDeposit(account, amount) {
+    if (!account || !this.residence) return;
+    const w = this.#watchOf(account);
+    w.deposited += amount;
+    if (w.deposited > config.governor.depositLimit) this.#flag(account, w, 'deposits');
+  }
+
+  /** A delivery job abandoned. */
+  noteAbandon(account) {
+    if (!account || !this.residence) return;
+    const w = this.#watchOf(account);
+    if (++w.abandoned >= config.governor.abandonLimit) this.#flag(account, w, 'jobs');
+  }
+
+  #flag(account, w, reason) {
+    if (w.flagged.has(reason)) return; // (once a day for each)
+    w.flagged.add(reason);
+    this.inspections.push({ account, reason });
+    const p = this.#playerOf(account);
+    if (p) this.events.push({ player: p, kind: 'inspector_coming', reason, fine: config.governor.fine });
+  }
+
+  #playerOf(account) {
+    for (const p of this.world.players.values()) if (p.account === account) return p;
+    return null;
+  }
+
+  /** Where he goes to fine `account`: outside the door of their warehouse, else their home. Null: neither. */
+  #visitSpot(account) {
+    let b = null;
+    for (const w of this.world.warehouses.all.values()) if (w.owner === account) { b = this.world.buildings[w.id - 1]; break; }
+    b ??= this.world.homes.homeOf(account);
+    const d = b?.doors.find((x) => x.exterior);
+    if (!d) return null;
+    return { x: d.x + d.w / 2 + d.nx * 70, y: d.y + d.h / 2 + d.ny * 70, building: b };
+  }
+
+  /** The fine: from the bank, any shortfall from cash on you. */
+  #fine(task) {
+    task.fined = true;
+    const amount = config.governor.fine, acc = task.account;
+    const fromBank = Math.min(amount, Math.max(0, acc.bank));
+    acc.bank -= fromBank;
+    this.world.onBankChange?.(acc);
+    const p = this.#playerOf(acc);
+    let fromCash = 0;
+    if (p && fromBank < amount) {
+      fromCash = Math.min(amount - fromBank, p.cash);
+      p.cash -= fromCash;
+    }
+    if (p) this.events.push({ player: p, kind: 'inspector_fined', amount: fromBank + fromCash, reason: task.reason, post: task.post ?? false });
+  }
+
+  #inspector(h, dt) {
+    const g = config.governor;
+    if (!h.car || !this.world.vehicles.has(h.car.id)) h.car = null;
+    const threat = this.#stateThreat(h, g.fightRange);
+    if (threat) {
+      if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h); }
+      return this.#fightThreat(h, threat, dt, 200);
+    }
+    if (!h.task) {
+      const next = this.inspections.shift();
+      if (next) {
+        const spot = this.#visitSpot(next.account);
+        h.task = { ...next, spot, stage: spot ? 'out' : 'post', started: this.time, wait: 0 };
+      }
+    }
+    const t = h.task;
+    if (!t) return this.#goHome(h, dt);
+    if (t.stage === 'post' || this.time - t.started > g.tripSec) { // nowhere to go, or stuck: it comes in the post
+      t.post = t.stage === 'post';
+      if (!t.fined) this.#fine(t);
+      h.task = null;
+      return this.#teleportHome(h);
+    }
+    const home = this.residence.spots.car;
+    if (t.stage === 'out') { // drive there
+      if (this.#drive(h, t, t.spot, dt)) t.stage = 'walk';
+      return;
+    }
+    if (t.stage === 'walk') { // on foot to the door
+      if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h); }
+      if (Math.hypot(t.spot.x - h.x, t.spot.y - h.y) > 40) return this.#walkState(h, t.spot.x, t.spot.y, config.hires.speed, dt);
+      this.#fine(t);
+      t.stage = 'wait';
+      t.wait = 3; // writes it up
+      return;
+    }
+    if (t.stage === 'wait') {
+      if ((t.wait -= dt) <= 0) { t.stage = 'back'; t.route = null; }
+      return;
+    }
+    if (t.stage === 'back') { // drive home
+      if (this.#drive(h, t, home, dt)) { t.stage = 'home'; if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h); } }
+      return;
+    }
+    // Home: parked; walk in. (Nobody about: his car's put back square in its spot.)
+    if (!this.#goHome(h, dt)) return;
+    h.task = null;
+    const spot = this.residence.spots.car, car = h.car;
+    if (car && !car.driver && !car.passenger && ![...this.world.players.values()].some((p) => Math.hypot(p.x - spot.x, p.y - spot.y) < 1500)) {
+      Object.assign(car, { x: spot.x, y: spot.y, angle: spot.angle, vx: 0, vy: 0, ai: null });
+    }
+  }
+
+  /** Walk back to his desk (true once there). */
+  #goHome(h, dt) {
+    if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h); }
+    const at = this.residence.spots.inspector;
+    if (Math.hypot(at.x - h.x, at.y - h.y) < 20) return true;
+    this.#walkState(h, at.x, at.y, config.governor.walkSpeed * 1.5, dt);
+    return false;
+  }
+
+  /** Stuck out somewhere: back at his desk (and his car back out front), out of sight. */
+  #teleportHome(h) {
+    if (h.vehicle) { h.vehicle.ai = null; this.#leaveCar(h, false); }
+    const at = this.residence.spots.inspector, car = this.residence.spots.car;
+    Object.assign(h, { x: at.x, y: at.y, route: [] });
+    if (h.car && !h.car.driver && !h.car.passenger) Object.assign(h.car, { x: car.x, y: car.y, angle: car.angle, vx: 0, vy: 0, ai: null });
+    else h.car = this.#officialCar();
+  }
+
+  /** To his car if he's not in it, then along the roads to `dest`; parks when he's near. True once parked there. */
+  #drive(h, t, dest, dt) {
+    if (!h.car) h.car = this.#officialCar();
+    const car = h.car;
+    if (!h.vehicle) {
+      if (car.driver || car.passenger) { h.car = null; return false; } // someone's taken it: a new one turns up
+      if (Math.hypot(car.x - h.x, car.y - h.y) > car.radius + h.radius + 30) { this.#walkState(h, car.x, car.y, config.hires.runSpeed, dt, car); return false; }
+      this.#board(h, car);
+      t.route = null;
+      t.jam = { stuck: 0, reverse: 0 };
+    }
+    h.x = car.x;
+    h.y = car.y;
+    const graph = this.world.townsfolk.graph;
+    t.route ??= graph.route({ x: car.x, y: car.y }, dest);
+    t.jam ??= { stuck: 0, reverse: 0 };
+    const forward = vehicleMotion(car).forward;
+    const near = Math.hypot(dest.x - car.x, dest.y - car.y) < 260;
+    if (!t.route.length || near) {
+      car.ai = { gas: Math.abs(forward) > 30 ? -Math.sign(forward) : 0, steer: 0, drift: false };
+      if (car.speed < 40) {
+        car.ai = null;
+        if (near || !t.route.length) { this.#leaveCar(h); return true; }
+      }
+      return false;
+    }
+    const next = t.route[0];
+    if (Math.hypot(next.x - car.x, next.y - car.y) < 110) t.route.shift();
+    const want = Math.atan2(next.y - car.y, next.x - car.x);
+    const diff = Math.atan2(Math.sin(want - car.angle), Math.cos(want - car.angle));
+    const j = t.jam;
+    if (j.reverse > 0) {
+      j.reverse -= dt;
+      car.ai = { gas: -1, steer: -Math.sign(diff) || 1, drift: false };
+      return false;
+    }
+    j.stuck = Math.abs(forward) < 20 ? j.stuck + dt : 0;
+    if (j.stuck > 1.2) { j.stuck = 0; j.reverse = 0.9; }
+    car.ai = { gas: Math.abs(diff) > 1.2 && forward > 150 ? -0.6 : 0.6, steer: Math.max(-1, Math.min(1, diff * 2.2)), drift: false };
+    return false;
+  }
+
+  /** The household for the client: the inspector's errand, for a marker. */
+  inspectorFor(account) {
+    const h = this.list.find((x) => x.role === 'inspector');
+    return h?.task && h.task.account === account ? { x: Math.round((h.vehicle ?? h).x), y: Math.round((h.vehicle ?? h).y) } : null;
   }
 
   // ---- gangsters ---------------------------------------------------------------------------
@@ -1042,4 +1339,4 @@ export class Hires {
 }
 
 // How their bodies look (indexes into config.looks: skin, shirt, pants, hat).
-const LOOKS = { goon: [2, 1, 1, 5], guard: [1, 0, 1, 4], hitman: [0, 0, 0, 3], gangster: [1, 0, 0, 3] };
+const LOOKS = { goon: [2, 1, 1, 5], guard: [1, 0, 1, 4], hitman: [0, 0, 0, 3], gangster: [1, 0, 0, 3], governor: [0, 10, 5, 9], govguard: [2, 11, 5, 0], inspector: [1, 11, 4, 10] };

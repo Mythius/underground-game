@@ -609,6 +609,12 @@ export class Room {
     // A Militsiya front desk: join up (answer the questions) or hand in your badge.
     const desk = this.world.police.stations.find((s) => s.id === id);
     if (desk) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...this.world.police.describeDesk(client.player, desk) });
+    // The laundry machine in the shed on the panelka.
+    const shed = this.world.buildings[id - 1];
+    if (shed?.type === 'laundry') {
+      const p = client.player;
+      return p?.alive && client.send({ t: ServerMsg.PLACE, kind: 'laundry', id, cut: config.governor.launderCut, cash: p.cash, bank: p.account?.bank ?? 0, limit: config.governor.depositLimit });
+    }
     // The bar: the barman's list of muscle for hire, and yours.
     const hires = this.world.hires;
     if (hires.bar && id === hires.bar.id) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...hires.describe(client.player) });
@@ -696,6 +702,16 @@ export class Room {
   }
 
   /** A gangster: sell him all your vodka. */
+  /** The laundry machine: cash into the bank, less its cut, without the tax inspector noticing. */
+  launder(client, msg) {
+    const p = client.player;
+    if (!p?.alive) return;
+    const result = this.world.launder(p, msg.amount);
+    if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
+    this.onBankChange?.(p.account);
+    client.send({ t: ServerMsg.DONE, what: 'laundered', ...result, cash: p.cash, bank: p.account.bank });
+  }
+
   gangster(client, msg) {
     const p = client.player;
     if (!p?.alive) return;

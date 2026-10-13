@@ -424,6 +424,83 @@ export const BUILDING_TYPES = {
     floor: '#7d5a3c', wall: '#efe6d2', roof: '#3b3b46', pattern: 'shingle',
   }),
 
+  // The governor's residence: a yellow-and-white classical manor (a dvoryanskaya usadba) behind iron
+  // railings, a green roof with a little dome, a portico of columns, a fountain in the forecourt and a
+  // gravel drive out to the gate. Open grounds (pattern none); the house has a roof of its own.
+  governor: () => {
+    const W = 1100, H = 900;
+    const hx = 230, hy = 90, hw = 640, hh = 360, t = 16; // the house
+    const gate = W / 2;
+    const columns = [430, 462, 622, 654].map((x) => ({ x, y: hy + hh + 4, w: 16, h: 16, c: '#f4f0e6', column: true }));
+    const fir = (x, y, r = 26) => ({ x: x - r, y: y - r, w: r * 2, h: r * 2, c: '#2d5634', round: true, fir: true });
+    return {
+      w: W, h: H,
+      walls: [
+        ...perimeter(W, H, 8, { s: door(0.5, 130) }).map((f) => ({ ...f, c: '#25272b', railing: true })), // iron railings
+        { x: gate - 91 - 30, y: H - 40, w: 30, h: 40, c: '#efe9da' }, { x: gate + 91, y: H - 40, w: 30, h: 40, c: '#efe9da' }, // gate pillars
+        // The house: front door under the portico, a garden door at the back, two wings off the hall.
+        // (Inside the grounds, so not "outside" doors: the household walks in by waypoints, see spots.)
+        ...wallLine(true, hy, hx, hx + hw, t, door(0.5, 56)),
+        ...wallLine(true, hy + hh - t, hx, hx + hw, t, door(0.5, 70)),
+        ...wallLine(false, hx, hy + t, hy + hh - t, t),
+        ...wallLine(false, hx + hw - t, hy + t, hy + hh - t, t),
+        ...wallLine(false, hx + 210, hy + t, hy + hh - t, 12, door(0.72, 60)),
+        ...wallLine(false, hx + 430, hy + t, hy + hh - t, 12, door(0.72, 60)),
+        fireplace(hx + 300, hy + t, 40, 20, 0, 1), // in the hall, on the back wall
+        { x: hx + 60, y: hy + 120, w: 100, h: 44, c: '#5a3418' }, // the governor's desk
+        { x: hx + 490, y: hy + 120, w: 100, h: 56, c: '#6b3a1e' }, // the dining table
+        ...columns,
+      ].map((wl) => (wl.c ? wl : { ...wl, c: '#e3bf5a' })), // ochre walls
+      decor: [
+        { x: 0, y: 0, w: W, h: H, c: '#5c8a46' }, // lawn
+        { x: gate - 60, y: 600, w: 120, h: H - 600, c: '#c9bc98' }, // the gravel drive
+        { x: gate - 115, y: 488, w: 230, h: 230, c: '#c9bc98', round: true }, // the forecourt
+        { x: gate - 46, y: 557, w: 92, h: 92, c: '#dcd6c6', round: true }, // the fountain's basin
+        { x: gate - 34, y: 569, w: 68, h: 68, c: '#4f8fbf', round: true, water: true },
+        { x: hx, y: hy, w: hw, h: hh, c: '#8a5a32', parquet: true }, // parquet floors
+        { x: hx + 290, y: hy + 60, w: 60, h: hh - 70, c: '#9b1c24' }, // red carpet up the hall
+        { x: hx + 40, y: hy + 200, w: 140, h: 110, c: '#7a2230' }, // rugs in the wings
+        { x: hx + 470, y: hy + 210, w: 140, h: 110, c: '#2f4a6b' },
+        { x: hx + 20, y: hy + hh + 8, w: 170, h: 24, c: '#b8324a', flowers: true }, // flowerbeds along the front
+        { x: hx + hw - 190, y: hy + hh + 8, w: 170, h: 24, c: '#d8a23a', flowers: true },
+        { x: gate - 90, y: 740, w: 24, h: 120, c: '#b8324a', flowers: true }, { x: gate + 66, y: 740, w: 24, h: 120, c: '#b8324a', flowers: true },
+        ...[60, 160, 260, 840, 940, 1040].map((x) => fir(x, 60)),
+        ...[60, 1040].flatMap((x) => [200, 340, 480, 620, 760].map((y) => fir(x, y))),
+        fir(150, 820, 30), fir(950, 820, 30), fir(250, 700, 22), fir(850, 700, 22),
+      ],
+      roofDecor: [],
+      roofs: [
+        { x: hx - 8, y: hy - 8, w: hw + 16, h: hh + 16, c: '#3f7a55', pattern: 'metal', ridge: true, manor: true }, // green tin, a dome in the middle
+        { x: 412, y: hy + hh - 6, w: 276, h: 34, c: '#f2eee4', ridge: true, portico: true },
+      ],
+      spots: {
+        governor: [{ x: hx + 110, y: hy + 220 }, { x: hx + 320, y: hy + 220 }, { x: hx + 540, y: hy + 250 }, { x: hx + 110, y: hy + 90 }],
+        inspector: { x: hx + 540, y: hy + 70 },
+        guards: [{ x: gate - 150, y: H + 40, angle: Math.PI / 2 }, { x: gate + 150, y: H + 40, angle: Math.PI / 2 }],
+        car: { x: gate + 300, y: H + 60, angle: 0 }, // the inspector's black Lada, parked along the front
+        // The way in: the gate (outside, inside), the porch, the hall; the doors into each wing.
+        gateOut: { x: gate, y: H + 50 }, gateIn: { x: gate, y: H - 70 }, porch: { x: gate, y: hy + hh + 50 }, hall: { x: gate, y: hy + hh - 70 },
+        doorW: { x: hx + 210 + 6, y: hy + t + 0.72 * (hh - 2 * t) }, doorE: { x: hx + 430 + 6, y: hy + t + 0.72 * (hh - 2 * t) },
+        house: { x: hx, y: hy, w: hw, h: hh }, grounds: { x: 0, y: 0, w: W, h: H },
+      },
+      floor: '#5c8a46', wall: '#25272b', roof: '#5c8a46', pattern: 'none', label: 'ГУБЕРНАТОР',
+    };
+  },
+
+  // A little brick shed tacked onto the end of a panelka: a cash-counting machine that turns your
+  // cash into a bank balance with no questions asked (for a cut). Placed beside a panelka, not on its own.
+  laundry: () => ({
+    w: 140, h: 120,
+    walls: perimeter(140, 120, 10, { s: door(0.5, 50) }),
+    decor: [
+      { x: 18, y: 18, w: 40, h: 26, c: '#3d5a3a' }, // bundles of notes on a table
+      { x: 92, y: 70, w: 30, h: 30, c: '#4a4a4a', round: true }, // an old tyre
+    ],
+    roofDecor: [],
+    npc: { x: 82, y: 40, angle: Math.PI / 2, role: 'laundry' }, // the machine, facing the door
+    floor: '#6a6d70', wall: '#8a5a44', roof: '#6e5848', pattern: 'metal', label: 'ПРАЧЕЧНАЯ',
+  }),
+
   gas: () => ({
     // Open canopy on pillars, with a small kiosk.
     w: 340, h: 220,
@@ -967,9 +1044,20 @@ export function buildBuilding(type, x, y, rot, id, size = null) {
     docks: layout.docks ? { in: move(layout.docks.in), out: move(layout.docks.out) } : null,
     // The prison: its spots (points) and the inside of the inner fence (a rect), placed like the rest.
     ...(layout.prison ? { prison: prisonSpots(layout.prison, move) } : {}),
+    // Named spots (the governor's residence: where everyone stands), turned with the building.
+    ...(layout.spots ? { spots: turnSpots(layout.spots, move, rot) } : {}),
     // Oil field pumpjacks: where each stands and which way its beam points.
     ...(layout.pumps ? { pumps: layout.pumps.map((p) => { const at = move({ x: p.x, y: p.y, w: 0, h: 0 }); return { x: at.x, y: at.y, angle: p.angle + (rot * Math.PI) / 2 }; }) } : {}),
   };
+}
+
+function turnSpots(spots, move, rot) {
+  const at = (e) => {
+    if (e.w !== undefined) return (({ x, y, w, h }) => ({ x, y, w, h }))(move(e)); // (a rect)
+    const r = move({ x: e.x, y: e.y, w: 0, h: 0 });
+    return e.angle === undefined ? { x: r.x, y: r.y } : { x: r.x, y: r.y, angle: e.angle + (rot * Math.PI) / 2 };
+  };
+  return Object.fromEntries(Object.entries(spots).map(([k, v]) => [k, Array.isArray(v) ? v.map(at) : at(v)]));
 }
 
 function prisonSpots(spots, move) {

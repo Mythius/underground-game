@@ -660,6 +660,27 @@ export const config = Object.freeze({
   //   somewhere after joyrideSec (its owner is told where).
   //   They also buy any vodka (and the mixes) for vodkaPrice × base. The Militsiya only go after them
   //   for crimes they're seen doing.
+  // The governor's residence, just outside town. The governor (who takes armor less damage) potters about
+  // his house with a pistol; two big guards stand outside the gate; the tax inspector lives there too.
+  // Hurt any of them and all of them come for you. Each is replaced respawnSec after being killed.
+  // The inspector drives out to fine you `fine` (from your bank) at your warehouse (or home) when, in one
+  // game day, you deposit more than depositLimit at banks and ATMs, or abandon abandonLimit delivery jobs.
+  // The laundry shed on a panelka banks your cash without the inspector noticing, less launderCut.
+  governor: {
+    governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19 },
+    govguard: { health: 220, armor: 0.5, weapon: 'rifle', radius: 27 },
+    inspector: { health: 160, armor: 0.7, weapon: 'smg', radius: 18 },
+    respawnSec: 300,
+    fightRange: 650,
+    guardLeash: 700, // guards don't chase further than this from their post
+    walkSpeed: 90,
+    fine: 3000,
+    depositLimit: 10000,
+    abandonLimit: 3,
+    car: 'sedan',
+    tripSec: 300, // a visit taking longer than this (stuck somewhere): the fine goes by post and he's home
+    launderCut: 0.1,
+  },
   gangsters: {
     count: 4,
     health: 160,

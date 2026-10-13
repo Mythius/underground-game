@@ -445,6 +445,9 @@ function handleMessage(client, msg) {
     case ClientMsg.GANGSTER:
       client.room?.gangster(client, msg);
       break;
+    case ClientMsg.LAUNDER:
+      client.room?.launder(client, msg);
+      break;
     case ClientMsg.CAT:
       client.room?.cat(client, msg);
       break;

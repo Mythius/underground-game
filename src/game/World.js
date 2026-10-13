@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { clamp, distSq, pushCircleOutOfRect, randRange, segmentDistSq, segmentRectHit } from '../utils/math.js';
-import { WAREHOUSE_SIZES, atmSpotsFor, buildBuilding, generateBuildings } from './buildings.js';
+import { WAREHOUSE_SIZES, atmSpotsFor, buildBuilding, buildingSize, generateBuildings } from './buildings.js';
 import { generateLamps, generatePaths, generateTrees, makeTree } from './terrain.js';
 import { SIDEWALK, cityBox, generateTownRoads, inBox, placeSites, placeTown } from './placement.js';
 import { Work } from './work.js';
@@ -268,7 +268,7 @@ export class World {
     this.roads = terrain ? generateTownRoads(opts.width, opts.height, this.city) : [];
     // The essentials of a town first (so they always find a spot), then one city-run factory of each
     // kind (players build their own in warehouses), warehouses, and the rest.
-    const fixed = { panelka: 0, police: 2, bar: 1, bank: 3, market: 3, gunstore: 2, dealership: 2, shop: 8, gas: 6, church: 1, office: 4, powerplant: 1 }; // panel blocks first: they need the most room
+    const fixed = { panelka: 0, governor: 1, laundry: 0, police: 2, bar: 1, bank: 3, market: 3, gunstore: 2, dealership: 2, shop: 8, gas: 6, church: 1, office: 4, powerplant: 1 }; // panel blocks first: they need the most room
     for (const t of Object.keys(config.factories)) fixed[t] = 1;
     for (const [type, size] of Object.entries(WAREHOUSE_SIZES)) fixed[type] = config.warehouses.sizes[size].count;
     // A Soviet town: apartment blocks, street kiosks, lock-up garages (more of them on bigger maps).
@@ -287,6 +287,7 @@ export class World {
       ? placeTown({ width: opts.width, height: opts.height, roads: this.roads, city: this.city, count: (opts.buildingCount ?? 0) + sites.length, fixed, remote: new Set(['shack']), avoid: corridor, isWet: wetRect, pre: sites })
       : { buildings: generateBuildings(opts.width, opts.height, opts.buildingCount ?? 0, 120, corridor, 40, wetRect, fixed, new Set(['shack'])), lots: [] });
     if (plan) this.buildings.push(buildBuilding('station', plan.station.x, plan.station.y, 0, this.buildings.length + 1));
+    if (this.roads.length) this.#attachLaundry([...corridor, ...(this.businessLots ?? [])]);
     const paths = terrain ? generatePaths(this.buildings, this.roads) : [];
     ({ trees: this.trees, forests: this.forests } = terrain
       ? generateTrees(opts.width, opts.height, { roads: [...this.roads, ...corridor], buildings: this.buildings, paths, inWater: wet, forests: opts.forests, scattered: opts.scatteredTrees })
@@ -517,6 +518,30 @@ export class World {
     return null;
   }
 
+  /** The laundry shed: tacked onto one end of a panelka, its door facing the same way as the flats'. */
+  #attachLaundry(avoid) {
+    const overlaps = (a, b, gap) => a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap;
+    const normals = [[0, 1], [-1, 0], [0, -1], [1, 0]]; // the shed's door, for each rotation
+    for (const b of this.buildings.filter((x) => x.type === 'panelka').sort(() => Math.random() - 0.5)) {
+      const d = b.doors.find((x) => x.exterior);
+      if (!d) continue;
+      const rot = normals.findIndex(([nx, ny]) => nx === d.nx && ny === d.ny);
+      if (rot < 0) continue;
+      const { w, h } = buildingSize('laundry', rot);
+      const spots = d.ny // front along the bottom or top: either end along x, flush with the front
+        ? [b.x - w, b.x + b.w].map((x) => ({ x, y: d.ny > 0 ? b.y + b.h - h : b.y }))
+        : [b.y - h, b.y + b.h].map((y) => ({ x: d.nx > 0 ? b.x + b.w - w : b.x, y }));
+      for (const at of spots) {
+        const r = { ...at, w, h };
+        if (r.x < 100 || r.y < 100 || r.x + w > this.width - 100 || r.y + h > this.height - 100) continue;
+        if (this.city && !(inBox(this.city, r.x, r.y) && inBox(this.city, r.x + w, r.y + h))) continue; // (in town, like its panelka)
+        if (this.buildings.some((o) => o !== b && overlaps(r, o, 20)) || this.roads.some((o) => overlaps(r, o, SIDEWALK + 8)) || avoid.some((o) => overlaps(r, o, 10))) continue;
+        this.buildings.push(buildBuilding('laundry', r.x, r.y, rot, this.buildings.length + 1));
+        return;
+      }
+    }
+  }
+
   /** Everyone heals slowly on their own; food eaten heals a little more every tick until it's done. */
   #digest(dt) {
     for (const p of this.players.values()) {
@@ -551,12 +576,30 @@ export class World {
       if (!usable && !near(this.tellers, bankReach)) return 'robbed_atm';
       p.cash -= amount;
       p.account.bank += amount;
+      this.hires.noteDeposit(p.account, amount); // (the tax inspector notices big days)
     } else {
       if (amount > p.account.bank) return 'not_enough_bank';
       p.account.bank -= amount;
       p.cash += amount;
     }
     return null;
+  }
+
+  /** The laundry machine in reach of p, if any. */
+  laundryNear(p) {
+    return this.buildings.find((b) => b.type === 'laundry' && b.npc && Math.hypot(b.npc.x - p.x, b.npc.y - p.y) < config.hires.reach + p.radius) ?? null;
+  }
+
+  /** Put `amount` of carried cash through the laundry machine: into the bank, less the cut, unseen by the inspector. */
+  launder(p, amount) {
+    if (!p.account) return 'no_account';
+    if (p.vehicle || !this.laundryNear(p)) return 'too_far';
+    if (!(amount > 0)) return 'nothing_to_launder';
+    if (amount > p.cash) return 'not_enough_cash';
+    const cut = Math.ceil(amount * config.governor.launderCut);
+    p.cash -= amount;
+    p.account.bank += amount - cut;
+    return { amount, cut };
   }
 
   /** Robbery (hold your ground until it's done) and pickpocketing: see Police. */

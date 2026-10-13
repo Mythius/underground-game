@@ -10,7 +10,7 @@ import { makeLot } from './parking.js';
 export const SIDEWALK = 40;
 
 /** Building types that belong in the city; everything else goes in the countryside. */
-export const CITY_TYPES = new Set(['shop', 'kiosk', 'bar', 'bank', 'police', 'market', 'gunstore', 'dealership', 'panelka', 'office', 'church', 'garages', 'house', 'garage']);
+export const CITY_TYPES = new Set(['laundry', 'shop', 'kiosk', 'bar', 'bank', 'police', 'market', 'gunstore', 'dealership', 'panelka', 'office', 'church', 'garages', 'house', 'garage']);
 /** Types that get parking spaces of their own. */
 export const BUSINESS_TYPES = new Set([
   'shop', 'kiosk', 'bank', 'police', 'market', 'gunstore', 'dealership', 'office', 'gas',
@@ -183,7 +183,7 @@ export function placeTown({ width, height, roads, city, count, fixed = {}, remot
       const yard = /warehouse|^farm$|logging|mine|oilwell|scrapyard|quarry/.test(type) ? 200 : 100;
       // Warehouses need room in front for a truck at the loading bay; other suppliers for a bay by the door.
       const near = /warehouse/.test(type) ? 195 : BUSINESS_TYPES.has(type) ? 100 : yard * 0.4;
-      const setback = Math.round(sidewalk + (inCityType ? randRange(8, 70) : Math.random() < 0.55 ? randRange(near, Math.max(near, yard) + 40) : randRange(Math.max(near, yard), 650)));
+      const setback = type === 'governor' ? Math.round(randRange(170, 220)) : Math.round(sidewalk + (inCityType ? randRange(8, 70) : Math.random() < 0.55 ? randRange(near, Math.max(near, yard) + 40) : randRange(Math.max(near, yard), 650)));
       const span = horizontal ? road.w : road.h;
       const along = (horizontal ? road.x : road.y) + randRange(150, span - 150);
       const r = horizontal
@@ -192,6 +192,7 @@ export function placeTown({ width, height, roads, city, count, fixed = {}, remot
       const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
       if (city && inCityType !== (inBox(city, r.x, r.y) && inBox(city, r.x + r.w, r.y + r.h))) continue; // city types fully in town, the rest out of it
       if (city && !inCityType && overlaps(r, city, 60)) continue;
+      if (city && type === 'governor' && !overlaps(r, city, 1200)) continue; // the governor lives just outside town
       if (blocked(r, inCityType ? 40 : 110)) continue;
       const building = buildBuilding(type, r.x, r.y, f.rot, id);
       placed.push(building);

@@ -965,6 +965,8 @@
           if (msg.kind === 'hire_busted') toast(`🚔 The Militsiya arrested your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}`);
           if (msg.kind === 'hire_quit') toast(`👋 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} walked off — no pay, no work`);
           if (msg.kind === 'traced') { sfx('alarm'); toast(`🚨 A witness tied your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}'s crime to you — the Militsiya want you too`); }
+          if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(`🧾 The tax inspector has noticed ${msg.reason === 'jobs' ? 'all those delivery jobs you dropped today' : 'how much you\'ve paid into the bank today'} — he\'s on his way to fine you ${money(msg.fine)}`, 6000); }
+          if (msg.kind === 'inspector_fined') { sfx('busted'); toast(`🧾 ${msg.post ? 'A letter from the tax inspector' : 'The tax inspector'}: fined ${money(msg.amount)} for ${msg.reason === 'jobs' ? 'abandoning delivery jobs' : 'suspicious deposits'}`, 6000); }
           if (msg.kind === 'contract_on_you') { sfx('alarm'); toast('🎯 Word on the street: someone has put a contract on you. Watch your back.'); }
           if (msg.kind === 'contract_over') toast('😮‍💨 The contract on you is off');
           if (msg.kind === 'contract_done') toast(`🎯 The job is done — ${msg.name} is dead`);
@@ -1042,6 +1044,7 @@
         case 'done':
           sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what === 'hire_vodka' ? 'coin' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
+          if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine — ${money(msg.amount - msg.cut)} in the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
@@ -1689,7 +1692,7 @@
     const placeEl = document.getElementById('place');
     const fuelEl = document.getElementById('fuel-gauge');
     const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force' };
-    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden']);
+    const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden', 'laundry']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
     const prisonWall = { door: null, hits: 0, max: 1 }; // the inner fence's concrete section (its door id) and how far the digging's got
     let rail = null; // the railway: { y, stopX, length, station, smuggler, wagons, x, speed, state, nextIn, at }
@@ -1708,7 +1711,12 @@
       { skin: '#c68642', shirt: '#1c1c1c', pants: '#2d2d2d', hat: 'cap' },
       { skin: '#f1c27d', shirt: '#2b2b2b', pants: '#151515', hat: 'tophat' },
       { skin: '#e0ac69', shirt: '#3a3530', pants: '#1c1c1c', hat: 'fedora', coat: '#8a7355' }, // a gangster: trench coat and fedora
+      { skin: '#ffdbac', shirt: '#f6f1e4', pants: '#1b1b2a', hat: 'ushanka', coat: '#5e3b22', fur: '#d9c6a5', gold: true }, // the governor: a mink shuba, fur collar, gold chain
+      { skin: '#c68642', shirt: '#111111', pants: '#111111', hat: 'none', shades: true, tie: '#7a0f16' }, // his guards: black suits, dark glasses
+      { skin: '#f1c27d', shirt: '#5c6168', pants: '#3a3d42', hat: 'furazhka', tie: '#1f3a6b' }, // the tax inspector: a grey suit and a peaked cap
     ];
+    const CREW_WEAPON = ['rifle', 'rifle', 'sniper', 'rifle', 'pistol', 'rifle', 'smg'];
+    const CREW_SIZE = [18, 18, 18, 18, 19, 27, 18]; // (the governor's guards are big men)
     const ECON_ERRORS = {
       nobody_to_collar: 'Nobody there to arrest or fine',
       not_wanted_player: '🚔 They haven\'t done anything — you can only arrest or fine someone who\'s wanted',
@@ -1719,6 +1727,7 @@
       cop_contraband: '🚔 "Get rid of that contraband before you come asking for a badge."',
       already_cop: 'You\'re already in the Militsiya',
       not_cop: 'You\'re not in the Militsiya',
+      nothing_to_launder: '🧺 Put some cash in first',
       no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
       gangster_hostile: '🕴️ He isn\'t in a talking mood',
       atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
@@ -1921,6 +1930,8 @@
         placeEl.append(h, sub, cargo, table);
       } else if (d.kind === 'bar') {
         barSection(d, h, sub);
+      } else if (d.kind === 'laundry') {
+        laundrySection(d, h, sub);
       } else if (d.kind === 'prison') {
         prisonSection(d, h, sub);
       } else if (d.kind === 'police') {
@@ -2033,6 +2044,25 @@
         if (plan.batches && plan.batches < plan.wanted) box.append(` (you have inputs for ${plan.wanted})`);
       }
       return box;
+    }
+
+    // ---- the laundry shed: cash into the bank, quietly ------------------------------------
+
+    function laundrySection(d, h, sub) {
+      h.textContent = '🧺 Прачечная';
+      sub.textContent = `An old note-counting machine wired to somebody's bank account. Feed it cash and it lands in your bank — less a ${Math.round(d.cut * 100)}% cut — without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
+      const row = document.createElement('div');
+      row.className = 'cargo';
+      const input = document.createElement('input');
+      input.type = 'number'; input.min = '1'; input.step = '100'; input.max = String(Math.floor(coins));
+      input.value = String(Math.floor(coins)); input.style.width = '8rem';
+      const out = document.createElement('span');
+      const update = () => { const n = Math.max(0, Math.floor(Number(input.value) || 0)); out.textContent = ` → ${money(n - Math.ceil(n * d.cut))} into the bank`; };
+      input.oninput = update; update();
+      row.append(`💵 ${money(coins)} on you · 🏦 ${money(bankBalance)} in the bank`, document.createElement('br'), input, out);
+      const go = button('Launder', () => { const n = Math.floor(Number(input.value) || 0); if (n > 0) send({ t: 'launder', amount: Math.min(n, Math.floor(coins)) }); }, { cls: 'big go', disabled: coins < 1 });
+      const all = button('All of it', () => { if (coins >= 1) send({ t: 'launder', amount: Math.floor(coins) }); }, { disabled: coins < 1 });
+      placeEl.append(h, sub, row, go, ' ', all);
     }
 
     // ---- the bar: hired muscle ---------------------------------------------------------
@@ -3798,9 +3828,26 @@
       }
     }
 
+    /** The laundry shed's note-counter: an olive-green steel box, a counter ticking on its front, notes going in. */
+    function drawLaunderer(p) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle);
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(-14, -18, 34, 40);
+      ctx.fillStyle = '#4f5a3c'; ctx.fillRect(-18, -20, 34, 40);
+      ctx.strokeStyle = '#2d3423'; ctx.lineWidth = 2; ctx.strokeRect(-17, -19, 32, 38);
+      ctx.fillStyle = '#111'; ctx.fillRect(4, -12, 9, 24); // the display, facing out
+      const n = Math.floor(performance.now() / 90) % 1000;
+      ctx.fillStyle = '#5aff7a'; ctx.font = '700 6px monospace'; ctx.save(); ctx.translate(8.5, 0); ctx.rotate(-Math.PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(n).padStart(3, '0'), 0, 0); ctx.restore();
+      ctx.fillStyle = '#8ab87a'; ctx.fillRect(-12, -14, 10, 28); // a stack of notes in the hopper
+      ctx.fillStyle = '#6a9a5a'; for (let k = -12; k < 14; k += 4) ctx.fillRect(-12, k, 10, 1);
+      ctx.restore();
+    }
+
     function drawPlaceKeepers() {
       for (const p of econ.places) {
         if (p.x < viewBox.l || p.x > viewBox.r || p.y < viewBox.t || p.y > viewBox.b) continue;
+        if (p.role === 'laundry') { drawLaunderer(p); continue; }
         const look = { factory: CLERK_LOOK, gunshop: GUNSHOP_LOOK, dealer: DEALER_LOOK, station: RAIL_LOOK, smuggler: SMUGGLER_LOOK, barman: BARMAN_LOOK, police: POLICE_LOOK, warden: WARDEN_LOOK }[p.role] ?? TRADER_LOOK;
         drawPerson({ x: p.x, y: p.y, r: 20, aim: p.angle, weapon: p.role === 'gunshop' ? 'rifle' : null }, look);
       }
@@ -5827,7 +5874,7 @@
     // renders it with the game's own renderer. Buildings, paths and rails come from the server's own
     // modules (served at /src/...), so what you place is exactly what the game builds.
 
-    const BUILDING_ICONS = { bar: '🍺', house: '🏠', cabin: '🛖', barn: '🌾', warehouse: '🏭', shop: '🏪', bunker: '🧱', church: '⛪', watchtower: '🗼', mansion: '🏛️', gas: '⛽', office: '🏢', garage: '🔧', bank: '🏦',
+    const BUILDING_ICONS = { governor: '🏛️', laundry: '🧺', bar: '🍺', house: '🏠', cabin: '🛖', barn: '🌾', warehouse: '🏭', shop: '🏪', bunker: '🧱', church: '⛪', watchtower: '🗼', mansion: '🏛️', gas: '⛽', office: '🏢', garage: '🔧', bank: '🏦',
       sawmill: '🪚', furniture: '🛋️', flourmill: '🥡', bakery: '🍞', foundry: '🔥', machineshop: '⚙️', refinery: '🛢️', glassworks: '🪟', carfactory: '🚗', gunfactory: '🔫',
       logging: '🌲', farm: '🌾', mine: '⛏️', oilwell: '🛢️', scrapyard: '🔩', quarry: '🏖️', market: '🏪' };
     const VEHICLE_TOOLS = [['sedan', '🚗', 'Car'], ['sports', '🏎️', 'Sports car'], ['pickup', '🛻', 'Pickup truck'], ['truck', '🚚', 'Box truck']];
@@ -8640,6 +8687,50 @@
         for (let i = 0; i < 6; i++) circle(d.x + 7 + rnd() * (d.w - 14), d.y + 7 + rnd() * (d.h - 14), 2.5 + rnd() * 2, '#3a3836');
         return;
       }
+      if (d.fir) { // a blue spruce, as planted round every official building
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2, R = d.w / 2;
+        circle(cx + 6, cy + 8, R, 'rgba(0, 0, 0, .3)');
+        for (let k = 0; k < 3; k++) {
+          const rr = R * (1 - k * 0.28);
+          ctx.fillStyle = shade(k % 2 ? '#3b6b5c' : '#2c5547', 1 + k * 0.12);
+          ctx.beginPath();
+          for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2, rad = i % 2 ? rr * 0.72 : rr; ctx.lineTo(cx + Math.cos(a + k) * rad, cy + Math.sin(a + k) * rad); }
+          ctx.fill();
+        }
+        if (snowAmount > 0.02) circle(cx - 2, cy - 2, R * 0.45, `rgba(240, 245, 250, ${0.8 * snowAmount})`);
+        return;
+      }
+      if (d.water) { // the fountain: rippling water, a jet in the middle
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2, R = d.w / 2, t = performance.now() / 1000;
+        const frozen = season.main === 'winter';
+        circle(cx, cy, R, frozen ? '#c9dbe6' : d.c);
+        if (!frozen) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, .35)'; ctx.lineWidth = 1.5;
+          for (let k = 0; k < 3; k++) { const rr = ((t * 14 + k * R / 3) % R); ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2); ctx.stroke(); }
+          for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2 + t, rr = 6 + 4 * Math.sin(t * 3 + i); circle(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, 2, 'rgba(230, 245, 255, .8)'); }
+        }
+        circle(cx, cy, 7, '#e6e1d4'); circle(cx, cy, 4, frozen ? '#dfe9ef' : '#bfe3ff');
+        return;
+      }
+      if (d.flowers) { // a flowerbed: dark soil, rows of blooms
+        ctx.fillStyle = '#4a3627'; ctx.fillRect(d.x, d.y, d.w, d.h);
+        if (season.main === 'winter') { ctx.fillStyle = `rgba(240, 245, 250, ${0.85 * Math.max(snowAmount, 0.5)})`; ctx.fillRect(d.x, d.y, d.w, d.h); return; }
+        const rnd = seeded(Math.round(d.x * 5 + d.y));
+        for (let x = d.x + 5; x < d.x + d.w - 3; x += 9) for (let y = d.y + 5; y < d.y + d.h - 3; y += 9) {
+          circle(x + rnd() * 3, y + rnd() * 3, 2.6, rnd() < 0.25 ? '#f2f0e6' : d.c);
+        }
+        return;
+      }
+      if (d.parquet) { // herringbone parquet
+        ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.save(); ctx.beginPath(); ctx.rect(d.x, d.y, d.w, d.h); ctx.clip();
+        ctx.strokeStyle = 'rgba(40, 20, 5, .25)'; ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let x = d.x - d.h; x < d.x + d.w; x += 14) { ctx.moveTo(x, d.y); ctx.lineTo(x + d.h, d.y + d.h); }
+        for (let x = d.x; x < d.x + d.w + d.h; x += 28) { ctx.moveTo(x, d.y); ctx.lineTo(x - d.h, d.y + d.h); }
+        ctx.stroke(); ctx.restore();
+        return;
+      }
       if (!d.concrete) return shadeRect(ctx, d, d.c);
       ctx.fillStyle = 'rgba(0, 0, 0, .25)';
       ctx.fillRect(d.x + 3, d.y + 4, d.w, d.h); // the slab's edge
@@ -8747,6 +8838,27 @@
           const rnd = seeded(Math.round(wall.x * 7 + wall.y));
           for (let i = 0; i < 14; i++) circle(wall.x + 12 + rnd() * (wall.w - 24), wall.y + 12 + rnd() * (wall.h - 24), 3 + rnd() * 4, rnd() < 0.5 ? '#2c2a28' : '#3b3835');
           ctx.strokeStyle = '#5f5b54'; ctx.lineWidth = 2; ctx.strokeRect(wall.x + 1, wall.y + 1, wall.w - 2, wall.h - 2);
+          continue;
+        }
+        if (wall.railing) { // wrought-iron railings: black bars with gilded tips, a white stone post every so often
+          const horizontal = wall.w > wall.h, len = horizontal ? wall.w : wall.h;
+          ctx.fillStyle = 'rgba(0, 0, 0, .2)'; ctx.fillRect(wall.x + 3, wall.y + 4, wall.w, wall.h);
+          ctx.fillStyle = '#1d1f22';
+          if (horizontal) ctx.fillRect(wall.x, wall.y + wall.h / 2 - 1.5, wall.w, 3); else ctx.fillRect(wall.x + wall.w / 2 - 1.5, wall.y, 3, wall.h);
+          for (let k = 3; k < len - 2; k += 9) {
+            const [x, y] = horizontal ? [wall.x + k, wall.y + wall.h / 2] : [wall.x + wall.w / 2, wall.y + k];
+            circle(x, y, 2, '#1d1f22'); circle(x, y, 1, '#d4af37');
+          }
+          for (let k = 0; k <= len; k += 110) {
+            const [x, y] = horizontal ? [wall.x + Math.min(k, len - 7), wall.y - 3] : [wall.x - 3, wall.y + Math.min(k, len - 7)];
+            ctx.fillStyle = '#e9e3d3'; ctx.fillRect(x - (horizontal ? 3 : 0), y - (horizontal ? 0 : 3), horizontal ? 13 : wall.w + 6, horizontal ? wall.h + 6 : 13);
+          }
+          continue;
+        }
+        if (wall.column) { // a white column of the portico
+          circle(wall.x + wall.w / 2 + 3, wall.y + wall.h / 2 + 4, wall.w / 2 + 2, 'rgba(0, 0, 0, .3)');
+          circle(wall.x + wall.w / 2, wall.y + wall.h / 2, wall.w / 2 + 2, '#f6f2e8');
+          circle(wall.x + wall.w / 2 - 2, wall.y + wall.h / 2 - 2, wall.w / 4, '#ffffff');
           continue;
         }
         if (wall.picket) { // a white picket fence: a rail with pickets along it
@@ -9181,6 +9293,12 @@
           ctx.strokeStyle = shade(r.c, 0.5); ctx.lineWidth = 2;
           ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
         }
+        if (r.manor) drawManorRoof(r);
+        if (r.portico) { // the portico: white pediment, a gilded double-headed eagle in a roundel
+          const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+          circle(cx, cy, Math.min(r.w, r.h) * 0.36, '#c9a227'); circle(cx, cy, Math.min(r.w, r.h) * 0.26, '#7a1420');
+          ctx.fillStyle = '#e8c34a'; ctx.beginPath(); ctx.moveTo(cx - 6, cy - 3); ctx.lineTo(cx, cy + 4); ctx.lineTo(cx + 6, cy - 3); ctx.lineTo(cx, cy - 1); ctx.fill();
+        }
         if (r.tower) { // the watchtower cabin: a searchlight on the rail
           const cx = r.x + r.w / 2, cy = r.y + r.h / 2, a = towerBeam(cx, cy, performance.now());
           ctx.fillStyle = '#3a3d42'; ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 18, cy + Math.sin(a) * 18, 7, 0, Math.PI * 2); ctx.fill();
@@ -9188,6 +9306,35 @@
         }
         if (r.round && snowAmount > 0.02) { ctx.fillStyle = `rgba(238, 243, 248, ${0.7 * snowAmount})`; ctx.beginPath(); ctx.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2 - 4, 0, Math.PI * 2); ctx.fill(); }
         ctx.restore();
+      });
+    }
+
+    /** The governor's green tin roof: white cornice, chimneys, a little green dome with a gilded spire, and the tricolour flying. */
+    function drawManorRoof(r) {
+      const horizontal = r.w >= r.h;
+      ctx.strokeStyle = '#f2eee4'; ctx.lineWidth = 5; ctx.strokeRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6); // the cornice
+      for (const f of [0.18, 0.82]) { // chimneys
+        const x = horizontal ? r.x + r.w * f : r.x + r.w * 0.3, y = horizontal ? r.y + r.h * 0.3 : r.y + r.h * f;
+        ctx.fillStyle = '#c9b08a'; ctx.fillRect(x - 11, y - 11, 22, 22); ctx.fillStyle = '#2a2a2a'; ctx.fillRect(x - 6, y - 6, 12, 12);
+      }
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = Math.min(r.w, r.h) * 0.2;
+      circle(cx + 8, cy + 10, R, 'rgba(0, 0, 0, .3)');
+      const g = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.35, R * 0.1, cx, cy, R);
+      g.addColorStop(0, '#6fae86'); g.addColorStop(1, '#2f5f42');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(20, 50, 30, .6)'; ctx.lineWidth = 1.5; ctx.beginPath();
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); }
+      ctx.stroke();
+      circle(cx, cy, R * 0.35, '#f2eee4'); circle(cx, cy, R * 0.22, '#d4af37'); circle(cx - 2, cy - 2, R * 0.08, '#fff6c8'); // the lantern and its gilded spire
+      // The flag on the spire, rippling in the wind.
+      const t = performance.now() / 300;
+      ctx.strokeStyle = '#d9d9d9'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - R * 1.6); ctx.stroke();
+      const fx = cx + 1, fy = cy - R * 1.6, fw = 42, fh = 27;
+      ['#ffffff', '#1c3faa', '#d52b1e'].forEach((c, i) => {
+        ctx.fillStyle = c; ctx.beginPath();
+        for (let k = 0; k <= 8; k++) { const x = fx + (fw * k) / 8, y = fy + (fh * i) / 3 + Math.sin(t + k * 0.8) * 2 * (k / 8); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+        for (let k = 8; k >= 0; k--) { const x = fx + (fw * k) / 8, y = fy + (fh * (i + 1)) / 3 + Math.sin(t + k * 0.8) * 2 * (k / 8); ctx.lineTo(x, y); }
+        ctx.fill();
       });
     }
 
@@ -9865,8 +10012,16 @@
         ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0.42, -0.35); ctx.lineTo(0.1, 0); ctx.lineTo(0.42, 0.35); ctx.fill(); // shirt under the lapels
       }
 
+      if (look.tie) { ctx.fillStyle = look.tie; ctx.beginPath(); ctx.moveTo(0.42, -0.07); ctx.lineTo(0.42, 0.07); ctx.lineTo(0.2, 0.04); ctx.lineTo(0.2, -0.04); ctx.fill(); } // a tie down the front
+      if (look.gold) { // a heavy gold chain and a watch
+        ctx.strokeStyle = '#e8c34a'; ctx.lineWidth = 0.07;
+        ctx.beginPath(); ctx.moveTo(0.25, -0.5); ctx.quadraticCurveTo(0.6, 0, 0.25, 0.5); ctx.stroke();
+        circle(...hands[1], 0.09, '#f2d16b');
+      }
+      if (look.fur) for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2; circle(0.05 + Math.cos(a) * 0.46, Math.sin(a) * 0.5, 0.17, k % 2 ? look.fur : shade(look.fur, 0.88)); } // the fur collar
       // Head and hat
       circle(0.05, 0, head, skin);
+      if (look.shades) { ctx.fillStyle = '#0b0b0b'; ctx.beginPath(); ctx.roundRect(0.24, -0.3, 0.16, 0.6, 0.06); ctx.fill(); ctx.fillStyle = 'rgba(255, 255, 255, .35)'; ctx.fillRect(0.3, -0.24, 0.04, 0.12); }
       ctx.translate(0.05, 0);
       drawHat(look.hat, head);
 
@@ -10133,7 +10288,7 @@
           ctx.restore();
         }
         if (h.x < viewBox.l || h.x > viewBox.r || h.y < viewBox.t || h.y > viewBox.b) continue;
-        drawPerson({ x: h.x, y: h.y, r: 18, aim: h.angle, weapon: h.role === 2 ? 'sniper' : 'rifle' }, HIRE_LOOKS[h.role] ?? HIRE_LOOKS[0]);
+        drawPerson({ x: h.x, y: h.y, r: CREW_SIZE[h.role] ?? 18, aim: h.angle, weapon: CREW_WEAPON[h.role] ?? 'rifle' }, HIRE_LOOKS[h.role] ?? HIRE_LOOKS[0]);
         if (hiddenUnderRoof(h.x, h.y) && !h.mine) continue;
         if (h.hp < 100) {
           ctx.fillStyle = 'rgba(0, 0, 0, .6)'; ctx.fillRect(h.x - 18, h.y - 34, 36, 5);

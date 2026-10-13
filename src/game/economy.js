@@ -494,6 +494,7 @@ export class Economy {
     if (!job) return 'no_job';
     if (action === 'abandon') {
       this.jobs.delete(job.id);
+      this.world.hires?.noteAbandon(p.account); // (drop too many and the tax inspector comes calling)
       return null;
     }
     const holder = this.cargoOf(p);
