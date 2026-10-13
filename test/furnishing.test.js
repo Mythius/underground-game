@@ -190,3 +190,21 @@ test('the fishing rod drops and picks up like a gun, and rides in a trunk', () =
   assert.equal(world.trunk(other, car.id, 'take', car.cargo.findIndex(Boolean)), null);
   assert.ok(other.inventory.some((s) => s?.type === 'rod' && s.tool));
 });
+
+test('in a starter cabin, a bed picked up goes back down from where you stand (slid to the nearest spot that fits)', () => {
+  const { map } = validateMap({ width: 3000, height: 3000, buildings: [{ type: 'cabin', x: 600, y: 600, rot: 0 }] });
+  const world = new World({ ...config.world, foodCount: 0, pickupStart: 0 }, config.player, config.weapons, map);
+  world.townsfolk.people.length = 0;
+  const acc = account(1);
+  const { p, home } = atHome(world, acc);
+  world.furnishings.restoreHome(acc, undefined);
+  const bed = [...world.furnishings.items.values()].find((it) => it.kind === 'bed');
+  Object.assign(p, { x: bed.x + bed.w / 2, y: bed.y + bed.h + 20 });
+  assert.equal(world.furnishings.pickUp(p, bed.id), null);
+  Object.assign(p, world.homes.spawnPoint(home));
+  p.selected = p.inventory.findIndex((s) => s?.good === 'bed');
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    if (world.furnishings.place(p, a) === null) return;
+  }
+  assert.fail('the bed fits nowhere near');
+});

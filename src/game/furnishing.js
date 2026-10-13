@@ -128,11 +128,31 @@ export class Furnishings {
     const count = [...this.items.values()].filter((it) => it.building === b.id && it.kind === kind).length;
     if (count >= PLACEABLE[kind].max) return 'too_many_here';
     if (at && Math.hypot(at.x - p.x, at.y - p.y) > config.furnishing.placeReach) return 'too_far';
-    const spot = at ? this.#spotAt(kind, at.x, at.y, at.rot) : this.#spotFor(p, kind, Number.isFinite(angle) ? angle : 0);
-    if (!this.fits(b, spot)) return 'no_space';
+    let spot = at ? this.#spotAt(kind, at.x, at.y, at.rot) : this.#spotFor(p, kind, Number.isFinite(angle) ? angle : 0);
+    // Not quite clear: slide it to the nearest spot that is (in a small room, like a cabin, the exact
+    // spot in front of you rarely fits). Set down in front of you (a phone), it may turn too.
+    if (!this.fits(b, spot)) spot = this.#nearestFit(b, kind, spot, !at);
+    if (!spot) return 'no_space';
     hotbarOf(p).add(kind, -1);
     this.#add(b, kind, spot, p.account);
     return null;
+  }
+
+  /** The clear spot nearest `r` (within config.furnishing.nudge), turned as it is, or (`turn`) either way; null if none. */
+  #nearestFit(b, kind, r, turn) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2, max = config.furnishing.nudge;
+    let best = null, bestD = Infinity;
+    for (const rot of turn ? [r.rot, (r.rot + 1) % 4] : [r.rot]) {
+      for (let dy = -max; dy <= max; dy += 4) {
+        for (let dx = -max; dx <= max; dx += 4) {
+          const d = Math.hypot(dx, dy) + (rot === r.rot ? 0 : max); // (rather as it was turned)
+          if (d >= bestD || Math.hypot(dx, dy) > max) continue;
+          const t = this.#spotAt(kind, cx + dx, cy + dy, rot);
+          if (this.fits(b, t)) [best, bestD] = [t, d];
+        }
+      }
+    }
+    return best;
   }
 
   #add(b, kind, r, owner, slots = null) {

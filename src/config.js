@@ -541,6 +541,7 @@ export const config = Object.freeze({
   furnishing: {
     cabinetSlots: 10,
     reach: 50, // from the thing's edge to yours
+    nudge: 80, // a spot that isn't quite clear: furniture slides up to this far to the nearest one that is
     placeReach: 450, // how far from you (centre to centre) you can set one down with the mouse
   },
   // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while a fish bites and
