@@ -9,6 +9,7 @@ export const ClientMsg = Object.freeze({
   PING: 'ping', // { t, ts }
   CHAT: 'chat', // { t, text }
   REPORT: 'report', // { t, id (player id), reason, text } report a player to the admin
+  FEEDBACK: 'feedback', // { t, kind ('bug' | 'request'), text } a bug report or an update request, for the admin
   BUY: 'buy', // { t, item } from a shopkeeper you're standing next to (it goes into your hotbar)
   EAT: 'eat', // { t } E with food selected: eat one (heals over a few seconds)
   BANK: 'bank', // { t, action: 'deposit' | 'withdraw', amount } at an ATM or bank teller
@@ -33,7 +34,6 @@ export const ClientMsg = Object.freeze({
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
-  GOVERNOR: 'governor', // { t, building } snitch on that factory to the governor (he sends the inspector, for a fee)
   LAUNDER: 'launder', // { t, amount } put cash through the laundry machine (into the bank; panelka owner only)
   FURNISH: 'furnish', // { t, action: 'place', angle } | 'pickup' | 'open' | 'close' | 'put' / 'take' (id = placed thing, slot) | 'sleep' (in your bed, at night)
   HOME: 'home', // { t, id, action: 'buy' | 'bring' (load your saved one of this type in) | 'sell' | 'rent' | 'leave', room? } homes for sale, rooms to rent
@@ -137,6 +137,12 @@ const validators = {
     return { t: m.t, id: m.id, reason: m.reason, text };
   },
 
+  [ClientMsg.FEEDBACK]: (m) => {
+    if (!['bug', 'request'].includes(m.kind) || typeof m.text !== 'string') return null;
+    const text = m.text.replace(/[\p{C}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+    return text.length >= 3 ? { t: m.t, kind: m.kind, text } : null;
+  },
+
   [ClientMsg.BUY]: (m) => (typeof m.item === 'string' && (Object.hasOwn(config.economy.menu, m.item) || m.item === 'rod') ? { t: m.t, item: m.item } : null),
 
   [ClientMsg.BANK]: (m) =>
@@ -229,7 +235,6 @@ const validators = {
 
   [ClientMsg.LAUNDER]: (m) => (Number.isInteger(m.amount) && m.amount > 0 && m.amount < 1e9 ? { t: m.t, amount: m.amount } : null),
 
-  [ClientMsg.GOVERNOR]: (m) => (Number.isInteger(m.building) ? { t: m.t, building: m.building } : null),
 
   [ClientMsg.GANGSTER]: (m) => (Number.isInteger(m.id) && m.action === 'sell' ? { t: m.t, id: m.id, action: 'sell' } : null),
 
@@ -240,7 +245,11 @@ const validators = {
   [ClientMsg.RADIO]: (m) => (m.action === 'toggle' || m.action === 'next' ? { t: m.t, action: m.action } : null),
 
   [ClientMsg.FURNISH]: (m) => {
-    if (m.action === 'place') return isFiniteNumber(m.angle) ? { t: m.t, action: 'place', angle: m.angle } : null;
+    if (m.action === 'place') {
+      if (!isFiniteNumber(m.angle)) return null;
+      const at = m.at && isFiniteNumber(m.at.x) && isFiniteNumber(m.at.y) && [0, 1, 2, 3].includes(m.at.rot) ? { x: m.at.x, y: m.at.y, rot: m.at.rot } : null;
+      return { t: m.t, action: 'place', angle: m.angle, ...(at && { at }) };
+    }
     if (m.action === 'close') return { t: m.t, action: 'close' };
     if (!['pickup', 'open', 'put', 'take', 'sleep'].includes(m.action) || !Number.isInteger(m.id)) return null;
     if ((m.action === 'put' || m.action === 'take') && !(Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 20)) return null;

@@ -541,6 +541,7 @@ export const config = Object.freeze({
   furnishing: {
     cabinetSlots: 10,
     reach: 50, // from the thing's edge to yours
+    placeReach: 450, // how far from you (centre to centre) you can set one down with the mouse
   },
   // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while a fish bites and
   // fights the line; every `cycleSec` (± a little) it tires for `tiredShare` of the cycle, and that's when
@@ -663,11 +664,9 @@ export const config = Object.freeze({
   // The governor's residence, just outside town. The governor (who takes armor less damage) potters about
   // his house with a pistol; two big guards stand outside the gate; the tax inspector lives there too.
   // Hurt any of them and all of them come for you. Each is replaced respawnSec after being killed.
-  // The inspector drives out to one of your factories (picked at random) when, in one game day, you deposit
-  // more than depositLimit at banks and ATMs, or abandon abandonLimit delivery jobs. Only if it has illegal
+  // The inspector drives out to one of your factories (picked at random) when, in one game day, you
+  // abandon abandonLimit delivery jobs. Only if it has illegal
   // machines or contraband does he fine you `fine` (from your bank) and seize the contraband.
-  // Talk to the governor to snitch on someone else's factory: for snitchFee he sends the inspector there
-  // (the owner is told who reported them). The fee's gone whatever he finds.
   // The laundry shed on a panelka banks your cash without the inspector noticing (only for the panelka's owner).
   governor: {
     governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19 },
@@ -678,9 +677,6 @@ export const config = Object.freeze({
     guardLeash: 700, // guards don't chase further than this from their post
     walkSpeed: 90,
     fine: 3000,
-    snitchFee: 1000,
-    talkReach: 90, // how close you get to talk to the governor
-    depositLimit: 10000,
     abandonLimit: 3,
     car: 'sedan',
     tripSec: 300, // a visit taking longer than this (stuck somewhere): the fine goes by post and he's home

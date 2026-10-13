@@ -172,6 +172,8 @@ function warehouse(size) {
  * can't walk into the fire); the client draws the stones, the flames and the warm glow.
  */
 const fireplace = (x, y, w, h, nx, ny) => ({ x, y, w, h, c: '#7d746a', fireplace: true, nx, ny });
+/** Solid furniture that comes with a building (a desk, sofa, bookshelf…), its front facing (nx, ny). Drawn by the client's drawProp. */
+const prop = (kind, x, y, w, h, nx, ny) => ({ x, y, w, h, c: '#5a3418', prop: kind, nx, ny });
 /** Its chimney on the roof (a little smoke drifts off it). */
 const chimney = (x, y) => ({ x, y, w: 22, h: 22, c: '#6e5a50', chimney: true, small: true });
 /**
@@ -447,8 +449,19 @@ export const BUILDING_TYPES = {
         ...wallLine(false, hx + 210, hy + t, hy + hh - t, 12, door(0.72, 60)),
         ...wallLine(false, hx + 430, hy + t, hy + hh - t, 12, door(0.72, 60)),
         fireplace(hx + 300, hy + t, 40, 20, 0, 1), // in the hall, on the back wall
-        { x: hx + 60, y: hy + 120, w: 100, h: 44, c: '#5a3418' }, // the governor's desk
-        { x: hx + 490, y: hy + 120, w: 100, h: 56, c: '#6b3a1e' }, // the dining table
+        // The west wing, his study: the big desk against the back wall, books, a sofa for visitors.
+        prop('desk', hx + 50, hy + 16, 100, 46, 0, 1),
+        prop('bookshelf', hx + 158, hy + 16, 46, 22, 0, 1),
+        prop('bookshelf', hx + 16, hy + 96, 22, 210, 1, 0),
+        prop('sofa', hx + 66, hy + 308, 104, 36, 0, -1),
+        // The hall: two sofas facing each other by the fire.
+        prop('sofa', hx + 226, hy + 56, 36, 92, 1, 0),
+        prop('sofa', hx + 378, hy + 56, 36, 92, -1, 0),
+        // The east wing, the inspector's office: his desk against the side wall, the files, a sofa.
+        prop('desk', hx + 578, hy + 34, 46, 104, -1, 0),
+        prop('bookshelf', hx + 446, hy + 16, 64, 22, 0, 1),
+        prop('bookshelf', hx + 602, hy + 186, 22, 140, -1, 0),
+        prop('sofa', hx + 470, hy + 308, 100, 36, 0, -1),
         ...columns,
       ].map((wl) => (wl.c ? wl : { ...wl, c: '#e3bf5a' })), // ochre walls
       decor: [
@@ -474,7 +487,7 @@ export const BUILDING_TYPES = {
         { x: 412, y: hy + hh - 6, w: 276, h: 34, c: '#f2eee4', ridge: true, portico: true },
       ],
       spots: {
-        governor: [{ x: hx + 110, y: hy + 220 }, { x: hx + 320, y: hy + 220 }, { x: hx + 540, y: hy + 250 }, { x: hx + 110, y: hy + 90 }],
+        governor: [{ x: hx + 110, y: hy + 220 }, { x: hx + 320, y: hy + 220 }, { x: hx + 530, y: hy + 240 }, { x: hx + 100, y: hy + 92 }], // (the last: at his desk)
         inspector: { x: hx + 540, y: hy + 70 },
         guards: [{ x: gate - 150, y: H + 40, angle: Math.PI / 2 }, { x: gate + 150, y: H + 40, angle: Math.PI / 2 }],
         car: { x: gate + 300, y: H + 60, angle: 0 }, // the inspector's black Lada, parked along the front

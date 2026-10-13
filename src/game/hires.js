@@ -40,7 +40,7 @@ export class Hires {
     this.residence = world.buildings.find((b) => b.type === 'governor' && b.spots) ?? null;
     this.stateTimers = []; // [role, index, seconds] until a killed member of the household is replaced
     this.inspections = []; // visits the inspector has still to make: { account, reason }
-    this.watch = new Map(); // account -> { day, deposited, abandoned, flagged: Set } (what the inspector keeps an eye on)
+    this.watch = new Map(); // account -> { day, abandoned, flagged: Set } (what the inspector keeps an eye on)
     if (this.residence) {
       this.#spawnState('governor', 0);
       this.residence.spots.guards.forEach((_, i) => this.#spawnState('govguard', i));
@@ -253,7 +253,7 @@ export class Hires {
     h.alive = false;
     if (h.side === 'state') {
       this.stateTimers.push([h.role, h.slot ?? 0, config.governor.respawnSec]); // someone new, in a while
-      if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason, warehouse: h.task.spot?.warehouse, by: h.task.by, snitch: h.task.snitch }); // (his successor makes the visit)
+      if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason, warehouse: h.task.spot?.warehouse }); // (his successor makes the visit)
       if (h.vehicle) { h.vehicle.ai = null; }
     }
     if (h.role === 'gangster') {
@@ -920,23 +920,14 @@ export class Hires {
     else h.angle = h.post.angle ?? h.angle;
   }
 
-  // The inspector's rounds. He keeps an eye on everyone's day: more than depositLimit paid into the bank
-  // (laundered cash doesn't count), or abandonLimit delivery jobs dropped, and he comes to check one of
-  // your factories — a fine and the contraband seized if there's anything illegal in it.
+  // The inspector's rounds. He keeps an eye on everyone's day: abandonLimit delivery jobs dropped and he
+  // comes to check one of your factories — a fine and the contraband seized if there's anything illegal in it.
 
   #watchOf(account) {
     const day = this.world.dayNumber ?? 0;
     let w = this.watch.get(account);
-    if (!w || w.day !== day) this.watch.set(account, (w = { day, deposited: 0, abandoned: 0, flagged: new Set() }));
+    if (!w || w.day !== day) this.watch.set(account, (w = { day, abandoned: 0, flagged: new Set() }));
     return w;
-  }
-
-  /** A deposit at a bank or ATM. */
-  noteDeposit(account, amount) {
-    if (!account || !this.residence) return;
-    const w = this.#watchOf(account);
-    w.deposited += amount;
-    if (w.deposited > config.governor.depositLimit) this.#flag(account, w, 'deposits');
   }
 
   /** A delivery job abandoned. */
@@ -976,10 +967,8 @@ export class Hires {
     const wh = this.world.warehouses.all.get(task.spot?.warehouse);
     const acc = task.account;
     const p = this.#playerOf(acc);
-    const snitch = task.snitch ? this.#playerOf(task.snitch) : null;
     if (!wh || wh.owner !== acc || !wh.hasIllegal()) {
       if (p) this.events.push({ player: p, kind: 'inspector_clean', reason: task.reason, post: task.post ?? false });
-      if (snitch) this.events.push({ player: snitch, kind: 'snitch_result', found: false, name: acc.name });
       return;
     }
     const seized = wh.raid();
@@ -993,55 +982,7 @@ export class Hires {
       p.cash -= fromCash;
     }
     this.world.warehouses.changed = true;
-    if (p) this.events.push({ player: p, kind: 'inspector_fined', amount: fromBank + fromCash, reason: task.reason, post: task.post ?? false, seized, by: task.by ?? null });
-    if (snitch) this.events.push({ player: snitch, kind: 'snitch_result', found: true, name: acc.name, seized });
-  }
-
-  /** The governor, if he's in reach of p (and not at war with them). */
-  #governorFor(p) {
-    const h = this.list.find((x) => x.role === 'governor');
-    if (!h || p.vehicle || Math.hypot(h.x - p.x, h.y - p.y) > config.governor.talkReach + p.radius + h.radius) return null;
-    return h;
-  }
-
-  /** Talking to the governor: everyone else's factories, to snitch on. */
-  describeGovernor(p) {
-    const h = this.#governorFor(p);
-    if (!h) return null;
-    const pending = new Set(this.#pendingWarehouses());
-    const targets = [...this.world.warehouses.all.values()]
-      .filter((w) => w.owner && w.owner !== p.account)
-      .map((w) => [w.id, w.owner.name, pending.has(w.id) ? 1 : 0]);
-    return { kind: 'governor', id: this.residence.id, fee: config.governor.snitchFee, fine: config.governor.fine, hostile: this.#isFoe(h, p), targets };
-  }
-
-  /** Factories the inspector is already going to (or on his way to). */
-  #pendingWarehouses() {
-    const out = this.inspections.map((t) => t.warehouse).filter(Boolean);
-    const busy = this.list.find((x) => x.role === 'inspector')?.task;
-    if (busy?.spot?.warehouse && !busy.fined) out.push(busy.spot.warehouse);
-    return out;
-  }
-
-  /** Snitch on someone else's factory: for the fee, the governor sends the inspector round. */
-  snitch(p, warehouseId) {
-    if (!p.account) return 'no_account';
-    const h = this.#governorFor(p);
-    if (!h) return 'too_far';
-    if (this.#isFoe(h, p)) return 'governor_hostile';
-    const wh = this.world.warehouses.all.get(warehouseId);
-    if (!wh?.owner) return 'snitch_nobody';
-    if (wh.owner === p.account) return 'snitch_self';
-    if (this.#pendingWarehouses().includes(wh.id)) return 'snitch_already';
-    const fee = config.governor.snitchFee;
-    if (p.cash + Math.max(0, p.account.bank) < fee) return 'not_enough_cash';
-    const fromCash = Math.min(fee, p.cash);
-    p.cash -= fromCash;
-    if (fromCash < fee) { p.account.bank -= fee - fromCash; this.world.onBankChange?.(p.account); }
-    this.inspections.push({ account: wh.owner, reason: 'snitch', warehouse: wh.id, by: p.name, snitch: p.account });
-    const target = this.#playerOf(wh.owner);
-    if (target) this.events.push({ player: target, kind: 'inspector_coming', reason: 'snitch', by: p.name, fine: config.governor.fine });
-    return { name: wh.owner.name, fee };
+    if (p) this.events.push({ player: p, kind: 'inspector_fined', amount: fromBank + fromCash, reason: task.reason, post: task.post ?? false, seized });
   }
 
   #inspector(h, dt) {

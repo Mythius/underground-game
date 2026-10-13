@@ -578,7 +578,6 @@ export class World {
       if (!usable && !near(this.tellers, bankReach)) return 'robbed_atm';
       p.cash -= amount;
       p.account.bank += amount;
-      this.hires.noteDeposit(p.account, amount); // (the tax inspector notices big days)
     } else {
       if (amount > p.account.bank) return 'not_enough_bank';
       p.account.bank -= amount;

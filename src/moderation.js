@@ -49,7 +49,8 @@ export function rudeName(name) {
 
 // ---- reports -------------------------------------------------------------------------------------
 
-/** Players' reports about other players, newest last (data/reports.json, the last 500). */
+/** Players' reports about other players, newest last (data/reports.json, the last 500). Also used for
+ *  bug reports and update requests (data/feedback.json), which the admin can tick off (remove). */
 export class ReportLog {
   constructor(file = new URL('../data/reports.json', import.meta.url)) {
     this.file = file;
@@ -62,8 +63,37 @@ export class ReportLog {
   }
 
   add(report) {
-    this.reports.push({ ...report, at: Date.now() });
+    this.reports.push({ ...report, id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, at: Date.now() });
     if (this.reports.length > 500) this.reports.splice(0, this.reports.length - 500);
+    this.#save();
+  }
+
+  /** Take one out (by id). False if there's no such entry. */
+  remove(id) {
+    const i = this.reports.findIndex((r) => r.id === id);
+    if (i < 0) return false;
+    this.reports.splice(i, 1);
+    this.#save();
+    return true;
+  }
+
+  /** Reported players, most reported first: { name, accountId, count, last, reasons: { reason: n }, reports (newest first) }. */
+  byPlayer() {
+    const out = new Map();
+    for (const r of this.reports) {
+      const key = r.about.accountId ? `a${r.about.accountId}` : `n${r.about.name.toLowerCase()}`;
+      let p = out.get(key);
+      if (!p) out.set(key, (p = { name: r.about.name, accountId: r.about.accountId, count: 0, last: 0, reasons: {}, reports: [] }));
+      p.name = r.about.name; // (the latest name they went by)
+      p.count++;
+      p.last = Math.max(p.last, r.at);
+      p.reasons[r.reason] = (p.reasons[r.reason] ?? 0) + 1;
+      p.reports.unshift({ at: r.at, by: r.by.name, reason: r.reason, text: r.text, chat: r.chat ?? [] });
+    }
+    return [...out.values()].sort((a, b) => b.count - a.count || b.last - a.last);
+  }
+
+  #save() {
     const tmp = `${this.file.pathname ?? this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(this.reports, null, 1));
     renameSync(tmp, this.file);

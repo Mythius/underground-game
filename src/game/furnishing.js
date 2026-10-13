@@ -109,8 +109,16 @@ export class Furnishings {
     return { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w, h, rot };
   }
 
-  /** E with a cabinet, bed or sofa selected, inside your own place: set it down in front of you. */
-  place(p, angle) {
+  /** The rect a `kind` takes centred on (x, y), turned `rot` quarter-turns (0 east … 3 north, as #spotFor). */
+  #spotAt(kind, x, y, rot) {
+    const def = PLACEABLE[kind];
+    const [w, h] = rot % 2 ? [def.w, def.h] : [def.h, def.w];
+    return { x: Math.round(x - w / 2), y: Math.round(y - h / 2), w, h, rot };
+  }
+
+  /** A cabinet, bed or sofa selected, inside your own place: set it down where you clicked (`at`: { x, y, rot }),
+   *  or (no `at`: E, or on a phone) in front of you, facing `angle`. */
+  place(p, angle, at = null) {
     const slot = p.inventory[p.selected];
     const kind = slot?.good;
     if (!PLACEABLE[kind]) return 'nothing_to_place';
@@ -119,7 +127,8 @@ export class Furnishings {
     if (!b) return 'not_your_place';
     const count = [...this.items.values()].filter((it) => it.building === b.id && it.kind === kind).length;
     if (count >= PLACEABLE[kind].max) return 'too_many_here';
-    const spot = this.#spotFor(p, kind, Number.isFinite(angle) ? angle : 0);
+    if (at && Math.hypot(at.x - p.x, at.y - p.y) > config.furnishing.placeReach) return 'too_far';
+    const spot = at ? this.#spotAt(kind, at.x, at.y, at.rot) : this.#spotFor(p, kind, Number.isFinite(angle) ? angle : 0);
     if (!this.fits(b, spot)) return 'no_space';
     hotbarOf(p).add(kind, -1);
     this.#add(b, kind, spot, p.account);

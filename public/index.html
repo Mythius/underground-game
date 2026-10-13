@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Underground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap">
   <style>
     :root { color-scheme: dark; }
     body {
@@ -12,6 +15,12 @@
     }
     h1 { font-size: 3rem; margin: 0 0 .5rem; letter-spacing: .05em; }
     p { color: #999; margin: .25rem 0; }
+    /* The menu's title: "UNDERGROUND" spelt in Cyrillic look-alikes (Ц И Д Е Я Б Я О Ц И Д), Soviet-poster red. */
+    h1.logo {
+      font-family: 'Russo One', Impact, system-ui, sans-serif; font-weight: 400; font-size: clamp(2.2rem, 9vw, 3.6rem);
+      letter-spacing: .08em; color: #d7261e; transform: skewX(-6deg); margin-bottom: .7rem;
+      text-shadow: 0 2px 0 #7a0e0a, 0 4px 0 #3d0705, 0 0 18px rgba(215, 38, 30, .45);
+    }
     .dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: #666; margin-right: .4em; }
     .dot.ok { background: #3cb44b; }
     .dot.bad { background: #e6194b; }
@@ -62,6 +71,32 @@
     #report .row { display: flex; gap: .5rem; justify-content: flex-end; }
     #report button { cursor: pointer; }
     #report button[type="submit"] { background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 700; }
+    #report.feedback h3 { color: #f4c430; }
+    #report.feedback button[type="submit"] { background: #f4c430; border-color: #f4c430; color: #111; }
+    #feedback-open { width: 100%; margin-top: .35rem; font: inherit; padding: .35rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
+    #feedback-open:hover { border-color: #f4c430; }
+    #open-reports { margin-top: 1rem; margin-left: .4rem; font: inherit; font-size: .85rem; padding: .45rem .9rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
+    #open-reports:hover { border-color: #f4c430; }
+    #reportsview { position: fixed; inset: 0; z-index: 20; overflow-y: auto; background: rgba(14, 16, 20, .97); color: #ddd; padding: 1.2rem; font-size: .88rem; text-align: left; }
+    #reportsview .inner { max-width: 900px; margin: 0 auto; }
+    #reportsview h1 { margin: 0 0 .3rem; font-size: 1.4rem; }
+    #reportsview .top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+    #reportsview .sub { color: #999; margin-bottom: 1rem; }
+    #reportsview h2 { font-size: 1rem; margin: 1.4rem 0 .4rem; color: #f4c430; }
+    #reportsview button { font: inherit; font-size: .8rem; padding: .3rem .6rem; border-radius: .35rem; border: 1px solid #444; background: #262a31; color: #eee; cursor: pointer; }
+    #reportsview button:hover { border-color: #f4c430; }
+    #reportsview .tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .6rem; }
+    #reportsview .tabs button.on { border-color: #f4c430; color: #f4c430; }
+    #reportsview .card { background: #1d2026; border-radius: .5rem; padding: .55rem .75rem; margin-bottom: .35rem; }
+    #reportsview .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+    #reportsview .count { font-weight: 700; color: #e74c3c; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #reportsview .meta { color: #888; font-size: .78rem; }
+    #reportsview .text { margin-top: .3rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #reportsview details { margin-top: .35rem; }
+    #reportsview summary { cursor: pointer; color: #aaa; font-size: .8rem; }
+    #reportsview .one { border-left: 2px solid #3a3e46; padding: .25rem 0 .25rem .6rem; margin-top: .35rem; }
+    #reportsview .said { color: #999; font-style: italic; }
+    #reportsview .empty { color: #777; padding: .4rem 0; }
     #settings h3 { margin: 0 0 .6rem; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #f4c430; }
     #settings label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .3rem 0; cursor: pointer; }
     #settings input[type="range"] { width: 7rem; accent-color: #f4c430; }
@@ -121,6 +156,7 @@
     #clock {
       position: fixed; top: calc(1rem + 214px); left: 1rem; z-index: 2; width: 194px; text-align: center;
       font-size: .8rem; font-weight: 600; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none;
+      white-space: pre-line; line-height: 1.35;
     }
     #coins {
       position: fixed; left: 50%; bottom: 6.5rem; transform: translateX(-50%); z-index: 2;
@@ -315,6 +351,7 @@
     #sounds button, #sounds label.file, #dialogue button, #dialogue label.file { font: inherit; font-size: .8rem; padding: .3rem .6rem; border-radius: .35rem; border: 1px solid #444; background: #262a31; color: #eee; cursor: pointer; }
     #sounds button:hover, #sounds label.file:hover, #dialogue button:hover, #dialogue label.file:hover { border-color: #f4c430; }
     #sounds label.file input, #dialogue label.file input { display: none; }
+    #sounds label.file.busy { border-color: #f4c430; color: #f4c430; cursor: default; min-width: 6.5em; text-align: center; }
     #sounds input[type=range], #dialogue input[type=range] { width: 90px; }
     #sounds .vol, #dialogue .vol { font-size: .75rem; color: #aaa; width: 3rem; text-align: right; }
     @media (max-width: 640px) { #sounds .row { grid-template-columns: 1fr; } #sounds .ctrls { justify-content: flex-start; } }
@@ -361,10 +398,16 @@
     #stamina i { display: block; height: 100%; width: 100%; background: #f4c430; border-radius: 3px; }
     #stamina.exhausted i { background: #e6194b; }
     #stamina.full { opacity: .35; }
+    /* The controls, one per line, down the left under the map and clock (a second column if the screen's short: clear of the chat). */
     #hint {
-      position: fixed; left: 0; right: 0; bottom: 9.3rem; color: #ddd; font-size: .85rem; pointer-events: none;
+      position: fixed; left: 1rem; top: calc(1rem + 256px); z-index: 1; margin: 0; pointer-events: none;
+      display: flex; flex-direction: column; flex-wrap: wrap; align-content: flex-start; column-gap: 1.2rem;
+      max-height: calc(100vh - 256px - 1rem - 30vh - 5rem);
+      color: #ddd; font-size: .75rem; line-height: 1.35; text-align: left; white-space: nowrap;
       text-shadow: 0 1px 3px #000, 0 0 6px #000;
     }
+    #hint[hidden] { display: none; }
+    #hint b { color: #f4c430; font-weight: 700; }
     #hotbar {
       position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: 2;
       display: flex; gap: .4rem; padding: .4rem; border-radius: .6rem; background: rgba(0, 0, 0, .5);
@@ -464,7 +507,7 @@
 <body>
   <canvas id="game"></canvas>
   <main id="menu">
-    <h1>Underground</h1>
+    <h1 class="logo" aria-label="Underground">ЦИДЕЯБЯОЦИД</h1>
     <p id="subtitle">Coming soon.</p>
     <p><span id="dot" class="dot"></span><span id="status">Checking server…</span></p>
     <div id="account-box">🏦 Bank: <b id="acct-bank">…</b> <span class="note" id="acct-who">· saved in this browser</span> <span id="acct-actions"></span></div>
@@ -487,7 +530,7 @@
     <button type="button" id="open-admin">🔐 Admin</button>
     <div class="editor-buttons" id="admin-panel" hidden>
       <button type="button" id="open-editor">🛠 Map editor</button>
-      <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button>
+      <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button><button type="button" id="open-reports">📋 Reports</button>
     </div>
     <small id="credits">🎵 Music by Steve Oxen</small>
   </main>
@@ -495,13 +538,35 @@
     <div id="chat-log" aria-live="polite"></div>
     <input id="chat-input" maxlength="120" autocomplete="off" placeholder="Press Enter to chat">
   </div>
-  <p id="hint" hidden>WASD move · Shift sprint (in a car: drift) · click shoot · R reload · E use · Q drop · click to work (with a site's tool) · hold F rob / tap F pickpocket · E loot body, F carry/dump · E hide in dumpster · hold X drop 500 ₽ · T team · B buy / rent property · G bribe · C car lights · H siren (Militsiya car) · V radio / N next song · J jobs · Space boost (vodka in the car) · M map</p>
+  <div id="hint" hidden>
+    <span><b>WASD</b> move</span>
+    <span><b>Shift</b> sprint (in a car: drift)</span>
+    <span><b>click</b> shoot</span>
+    <span><b>R</b> reload</span>
+    <span><b>E</b> use</span>
+    <span><b>Q</b> drop</span>
+    <span><b>click</b> to work (with a site's tool)</span>
+    <span><b>hold F</b> rob / tap F pickpocket</span>
+    <span><b>E</b> loot body, F carry/dump</span>
+    <span><b>E</b> hide in dumpster</span>
+    <span><b>hold X</b> drop 500 ₽</span>
+    <span><b>click</b> place furniture (<b>R</b> turn it)</span>
+    <span><b>T</b> team</span>
+    <span><b>B</b> buy / rent property</span>
+    <span><b>G</b> bribe</span>
+    <span><b>C</b> car lights</span>
+    <span><b>H</b> siren (Militsiya car)</span>
+    <span><b>V</b> radio / N next song</span>
+    <span><b>J</b> jobs</span>
+    <span><b>Space</b> boost (vodka in the car)</span>
+    <span><b>M</b> map</span>
+  </div>
   <div id="top-right">
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
     <button id="touch-menu-btn" type="button" title="Menu">☰</button>
     <button id="settings-btn" type="button" title="Settings" aria-expanded="false" aria-controls="settings">⚙️</button>
-    <aside id="leaderboard" hidden><h2>Richest · bank</h2><ol id="leaderboard-list"></ol></aside>
+    <aside id="leaderboard" hidden><h2>Richest</h2><ol id="leaderboard-list"></ol></aside>
     <div id="settings" hidden>
       <h3>Settings</h3>
       <label>Volume <input type="range" id="set-volume" min="0" max="100" step="5"></label>
@@ -511,12 +576,17 @@
       <label>Show minimap <input type="checkbox" id="set-minimap"></label>
       <label>Rain effects <input type="checkbox" id="set-rain"></label>
       <button type="button" id="report-open">🚩 Report a player</button>
+      <button type="button" id="feedback-open">🐞 Bug report / update request</button>
     </div>
   </div>
   <form id="report" hidden>
-    <h3>🚩 Report a player</h3>
-    <label>Who <select id="report-who" required></select></label>
-    <label>Why <select id="report-why">
+    <h3 id="report-title">🚩 Report a player</h3>
+    <label id="feedback-kind-row" hidden>What is it <select id="feedback-kind">
+      <option value="bug">🐞 A bug — something's broken</option>
+      <option value="request">💡 An update request — an idea or change</option>
+    </select></label>
+    <label id="report-who-row">Who <select id="report-who" required></select></label>
+    <label id="report-why-row">Why <select id="report-why">
       <option value="abuse">Abusive or hateful chat</option>
       <option value="cheating">Cheating or hacking</option>
       <option value="name">Rude name</option>
@@ -582,6 +652,7 @@
   <div id="toast"></div>
   <div id="sounds" hidden role="dialog" aria-label="Sound editor"></div>
   <div id="dialogue" hidden role="dialog" aria-label="Dialogue editor"></div>
+  <div id="reportsview" hidden role="dialog" aria-label="Reports"></div>
   <div id="editor" hidden>
     <div class="ed-top">
       <b>🛠 Map editor</b>
@@ -646,7 +717,7 @@
       const cur = list[(Math.max(0, list.indexOf(env.season ?? 'winter')) + Math.floor(sec / length)) % list.length];
       const next = list[(list.indexOf(cur) + 1) % list.length];
       const blend = Math.max(0, ((sec % length) - (length - blendSec)) / blendSec);
-      return { cur, next, blend, main: blend < 0.5 ? cur : next };
+      return { cur, next, blend, main: blend < 0.5 ? cur : next, left: length - (sec % length) }; // left: seconds until `next` takes over
     }
     let season = seasonNow();
     /** How much of `name` there is right now, 0..1. */
@@ -1000,10 +1071,9 @@
           if (msg.kind === 'hire_busted') toast(`🚔 The Militsiya arrested your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}`);
           if (msg.kind === 'hire_quit') toast(`👋 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} walked off — no pay, no work`);
           if (msg.kind === 'traced') { sfx('alarm'); toast(`🚨 A witness tied your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}'s crime to you — the Militsiya want you too`); }
-          if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(msg.reason === 'snitch' ? `🧾 ${msg.by} has reported your factory to the governor — the tax inspector is on his way to check it (${money(msg.fine)} fine if he finds anything illegal)` : `🧾 The tax inspector has noticed ${msg.reason === 'jobs' ? 'all those delivery jobs you dropped today' : 'how much you\'ve paid into the bank today'} — he\'s on his way to check one of your factories (${money(msg.fine)} fine if he finds anything illegal)`, 6000); }
-          if (msg.kind === 'inspector_fined') { const what = seizedList(msg.seized); sfx('busted'); toast(`🧾 ${msg.post ? 'A letter from the tax inspector' : 'The tax inspector'}: illegal production — fined ${money(msg.amount)}${what ? `, seized ${what}` : ''}${msg.by ? ` (reported by ${msg.by})` : ''}`, 6000); }
+          if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(`🧾 The tax inspector has noticed all those delivery jobs you dropped today — he\'s on his way to check one of your factories (${money(msg.fine)} fine if he finds anything illegal)`, 6000); }
+          if (msg.kind === 'inspector_fined') { const what = seizedList(msg.seized); sfx('busted'); toast(`🧾 ${msg.post ? 'A letter from the tax inspector' : 'The tax inspector'}: illegal production — fined ${money(msg.amount)}${what ? `, seized ${what}` : ''}`, 6000); }
           if (msg.kind === 'inspector_clean') toast(`🧾 ${msg.post ? 'The tax inspector went through your books' : 'The tax inspector went through your factory'} and found nothing illegal — no fine`, 5000);
-          if (msg.kind === 'snitch_result') { if (msg.found) sfx('coin'); toast(msg.found ? `🧾 The inspector caught ${msg.name} red-handed${seizedList(msg.seized) ? ` — seized ${seizedList(msg.seized)}` : ''}` : `🧾 The inspector found nothing illegal at ${msg.name}'s factory`, 5000); }
           if (msg.kind === 'contract_on_you') { sfx('alarm'); toast('🎯 Word on the street: someone has put a contract on you. Watch your back.'); }
           if (msg.kind === 'contract_over') toast('😮‍💨 The contract on you is off');
           if (msg.kind === 'contract_done') toast(`🎯 The job is done — ${msg.name} is dead`);
@@ -1081,7 +1151,6 @@
         case 'done':
           sfx(msg.what === 'buy' || msg.what === 'refuel' ? 'coin' : msg.what === 'pour' ? 'pour' : msg.what === 'hire_vodka' ? 'coin' : msg.what?.startsWith('hire_') && msg.what !== 'hire_dismiss' ? 'hire' : 'pickup');
           if (msg.what === 'refuel') toast('⛽ Tank filled');
-          if (msg.what === 'snitched') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } toast(`🏛️ "Leave it with me." The inspector is on his way to ${msg.name}'s factory (−${money(msg.fee)})`, 5000); }
           if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
@@ -1736,7 +1805,7 @@
     // ---- economy: markets, factories, cargo, fuel ------------------------------------
 
     const econ = {
-      goods: {}, factories: {}, rules: { storage: 60, reach: 130, marketReach: 130, pumpReach: 220, governorReach: 90, snitchFee: 1000 },
+      goods: {}, factories: {}, rules: { storage: 60, reach: 130, marketReach: 130, pumpReach: 220 },
       owners: new Map(), // factory building id -> owner name (null = for sale)
       places: [], // markets and factories: { id, type, role, x, y, angle }
       open: null, // the panel that's open: { id, role, type, data }
@@ -1783,10 +1852,6 @@
       already_cop: 'You\'re already in the Militsiya',
       not_cop: 'You\'re not in the Militsiya',
       nothing_to_launder: '🧺 Put some cash in first',
-      governor_hostile: '🏛️ The governor won\'t talk to you after what you did',
-      snitch_nobody: '🏛️ Nobody owns that factory',
-      snitch_self: '🏛️ "Your own factory? Very public-spirited of you."',
-      snitch_already: '🏛️ "My inspector\'s already looking into that one."',
       not_laundry_owner: '🧺 The machine belongs to whoever owns this panelka — buy the block to use it',
       no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
       gangster_hostile: '🕴️ He isn\'t in a talking mood',
@@ -1992,8 +2057,6 @@
         barSection(d, h, sub);
       } else if (d.kind === 'laundry') {
         laundrySection(d, h, sub);
-      } else if (d.kind === 'governor') {
-        governorSection(d, h, sub);
       } else if (d.kind === 'prison') {
         prisonSection(d, h, sub);
       } else if (d.kind === 'police') {
@@ -2110,44 +2173,16 @@
 
     const seizedList = (seized) => Object.entries(seized ?? {}).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ');
 
-    // ---- the governor: snitch on a factory --------------------------------------------------
-
-    const residence = () => buildings.find((b) => b.type === 'governor') ?? null;
-    /** Am I still close enough to the governor to talk? */
-    function governorNear() {
-      if (!me) return false;
-      const h = [...(snapshots.at(-1)?.crew?.values() ?? [])].find((x) => x.role === 4);
-      return !!h && Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 19 < econ.rules.governorReach + 40;
-    }
-
-    let snitchTargets = null; // picking a factory on the full map to report: Map(building id -> [id, owner, pending])
-
-    function governorSection(d, h, sub) {
-      h.textContent = '🏛️ The governor';
-      if (d.hostile) { sub.textContent = '"Guards!" — he won\'t talk to you after what you did.'; placeEl.append(h, sub); return; }
-      sub.textContent = `"Someone running a still, a printing press? Tell me where. For ${money(d.fee)} I'll send my inspector round — if he finds anything illegal, they're fined ${money(d.fine)} and it's all seized." (Your fee's gone either way, and they'll be told it was you.)`;
-      const n = d.targets.length;
-      const pick = button(n ? `🗺️ Pick a factory on the map (${n})` : 'Nobody else owns a factory yet', () => openSnitchMap(d.targets), { cls: 'big go', disabled: !n || coins + bankBalance < d.fee });
-      placeEl.append(h, sub, pick);
-    }
-
-    function openSnitchMap(targets) {
-      snitchTargets = new Map(targets.map((t) => [t[0], t]));
-      closePlace();
-      minimap.classList.add('expanded');
-      toast('🗺️ Tap a 🎯 factory to report it — anywhere else to cancel', 4000);
-    }
-
     // ---- the laundry shed: cash into the bank, quietly ------------------------------------
 
     function laundrySection(d, h, sub) {
       h.textContent = '🧺 Прачечная';
       if (!d.owner) {
-        sub.textContent = `An old note-counting machine wired to somebody's bank account. It belongs to whoever owns this panelka — buy the block and it banks your cash without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
+        sub.textContent = `An old note-counting machine wired to somebody's bank account. It belongs to whoever owns this panelka — buy the block and it banks your cash without the tax inspector seeing a thing.`;
         placeEl.append(h, sub);
         return;
       }
-      sub.textContent = `Your note-counting machine, wired to your bank account. Feed it cash and it lands in your bank without the tax inspector seeing a thing. (Over ${money(d.limit)} a day through the bank or ATMs, he comes to fine you.)`;
+      sub.textContent = `Your note-counting machine, wired to your bank account. Feed it cash and it lands in your bank without the tax inspector seeing a thing.`;
       const row = document.createElement('div');
       row.className = 'cargo';
       const input = document.createElement('input');
@@ -3083,13 +3118,24 @@
           const n = wh.cfg.machines[wh.tool] ? 2 : 1;
           let free = tx >= 0 && ty >= 0 && tx + n <= l.cols && ty + n <= l.rows;
           for (let a = 0; a < n && free; a++) for (let c = 0; c < n && free; c++) if (pieceAt(l, tx + a, ty + c)) free = false;
-          ctx.fillStyle = free ? 'rgba(90, 209, 90, .35)' : 'rgba(230, 25, 75, .35)';
-          ctx.fillRect(ox + tx * T, oy + ty * T, n * T, n * T);
+          // A see-through one of the real thing, the way it'll face (tinted red where it won't go).
           const [dx, dy] = DIRV[wh.dir];
-          const gx = ox + (tx + n / 2) * T, gy = oy + (ty + n / 2) * T;
-          ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(gx - dx * 12, gy - dy * 12); ctx.lineTo(gx + dx * 12, gy + dy * 12); ctx.stroke();
-          ctx.beginPath(); ctx.arc(gx + dx * 12, gy + dy * 12, 4, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+          const x = ox + tx * T, y = oy + ty * T, gx = x + (n * T) / 2, gy = y + (n * T) / 2;
+          const ghost = { id: -1, kind: wh.tool, x: tx, y: ty, w: n, h: n, dir: wh.dir, recipe: null };
+          ctx.save();
+          ctx.globalAlpha = 0.5;
+          if (n === 2) drawMachine(ghost, x, y, gx, gy, dx, dy, null, 0, now);
+          else if (wh.tool === 'container') drawContainer(x, y, null);
+          else drawBelt(ghost, tiles, gx, gy, dx, dy, now);
+          ctx.restore();
+          if (!free) { ctx.fillStyle = 'rgba(230, 25, 75, .4)'; ctx.fillRect(x, y, n * T, n * T); }
+          ctx.strokeStyle = free ? 'rgba(255, 255, 255, .7)' : 'rgba(230, 25, 75, .9)'; ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]); ctx.strokeRect(x + 1, y + 1, n * T - 2, n * T - 2); ctx.setLineDash([]);
+          if (n === 2) { // which way the output faces
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(gx + dx * 26, gy + dy * 26); ctx.lineTo(gx + dx * 36, gy + dy * 36); ctx.stroke();
+            ctx.beginPath(); ctx.arc(gx + dx * 36, gy + dy * 36, 4, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+          }
         }
       }
     }
@@ -3461,9 +3507,25 @@
       const mine = (myHome && myHome[0] === b.id) || (prop && !prop[2] && prop[1] === wh.account) || (econ.owners.get(b.id) ?? wh.layouts.get(b.id)?.owner) === wh.account;
       return mine ? { kind: w[1], b } : null;
     }
-    /** Where it would go (same rule as the server): in front of me, the long side across the way I face. */
+    /** Roughly the server's check (it has the final say): in reach, inside the walls, clear of furniture and doorways. */
+    function furnSpotLooksFree(b, r) {
+      const hit = (a, o, pad) => a.x < o.x + o.w + pad && a.x + a.w > o.x - pad && a.y < o.y + o.h + pad && a.y + a.h > o.y - pad;
+      if (spotTooFar(r)) return false;
+      if (r.x < b.x + 6 || r.y < b.y + 6 || r.x + r.w > b.x + b.w - 6 || r.y + r.h > b.y + b.h - 6) return false;
+      if (b.walls?.some((w) => hit(r, w, 2)) || b.doors?.some((d) => hit(r, d, 34))) return false;
+      return !furn.list.some(([, , x, y, w, h]) => hit(r, { x, y, w, h }, 2));
+    }
+    const spotTooFar = (r) => me && Math.hypot(r.x + r.w / 2 - me.x, r.y + r.h / 2 - me.y) > (furn.placeReach ?? 450);
+    let furnRot = 0; // which way furniture I'm about to put down with the mouse faces (R turns it)
+    const mouseWorld = () => ({ x: camera.x + (mouse.x - innerWidth / 2) / viewZ, y: camera.y + (mouse.y - innerHeight / 2) / viewZ });
+    /** Where it would go: under the mouse, turned furnRot (on a phone: in front of me, the long side across the way I face). */
     function placeSpot(kind) {
       const def = furn.kinds[kind];
+      if (!touchMode) {
+        const m = mouseWorld(), rot = furnRot;
+        const [w, h] = rot % 2 ? [def.w, def.h] : [def.h, def.w];
+        return { x: Math.round(m.x - w / 2), y: Math.round(m.y - h / 2), w, h, rot, at: { x: Math.round(m.x), y: Math.round(m.y), rot } };
+      }
       const rot = ((Math.round(aimAngle() / (Math.PI / 2)) % 4) + 4) % 4;
       const [w, h] = rot % 2 ? [def.w, def.h] : [def.h, def.w];
       const along = (rot % 2 ? h : w) / 2 + radiusOf(me.mass) + 8;
@@ -3955,22 +4017,6 @@
     const mapImage = document.createElement('canvas'); // the static map, drawn once per room
     const MAP_PX = 1000;
     minimap.onclick = (e) => {
-      if (snitchTargets) { // reporting a factory to the governor: the 🎯 tapped, or cancel
-        const r = minimap.getBoundingClientRect();
-        const mx = (e.clientX - r.left) * (minimap.width / r.width), my = (e.clientY - r.top) * (minimap.height / r.height);
-        let best = null, bestDist = 18 * devicePixelRatio;
-        for (const [x, y, b] of mapIconsDrawn) {
-          const dd = Math.hypot(x - mx, y - my);
-          if (snitchTargets.has(b.id) && dd < bestDist) [best, bestDist] = [b, dd];
-        }
-        const t = best && snitchTargets.get(best.id);
-        snitchTargets = null;
-        minimap.classList.remove('expanded');
-        if (!t) return toast('🏛️ Never mind');
-        if (t[2]) return toast(ECON_ERRORS.snitch_already);
-        if (confirm(`Report ${t[1]}'s factory to the governor for ${money(econ.rules.snitchFee)}?`)) send({ t: 'governor', building: t[0] });
-        return;
-      }
       minimap.classList.toggle('expanded');
     };
     // Hovering an icon names it.
@@ -4074,7 +4120,6 @@
       if (b.id === myHome?.[0]) return '🏠 Your home — garage on the car pad outside';
       const icon = mapIcon(b);
       if (icon === '📦') return '📦 Your warehouse';
-      if (icon === '🎯') { const t = snitchTargets.get(b.id); return `🎯 ${t[1]}'s factory${t[2] ? ' (already being inspected)' : ' — tap to report it'}`; }
       const name = MAP_NAMES[b.type] ?? RAW_NAMES[b.type]?.replace(/^\S+\s/, '') ?? econ.factories[b.type]?.name ?? b.type;
       return `${icon} ${name}`;
     }
@@ -4082,7 +4127,6 @@
 
     function mapIcon(b) {
       if (b.id === myHome?.[0]) return null; // drawn bigger, last
-      if (snitchTargets?.has(b.id)) return '🎯';
       if (MAP_ICONS[b.type]) return MAP_ICONS[b.type];
       if (econ.factories[b.type]) return '🏭';
       const l = wh.layouts.get(b.id); // my warehouses
@@ -4616,7 +4660,12 @@
       const ease = 1 - Math.exp(-dt * 0.8);
       sky.rain += (env.rain - sky.rain) * ease;
       sky.fog += (env.fog - sky.fog) * ease;
-      clockEl.textContent = `${light > 0.5 ? '☀️' : '🌙'} ${clockLabel(clock)} · ${SEASON_LABELS[season.main]}${sky.rain > 0.2 ? (season.main === 'winter' ? ' · 🌨 Snowing' : ' · 🌧 Rain') : ''}${sky.fog > 0.2 ? ' · 🌫 Fog' : ''}${rail ? ` · 🚂 ${rail.state === 'docked' ? 'train in' : rail.state === 'leaving' ? 'train leaving' : `train in ${Math.floor(Math.max(0, rail.nextIn - (now - rail.at) / 1000) / 60)}:${String(Math.floor(Math.max(0, rail.nextIn - (now - rail.at) / 1000) % 60)).padStart(2, '0')}`}` : ''}`;
+      // The time, then real-time countdowns: to dusk (or dawn), and to the next season.
+      const mmss = (sec) => `${Math.floor(Math.max(0, sec) / 60)}:${String(Math.floor(Math.max(0, sec) % 60)).padStart(2, '0')}`;
+      const isDay = clock < env.daySec;
+      const toTurn = isDay ? env.daySec - clock : env.daySec + env.nightSec - clock;
+      const nextSeason = season.blend > 0 ? null : season.next; // (mid-change: it's already arriving)
+      clockEl.textContent = `${light > 0.5 ? '☀️' : '🌙'} ${clockLabel(clock)} · ${isDay ? 'night' : 'day'} in ${mmss(toTurn)}${sky.rain > 0.2 ? (season.main === 'winter' ? ' · 🌨' : ' · 🌧') : ''}${sky.fog > 0.2 ? ' · 🌫' : ''}\n${SEASON_LABELS[season.main]} · ${nextSeason ? `${SEASON_LABELS[nextSeason].split(' ')[1].toLowerCase()} in ${mmss(season.left)}` : `${SEASON_LABELS[season.next].split(' ')[1].toLowerCase()} arriving`}`;
 
       if (skyCanvas.width !== canvas.width || skyCanvas.height !== canvas.height) {
         skyCanvas.width = canvas.width;
@@ -4817,23 +4866,47 @@
     };
 
     // Report a player to the admin (from the settings panel): who, why, and what happened.
+    // The same form also sends a bug report or an update request (🐞, under it).
     const reportEl = document.getElementById('report');
     const closeReport = () => { reportEl.hidden = true; };
+    function openReportForm(feedbackMode) {
+      const $ = (id) => document.getElementById(id);
+      reportEl.classList.toggle('feedback', feedbackMode);
+      $('report-title').textContent = feedbackMode ? '🐞 Bug report / update request' : '🚩 Report a player';
+      $('feedback-kind-row').hidden = !feedbackMode;
+      $('report-who-row').hidden = feedbackMode;
+      $('report-why-row').hidden = feedbackMode;
+      $('report-who').required = !feedbackMode;
+      $('report-text').required = feedbackMode;
+      $('report-text').maxLength = feedbackMode ? 1000 : 300;
+      $('report-text').placeholder = feedbackMode ? 'What happened, or what would you like changed or added?' : 'What happened? (optional)';
+      reportEl.querySelector('button[type="submit"]').textContent = feedbackMode ? 'Send' : 'Send report';
+      $('report-text').value = '';
+      settingsPanel.hidden = true;
+      settingsBtn.setAttribute('aria-expanded', 'false');
+      keys.clear();
+      reportEl.hidden = false;
+      if (feedbackMode) $('report-text').focus();
+    }
     document.getElementById('report-open').onclick = () => {
       if (!playing) return toast('Join the game to report someone');
       const others = [...info.values()].filter((p) => p.id !== myId).sort((a, b) => a.name.localeCompare(b.name));
       if (!others.length) return toast('Nobody else is playing right now');
       document.getElementById('report-who').replaceChildren(...others.map((p) => Object.assign(document.createElement('option'), { value: p.id, textContent: p.name })));
-      document.getElementById('report-text').value = '';
-      settingsPanel.hidden = true;
-      settingsBtn.setAttribute('aria-expanded', 'false');
-      keys.clear();
-      reportEl.hidden = false;
+      openReportForm(false);
+    };
+    document.getElementById('feedback-open').onclick = () => {
+      if (!playing) return toast('Join the game to send a bug report or request');
+      openReportForm(true);
     };
     document.getElementById('report-cancel').onclick = closeReport;
     reportEl.onsubmit = (e) => {
       e.preventDefault();
-      send({ t: 'report', id: Number(document.getElementById('report-who').value), reason: document.getElementById('report-why').value, text: document.getElementById('report-text').value });
+      const text = document.getElementById('report-text').value;
+      if (reportEl.classList.contains('feedback')) {
+        if (text.trim().length < 3) return toast('Write a few words about it first');
+        send({ t: 'feedback', kind: document.getElementById('feedback-kind').value, text });
+      } else send({ t: 'report', id: Number(document.getElementById('report-who').value), reason: document.getElementById('report-why').value, text });
       closeReport();
     };
     reportEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') closeReport(); }); // (typing here doesn't move you)
@@ -5152,14 +5225,35 @@
       return null;
     }
 
-    async function soundRequest(slot, method, body, headers = {}, path = '') {
+    /** A request whose upload progress we can watch (fetch can't): resolves to { status, ok, data }. */
+    function xhrRequest(method, url, headers, body, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open(method, url);
+        for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+        xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText); } catch {}
+          resolve({ status: xhr.status, ok: xhr.status >= 200 && xhr.status < 300, data });
+        };
+        xhr.onerror = () => reject(new Error('network'));
+        xhr.send(body);
+      });
+    }
+
+    const slotUploads = new Map(); // sound slot -> upload progress 0..1 (kept here so a re-render mid-upload still shows it)
+
+    async function soundRequest(slot, method, body, headers = {}, path = '', onProgress = null) {
       const password = adminPassword();
       if (!password) return;
       try {
-        const res = await fetch(`/sounds/${slot}${path}`, { method, headers: { authorization: `Bearer ${password}`, ...headers }, body });
-        const data = await res.json();
+        const url = `/sounds/${slot}${path}`;
+        const auth = { authorization: `Bearer ${password}`, ...headers };
+        const res = onProgress ? await xhrRequest(method, url, auth, body, onProgress) : await fetch(url, { method, headers: auth, body });
+        const data = onProgress ? res.data : await res.json();
         if (res.status === 401) { return toast('Admin login required'); }
-        if (!res.ok) return toast(`Couldn't save: ${data.error}`);
+        if (!res.ok) return toast(`Couldn't save: ${data.error ?? `server said ${res.status}`}`);
         custom.sounds = data.custom;
         await decodeCustomSounds();
         renderSoundEditor();
@@ -5195,6 +5289,7 @@
           const c = custom.sounds[slot.id];
           const row = document.createElement('div');
           row.className = 'row';
+          row.dataset.slot = slot.id;
           const name = document.createElement('div');
           name.className = 'name';
           const b = document.createElement('b');
@@ -5212,16 +5307,27 @@
           play.onclick = () => previewSound(slot);
           const upload = document.createElement('label');
           upload.className = 'file';
-          upload.textContent = '⬆ Upload';
+          const progressText = (f) => (f < 1 ? `⬆ ${Math.round(f * 100)}%` : '⏳ saving…');
+          upload.textContent = slotUploads.has(slot.id) ? progressText(slotUploads.get(slot.id)) : '⬆ Upload';
+          if (slotUploads.has(slot.id)) upload.classList.add('busy');
           const input = document.createElement('input');
           input.type = 'file';
           input.accept = 'audio/*';
+          input.disabled = slotUploads.has(slot.id);
           input.onchange = async () => {
             const file = input.files[0];
             if (!file) return;
-            upload.textContent = 'Uploading…';
-            if (await soundRequest(slot.id, 'POST', file, { 'content-type': file.type || 'audio/mpeg' })) toast(`🔊 ${slot.name} updated`);
-            else renderSoundEditor();
+            slotUploads.set(slot.id, 0);
+            renderSoundEditor();
+            const progress = (f) => {
+              slotUploads.set(slot.id, f);
+              const el = soundsEl.querySelector(`[data-slot="${CSS.escape(slot.id)}"] label.file`);
+              if (el) el.firstChild.textContent = progressText(f);
+            };
+            const ok = await soundRequest(slot.id, 'POST', file, { 'content-type': file.type || 'audio/mpeg' }, '', progress);
+            slotUploads.delete(slot.id);
+            if (ok) toast(`🔊 ${slot.name} updated`);
+            renderSoundEditor();
           };
           upload.append(input);
           const vol = document.createElement('input');
@@ -5499,6 +5605,79 @@
       }
       dialogueEl.append(inner);
     }
+    // ---- 📋 Reports (admin): reported players and how often, bug reports, update requests ----
+    const reportsEl = document.getElementById('reportsview');
+    const REPORT_REASONS = { cheating: 'cheating', abuse: 'abusive chat', name: 'rude name', griefing: 'griefing', other: 'other' };
+    let reportsData = null, reportsTab = 'players';
+    async function loadReports() {
+      const token = adminPassword();
+      if (!token) return;
+      try {
+        const res = await fetch('/admin/reports', { headers: { authorization: `Bearer ${token}` } });
+        if (res.status === 401) { toast('Admin login required'); return; }
+        reportsData = await res.json();
+      } catch { toast("Couldn't reach the server"); }
+      renderReports();
+    }
+    function renderReports() {
+      const el = (tag, cls, text) => Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text !== undefined ? { textContent: text } : {});
+      const when = (at) => new Date(at).toLocaleString();
+      const inner = el('div', 'inner');
+      const top = el('div', 'top');
+      top.append(el('h1', null, '📋 Reports'), Object.assign(el('div'), {}));
+      top.lastChild.append(Object.assign(el('button', null, '↻ Refresh'), { onclick: loadReports }), ' ', Object.assign(el('button', null, '✕ Close'), { onclick: () => { reportsEl.hidden = true; } }));
+      const d = reportsData;
+      const tabs = el('div', 'tabs');
+      const tab = (id, label) => tabs.append(Object.assign(el('button', reportsTab === id ? 'on' : '', label), { onclick: () => { reportsTab = id; renderReports(); } }));
+      tab('players', `🚩 Reported players (${d?.players.length ?? '…'})`);
+      tab('bugs', `🐞 Bug reports (${d?.bugs.length ?? '…'})`);
+      tab('requests', `💡 Update requests (${d?.requests.length ?? '…'})`);
+      inner.append(top, el('div', 'sub', 'Everything players have sent from ⚙️ Settings. Players are listed most-reported first; tick off bugs and requests once they’re dealt with.'), tabs);
+      if (!d) inner.append(el('div', 'empty', 'Loading…'));
+      else if (reportsTab === 'players') {
+        if (!d.players.length) inner.append(el('div', 'empty', 'Nobody has been reported.'));
+        for (const p of d.players) {
+          const card = el('div', 'card');
+          const head = el('div', 'head');
+          const name = el('div');
+          name.append(el('b', null, p.name), el('span', 'meta', ` · ${Object.entries(p.reasons).sort((a, b) => b[1] - a[1]).map(([r, n]) => `${REPORT_REASONS[r] ?? r} ×${n}`).join(', ')} · last ${when(p.last)}`));
+          head.append(name, el('span', 'count', `${p.count} report${p.count === 1 ? '' : 's'}`));
+          const more = el('details');
+          more.append(el('summary', null, 'Show the reports'));
+          for (const r of p.reports) {
+            const one = el('div', 'one');
+            one.append(el('div', 'meta', `${when(r.at)} · from ${r.by} · ${REPORT_REASONS[r.reason] ?? r.reason}`));
+            if (r.text) one.append(el('div', 'text', r.text));
+            if (r.chat.length) one.append(el('div', 'said', `They'd said: "${r.chat.slice(-5).join('" · "')}"`));
+            more.append(one);
+          }
+          card.append(head, more);
+          inner.append(card);
+        }
+      } else {
+        const list = reportsTab === 'bugs' ? d.bugs : d.requests;
+        if (!list.length) inner.append(el('div', 'empty', reportsTab === 'bugs' ? 'No bug reports.' : 'No update requests.'));
+        for (const f of list) {
+          const card = el('div', 'card');
+          const head = el('div', 'head');
+          head.append(el('span', 'meta', `${when(f.at)} · from ${f.by}`), Object.assign(el('button', null, '✓ Done'), {
+            title: 'Dealt with: take it off the list',
+            onclick: async () => {
+              const token = adminPassword();
+              if (!token) return;
+              try { await fetch(`/admin/feedback/${f.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } }); } catch {}
+              loadReports();
+            },
+          }));
+          card.append(head, el('div', 'text', f.text));
+          inner.append(card);
+        }
+      }
+      reportsEl.replaceChildren(inner);
+    }
+    document.getElementById('open-reports').onclick = () => { reportsEl.hidden = false; renderReports(); loadReports(); };
+    reportsEl.addEventListener('keydown', (e) => { if (e.key === 'Escape') reportsEl.hidden = true; });
+
     document.getElementById('open-dialogue').onclick = () => { dialogueEl.hidden = false; renderDialogueEditor(); loadDialogue(); };
     addEventListener('keydown', (e) => { if (e.code === 'Escape' && !dialogueEl.hidden) dialogueEl.hidden = true; });
     addEventListener('keydown', (e) => { if (e.code === 'Escape' && !soundsEl.hidden) closeSoundEditor(); });
@@ -5620,24 +5799,27 @@
     const ENGINE_PITCH = { sedan: 45, sports: 62, pickup: 38, police: 50, truck: 28 }; // the built-in engine's idle pitch (Hz)
     const engineGear = { gear: 0, speed: 0, load: 0, shiftAt: 0, liftUntil: 0, liftPop: false };
     /**
-     * Engine revs: just two sounds, idle and full throttle (the revs in between sounded bad). Full while the
-     * car is pulling away or moving along, idle when it's stopped or creeping; it glides quickly between them.
-     * load is how hard it's pulling (from how fast the car is gaining speed). Other cars pass their own state as e.
+     * Engine revs, 0 (idle) to 1 (flat out), following the car's speed: pulling away jumps it up off idle, then it
+     * climbs smoothly with speed and sinks as the car slows. `frac` is the speed as a share of top speed (for the
+     * volume). load is how hard it's pulling (from how fast the car is gaining speed). Other cars pass their own state as e.
      */
     function engineRevs(car, speed, dt, e = engineGear) {
       const now = audio.ctx.currentTime;
-      if (!car) { Object.assign(e, { gear: 0, speed: 0, load: 0, liftPop: false }); return { rpm: 0, load: 0, shifted: null }; }
+      if (!car) { Object.assign(e, { gear: 0, speed: 0, load: 0, rpm: 0, liftPop: false }); return { rpm: 0, load: 0, frac: 0, shifted: null }; }
       const type = vehicleTypes[car.type] ?? {};
       const frac = speed / ((type.maxSpeed ?? 400) * (car.boosting ? 1.3 : 1));
       const gaining = (speed - e.speed) / Math.max(dt, 0.001);
       e.speed = speed;
       const wasLoad = e.load;
       e.load += ((gaining > 15 || car.boosting ? 1 : 0) - e.load) * Math.min(1, dt * 8);
-      const rpm = e.load > 0.5 || frac > 0.12 ? 1 : 0;
+      const moving = e.load > 0.5 || frac > 0.04;
+      const want = moving ? Math.min(1, 0.35 + 0.6 * Math.min(1, frac) + 0.12 * e.load) : 0; // off idle once it's going, then up with speed
+      e.rpm = (e.rpm ?? 0) + (want - (e.rpm ?? 0)) * Math.min(1, dt * (want > (e.rpm ?? 0) ? 5 : 3)); // revs up quicker than they die away
+      const rpm = e.rpm;
       // Lifting off at speed: the exhaust crackles for a moment.
-      if (wasLoad > 0.6 && e.load < 0.4 && rpm) e.liftUntil = now + 0.7;
+      if (wasLoad > 0.6 && e.load < 0.4 && frac > 0.3) e.liftUntil = now + 0.7;
       e.liftPop = now < e.liftUntil && e.load < 0.4;
-      return { rpm, load: e.load, shifted: null };
+      return { rpm, load: e.load, frac: Math.min(1, frac), shifted: null };
     }
 
     // ---- other cars' engines: the nearest few with someone at the wheel, idling or at full throttle as they go,
@@ -5718,12 +5900,12 @@
         c.vr += ((d - c.dist) / Math.max(dt, 0.001) - c.vr) * Math.min(1, dt * 5); // closing (−) or receding (+) speed
         c.dist = d;
         const doppler = SOUND_SPEED / (SOUND_SPEED + Math.max(-600, Math.min(600, c.vr)));
-        const { rpm, load, shifted } = engineRevs(v, c.speed, dt, c.gear);
+        const { rpm, load, frac, shifted } = engineRevs(v, c.speed, dt, c.gear);
         const smooth = shifted ? 0.04 : 0.08;
         if (c.file) c.voice.src.playbackRate.setTargetAtTime((0.7 + rpm * 0.9) * doppler, now, smooth);
         else c.voice.set((ENGINE_PITCH[v.type] ?? 45) * (1 + rpm * 2.4) * doppler, load, now, smooth);
         const fade = Math.max(0, 1 - d / ENGINE_RANGE) ** 1.6;
-        const vol = (c.file ? 0.3 + rpm * 0.25 + load * 0.1 : 0.06 + rpm * 0.05 + load * 0.05) * fade * slotVolume(c.slot) * (shifted ? 0.5 : 1);
+        const vol = (c.file ? 0.18 + frac * 0.45 + load * 0.1 : 0.04 + frac * 0.09 + load * 0.04) * fade * slotVolume(c.slot) * (shifted ? 0.5 : 1);
         c.voice.g.gain.setTargetAtTime(vol, now, shifted ? 0.02 : 0.1);
         c.f.frequency.setTargetAtTime(700 + 15000 * fade ** 2, now, 0.1); // muffled far off
         c.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, (v.x - ear.x) / 700)), now, 0.1);
@@ -5976,10 +6158,10 @@
 
       const car = me && playing ? me.car : null;
       const speed = car ? Math.hypot(car.vx, car.vy) : 0;
-      const { rpm, load, shifted } = engineRevs(car, speed, dt);
+      const { rpm, load, frac, shifted } = engineRevs(car, speed, dt);
       if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + rpm * 0.9, now, shifted ? 0.04 : 0.1); // idle or full throttle
       else engine?.set((ENGINE_PITCH[carNow?.type] ?? 45) * (1 + rpm * 2.4), load, now, shifted ? 0.04 : 0.07);
-      const engineVol = car ? (engine?.file ? 0.35 + rpm * 0.25 + load * 0.15 : 0.07 + rpm * 0.05 + load * 0.06) : 0;
+      const engineVol = car ? (engine?.file ? 0.2 + frac * 0.5 + load * 0.12 : 0.045 + frac * 0.1 + load * 0.05) : 0; // quiet at idle, louder the faster you go
       if (shifted && engine) { // the clutch: a moment's dip as the next gear goes in
         engine.g.gain.cancelScheduledValues(now);
         engine.g.gain.setTargetAtTime(engineVol * slotVolume(engineName) * 0.45, now, 0.02);
@@ -5988,7 +6170,11 @@
       if (shifted === 'up' && Math.random() < 0.35) sfx('backfire', null, 0.4); // a pop on the upshift
       if (engineGear.liftPop && Math.random() < dt * 6) sfx('backfire', null, 0.3 + Math.random() * 0.3); // crackle off the throttle at high revs
       const slip = car ? Math.abs(-car.vx * Math.sin(car.angle) + car.vy * Math.cos(car.angle)) : 0;
-      loopGain(skid, 'skid', slip > 90 ? Math.min((slip - 90) / 200, 1) * (skid?.file ? 0.5 : 0.12) : 0, now, 0.05);
+      // Tyres: a full screech when the car's sliding sideways; a slight one whenever you're drifting (handbrake held at speed).
+      const slide = slip > 90 ? Math.min((slip - 90) / 200, 1) : 0;
+      const drifting = car && speed > 70 && moveInput().drift ? 0.18 + 0.22 * Math.min(1, slip / 250) * Math.min(1, speed / 300) : 0;
+      loopGain(skid, 'skid', Math.max(slide, drifting) * (skid?.file ? 0.5 : 0.12), now, 0.05);
+      if (skid?.file) skid.src.playbackRate.setTargetAtTime(0.92 + 0.18 * Math.min(1, slip / 300), now, 0.1); // squeals higher the harder it slides
       const winter = season.main === 'winter';
       loopGain(rain, 'rain', (rain?.file ? 0.6 : 0.14) * sky.rain * (winter ? 0 : 1), now, 0.5); // snow falls silently
       loopGain(wind, 'wind', winter ? 0.12 + 0.3 * sky.rain : 0, now, 1);
@@ -6995,6 +7181,7 @@
         else wh.dir = (wh.dir + 1) % 4;
         return;
       }
+      if (playing && e.code === 'KeyR' && placeableHere()) { furnRot = (furnRot + 1) % 4; return; } // turn the furniture I'm about to put down
       if (playing && e.code === 'KeyR') { reloadRequested = true; return; }
       if (playing && e.code === 'KeyB' && document.activeElement !== chatInput) {
         if (wh.open) closeWarehouse();
@@ -7049,11 +7236,10 @@
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
           else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him all of it
-          else if (t?.kind === 'governor') openPlace({ id: residence().id, governor: true }); // snitch on a factory
           else if (t?.kind === 'cat') send({ t: 'cat', action: t.feed ? 'feed' : 'pickup', id: t.target }); // a fish for it, or up into my arms
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
-          else if (!t && placeableHere()) { send({ t: 'furnish', action: 'place', angle: aimAngle() }); sfx('furnish'); } // a cabinet, bed or sofa in hand: put it down
+          else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
         return;
@@ -7085,8 +7271,19 @@
     let stabAt = -1e9; // when my last knife stab started (for the jab animation)
     let firing = false;
     addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    /** Put the cabinet, bed or sofa in hand down where its see-through one is. */
+    function placeFurniture() {
+      const toPlace = placeableHere();
+      if (!toPlace) return false;
+      const spot = placeSpot(toPlace.kind);
+      if (!touchMode && spotTooFar(spot)) { toast('Too far — put it down nearer to you'); return true; }
+      send({ t: 'furnish', action: 'place', angle: aimAngle(), ...(spot.at && { at: spot.at }) });
+      sfx('furnish');
+      return true;
+    }
     canvas.addEventListener('mousedown', (e) => {
       if (whBuildMode()) return whClick(e); // building, not shooting
+      if (e.button === 0 && playing && placeFurniture()) return; // furniture in hand: click puts it down
       if (e.button === 0 && playing && holdingRod() && !me?.car && !riding) return fishClick();
       if (e.button === 0) firing = true;
       if (e.button === 0 && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat')) stabAt = performance.now();
@@ -8972,6 +9169,62 @@
       }
     }
 
+    /** Furniture built into a building (the governor's desks, sofas, bookshelves), seen from above, its front toward (nx, ny). */
+    function drawProp(wall) {
+      const frontY = Math.abs(wall.ny ?? 1) >= Math.abs(wall.nx ?? 0); // front faces up or down the screen
+      const W = frontY ? wall.w : wall.h, D = frontY ? wall.h : wall.w; // width along the front, depth back from it
+      ctx.save();
+      ctx.translate(wall.x + wall.w / 2, wall.y + wall.h / 2);
+      ctx.rotate(Math.atan2(wall.ny ?? 1, wall.nx ?? 0) - Math.PI / 2); // now the front is +y
+      const L = -W / 2, T = -D / 2;
+      const rr = (x, y, w, h, r, fill, stroke, lw = 1) => {
+        ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+      };
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(L + 3, T + 4, W, D); // shadow
+      const rnd = seeded(Math.round(wall.x * 31 + wall.y * 17) % 2147483646 + 1);
+      if (wall.prop === 'desk') { // a mahogany desk: green leather top, papers, an inkwell and a brass lamp
+        const g = ctx.createLinearGradient(0, T, 0, T + D);
+        g.addColorStop(0, '#4a2412'); g.addColorStop(1, '#6e3a1c');
+        rr(L, T, W, D, 3, g, '#2a1408', 1.5);
+        rr(L + 6, T + 5, W - 12, D - 12, 2, '#2f5a3c', '#c9a24a', 1); // the leather, gold-tooled edge
+        ctx.save(); ctx.translate(L + W * 0.42, T + D * 0.52); ctx.rotate(-0.12);
+        ctx.fillStyle = '#f2ecd8'; ctx.fillRect(-11, -8, 22, 15); // a letter
+        ctx.fillStyle = '#9a9384'; for (let k = 0; k < 4; k++) ctx.fillRect(-8, -5 + k * 3.2, 16 - (k === 3 ? 6 : 0), 1);
+        ctx.restore();
+        ctx.fillStyle = '#e8e2cc'; ctx.fillRect(L + W * 0.62, T + 9, 16, 12); ctx.fillStyle = '#d6cfb6'; ctx.fillRect(L + W * 0.62 + 2, T + 7, 16, 12); // a stack of files
+        circle(L + 14, T + 13, 4.5, '#1b1b22'); circle(L + 14, T + 13, 2, '#3a4a8a'); // the inkwell
+        ctx.strokeStyle = '#efe6c8'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(L + 16, T + 11); ctx.lineTo(L + 26, T + 4); ctx.stroke(); // its quill
+        circle(L + W - 14, T + 13, 7, '#b8923a'); circle(L + W - 14, T + 13, 4.5, '#2e6b46'); circle(L + W - 15, T + 12, 1.6, '#fff6c8'); // the green banker's lamp
+        ctx.fillStyle = '#c9a24a'; ctx.fillRect(L + W / 2 - 5, T + D - 4, 10, 2); // the drawer's brass pull
+      } else if (wall.prop === 'sofa') { // a buttoned burgundy velvet sofa: back behind, arms at each end, cushions
+        const body = '#7a1f2b', dark = '#4e121a', light = '#9a3140';
+        rr(L, T, W, D, 6, dark);
+        rr(L + 1, T + 1, W - 2, D * 0.36, 5, body, dark); // the back
+        rr(L + 1, T + 3, 9, D - 4, 4, light, dark); rr(L + W - 10, T + 3, 9, D - 4, 4, light, dark); // the arms
+        const n = W > 80 ? 3 : 2, cw = (W - 22) / n;
+        for (let k = 0; k < n; k++) {
+          rr(L + 11 + k * cw, T + D * 0.36, cw - 1, D * 0.6, 4, light, dark);
+          circle(L + 11 + k * cw + cw / 2, T + D * 0.18, 1.3, '#2a0a0f'); // buttons on the back
+        }
+        ctx.strokeStyle = '#c9a24a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(L + 0.5, T + 0.5, W - 1, D - 1, 6); ctx.stroke(); // gold piping
+      } else if (wall.prop === 'bookshelf') { // a dark oak bookcase, packed with books (their tops seen from above)
+        rr(L, T, W, D, 2, '#3b2414', '#1f130a', 1.5);
+        ctx.fillStyle = '#2a190d'; ctx.fillRect(L + 3, T + 3, W - 6, D - 6);
+        const COLORS = ['#7a1f2b', '#1f3a6b', '#2f5a3c', '#8a6a2a', '#5a2d6b', '#3d3d3d', '#a0522d', '#c9b68a'];
+        for (let x = L + 4; x < L + W - 5;) {
+          const bw = 3 + rnd() * 4, bd = (D - 8) * (0.7 + rnd() * 0.3);
+          if (rnd() < 0.08) { x += bw; continue; } // a gap
+          ctx.fillStyle = COLORS[Math.floor(rnd() * COLORS.length)];
+          ctx.fillRect(x, T + D - 4 - bd, Math.min(bw, L + W - 4 - x), bd);
+          ctx.fillStyle = 'rgba(255, 255, 255, .18)'; ctx.fillRect(x, T + D - 4 - bd, 1, bd);
+          x += bw + 0.6;
+        }
+        ctx.fillStyle = '#5a3a20'; ctx.fillRect(L, T + D - 3, W, 3); // the front edge
+      }
+      ctx.restore();
+    }
+
     function drawWalls(b) {
       for (const wall of b.walls) {
         if (wall.npc || wall.pump) continue; // the shopkeeper's invisible blocker; pumpjacks are drawn by drawPumps
@@ -8985,6 +9238,7 @@
           continue;
         }
         if (wall.fireplace) { drawFireplace(wall); continue; }
+        if (wall.prop) { drawProp(wall); continue; }
         if (wall.bunker) { // the boiler house's coal bunker: a concrete pit heaped with coal
           ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(wall.x + 4, wall.y + 5, wall.w, wall.h);
           ctx.fillStyle = '#8a857a'; ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
@@ -9372,12 +9626,6 @@
         const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 18;
         if (gd < 110) options.push({ kind: 'gangster', target: id, dist: gd - 20, x: h.x, y: h.y - 52 });
       }
-      // The governor: E to talk (snitch on someone's factory).
-      for (const [, h] of snapshots.at(-1)?.crew ?? []) {
-        if (h.role !== 4 || !residence()) continue;
-        const gd = Math.hypot(h.x - me.x, h.y - me.y) - radiusOf(me.mass) - 19;
-        if (gd < econ.rules.governorReach) options.push({ kind: 'governor', dist: gd - 20, x: h.x, y: h.y - 52 });
-      }
       if (heldCat()) return { kind: 'catDown', dist: 0, x: me.x, y: me.y - 46 }; // a cat in my arms: E puts it down
       const cat = nearestCat();
       if (cat && (holdingFish() || cat.knows)) options.push({ kind: 'cat', target: cat.id, dist: cat.d - 25, x: cat.x, y: cat.y - 32, feed: holdingFish() });
@@ -9386,7 +9634,7 @@
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
-      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'governor', 'cat'].includes(o.kind))) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'cat'].includes(o.kind))) best = o;
       return best;
     }
 
@@ -9469,7 +9717,7 @@
       });
     }
 
-    /** The governor's green tin roof: white cornice, chimneys, a little green dome with a gilded spire, and the tricolour flying. */
+    /** The governor's green tin roof: white cornice, chimneys, and a little green dome with a gilded spire. */
     function drawManorRoof(r) {
       const horizontal = r.w >= r.h;
       ctx.strokeStyle = '#f2eee4'; ctx.lineWidth = 5; ctx.strokeRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6); // the cornice
@@ -9486,16 +9734,6 @@
       for (let k = 0; k < 12; k++) { const a = (k / 12) * Math.PI * 2; ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); }
       ctx.stroke();
       circle(cx, cy, R * 0.35, '#f2eee4'); circle(cx, cy, R * 0.22, '#d4af37'); circle(cx - 2, cy - 2, R * 0.08, '#fff6c8'); // the lantern and its gilded spire
-      // The flag on the spire, rippling in the wind.
-      const t = performance.now() / 300;
-      ctx.strokeStyle = '#d9d9d9'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - R * 1.6); ctx.stroke();
-      const fx = cx + 1, fy = cy - R * 1.6, fw = 42, fh = 27;
-      ['#ffffff', '#1c3faa', '#d52b1e'].forEach((c, i) => {
-        ctx.fillStyle = c; ctx.beginPath();
-        for (let k = 0; k <= 8; k++) { const x = fx + (fw * k) / 8, y = fy + (fh * i) / 3 + Math.sin(t + k * 0.8) * 2 * (k / 8); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-        for (let k = 8; k >= 0; k--) { const x = fx + (fw * k) / 8, y = fy + (fh * (i + 1)) / 3 + Math.sin(t + k * 0.8) * 2 * (k / 8); ctx.lineTo(x, y); }
-        ctx.fill();
-      });
     }
 
     function drawRoof(b, alpha) {
@@ -9824,6 +10062,14 @@
             return null;
           }
           if (h.role === 1) return approach(s, d, 150, 220) === 'in' && !h.mine ? { text: pick(SPEECH.guard), urgent: true } : null;
+          if (h.role === 4 || h.role === 6) { // the governor or the tax inspector: lots to say, and more when someone's shooting
+            const who = h.role === 4 ? 'governor' : 'inspector';
+            if (h.aiming) { if (t > (s.shout ?? 0)) { s.shout = t + 3 + Math.random() * 2; return { text: pick(SPEECH[`${who}Fight`]), urgent: true }; } return null; }
+            if (approach(s, d, 170, 240) === 'in') { s.next = t + 9 + Math.random() * 6; return { text: pick(SPEECH[who]), urgent: true }; }
+            s.next ??= t + 6 + Math.random() * 15;
+            if (d < 450 && t > s.next) { s.next = t + 9 + Math.random() * 8; return { text: pick(SPEECH[who]) }; }
+            return null;
+          }
           if (h.role === 3) { // a gangster: a hold-up, or asking after vodka
             if (h.aiming && !s.aimed) { s.aimed = true; return { text: pick(SPEECH.gangsterHoldup), urgent: true }; }
             if (!h.aiming) s.aimed = false;
@@ -10553,13 +10799,16 @@
         }
       }
       const toPlace = playing && !eNow ? placeableHere() : null;
-      if (toPlace) { // a cabinet, bed or sofa in hand at my place: where E would put it
+      if (toPlace) { // a cabinet, bed or sofa in hand at my place: a see-through one where it'd go
         const spot = placeSpot(toPlace.kind);
+        const ok = furnSpotLooksFree(toPlace.b, spot);
         drawFurnishing(toPlace.kind, spot, spot.rot, true);
-        drawKeyPrompt(spot.x + spot.w / 2, spot.y - 16);
-        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+        if (!ok) { ctx.fillStyle = 'rgba(230, 25, 75, .35)'; ctx.fillRect(spot.x, spot.y, spot.w, spot.h); }
+        if (touchMode) drawKeyPrompt(spot.x + spot.w / 2, spot.y - 16);
+        ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = ok ? '#fff' : '#ff8a9a';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const t = `place ${FURN_WORDS[toPlace.kind] ?? 'it'} (aim to turn it)`;
+        const word = FURN_WORDS[toPlace.kind] ?? 'it';
+        const t = !ok ? `no room for the ${word} here` : touchMode ? `place ${word} (aim to turn it)` : `click to place ${word} · R to turn it`;
         ctx.strokeText(t, spot.x + spot.w / 2, spot.y - 36); ctx.fillText(t, spot.x + spot.w / 2, spot.y - 36);
       }
       const wallDoor = prisonState && me && playing && inv[selectedSlot]?.[1] === 'pickaxe' ? doorById.get(prisonWall.door) : null;
@@ -10627,7 +10876,7 @@
       updateCashHold(performance.now());
       if (!shopEl.hidden && !keeper) closeShop(); // walked away
       if (!bankEl.hidden && !banker) closeBank();
-      if (econ.open && (econ.open.governor ? !governorNear() : !place)) closePlace();
+      if (econ.open && !place) closePlace();
       updateJobHud();
       updateCrimeHud();
       drawJobArrow(frameTime);

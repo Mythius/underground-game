@@ -61,6 +61,7 @@ World.radioDurations = () => radio.durations(); // (so a car's radio knows when 
 
 const bans = new BanList();
 const reports = new ReportLog();
+const feedback = new ReportLog(new URL('../data/feedback.json', import.meta.url)); // bug reports and update requests
 const REPORT_EVERY_MS = 30_000; // one report per player per half-minute
 const MAX_SOCKETS_PER_IP = 8; // a family on one network, not a bot farm
 
@@ -267,6 +268,17 @@ const server = http.createServer(async (req, res) => {
     rooms.broadcastAll({ t: changed }); // everyone playing picks up the new playlist
     return json(200, { ok: true, songs: store.list() });
   }
+  // ---- the admin's 📋 Reports page: reported players (with counts), bug reports and update requests ----
+  if (req.url === '/admin/reports' || req.url.startsWith('/admin/feedback/')) {
+    if (!isAdminToken(bearer(req))) return json(401, { error: 'admin login required' });
+    if (req.method === 'GET' && req.url === '/admin/reports') {
+      const list = (kind) => feedback.reports.filter((f) => f.kind === kind).map((f) => ({ id: f.id, at: f.at, by: f.by.name, text: f.text })).reverse();
+      return json(200, { players: reports.byPlayer(), bugs: list('bug'), requests: list('request') });
+    }
+    const id = req.url.slice('/admin/feedback/'.length);
+    if (req.method === 'DELETE' && /^[a-z0-9]+$/.test(id)) return feedback.remove(id) ? json(200, { ok: true }) : json(404, { error: 'not found' });
+    return json(400, { error: 'bad request' });
+  }
   // ---- dialogue editor: what NPCs say (GET for everyone; change or reset a kind of line: admin) ----
   if (req.method === 'GET' && req.url === '/dialogue') return json(200, { ...dialogue.list(), canSave: true });
   const lineRoute = req.url.match(/^\/dialogue\/([A-Za-z]+)$/);
@@ -467,9 +479,6 @@ function handleMessage(client, msg) {
     case ClientMsg.GANGSTER:
       client.room?.gangster(client, msg);
       break;
-    case ClientMsg.GOVERNOR:
-      client.room?.governor(client, msg);
-      break;
     case ClientMsg.LAUNDER:
       client.room?.launder(client, msg);
       break;
@@ -491,6 +500,9 @@ function handleMessage(client, msg) {
     case ClientMsg.CHAT:
       if (msg.text.startsWith('/') && client.admin) adminCommand(client, msg.text);
       else client.room?.chat(client, censor(msg.text)); // ("/…" from anyone else is just chat)
+      break;
+    case ClientMsg.FEEDBACK:
+      sendFeedback(client, msg);
       break;
     case ClientMsg.REPORT:
       report(client, msg);
@@ -577,6 +589,18 @@ function report(client, msg) {
     if (c.admin) c.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: `🚩 ${client.name} reported ${target.name} (${REASONS[msg.reason]})${msg.text ? `: ${msg.text}` : ''} — /kick or /ban` });
   }
   reply(`Thanks — your report about ${target.name} was sent to the admin`);
+}
+
+/** A bug report or an update request: saved for the admin's 📋 Reports page and shown to any admin online. */
+function sendFeedback(client, msg) {
+  const reply = (line) => client.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: line });
+  if (!client.name) return reply('Join the game to send that');
+  if (Date.now() - (client.lastReport ?? 0) < REPORT_EVERY_MS) return reply('You just sent one — wait a little before sending another');
+  client.lastReport = Date.now();
+  feedback.add({ kind: msg.kind, text: msg.text, by: { name: client.name, ip: client.remoteAddress, accountId: client.account?.guest ? null : client.account?.id ?? null } });
+  logger.info(msg.kind === 'bug' ? 'bug reported' : 'update requested', { by: client.name });
+  for (const c of clients) if (c.admin) c.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: `${msg.kind === 'bug' ? '🐞 Bug' : '💡 Request'} from ${client.name}: ${msg.text}` });
+  reply(msg.kind === 'bug' ? 'Thanks — your bug report was sent to the admin' : 'Thanks — your update request was sent to the admin');
 }
 
 function penalize(client, code) {

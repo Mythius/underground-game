@@ -439,7 +439,7 @@ export class Room {
       },
       brokenAtms: this.world.brokenAtmList(),
       visionSec: config.economy.visionSec,
-      furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach },
+      furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach, placeReach: config.furnishing.placeReach },
       cats: { reach: config.cats.reach },
       crows: { reach: config.crows.reach },
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
@@ -453,7 +453,7 @@ export class Room {
       goods: config.goods,
       cargo: { slotWeight: config.cargo.slotWeight, vehicleSlotWeight: config.cargo.vehicleSlotWeight, trunkReach: config.cargo.trunkReach, vehicles: config.cargo.vehicles },
       factories: config.factories,
-      factoryRules: { reach: config.factory.reach, marketReach: config.markets.reach, pumpReach: config.fuel.pumpReach, governorReach: config.governor.talkReach, snitchFee: config.governor.snitchFee },
+      factoryRules: { reach: config.factory.reach, marketReach: config.markets.reach, pumpReach: config.fuel.pumpReach },
       owners: [...this.world.warehouses.ownership(), ...this.world.economy.siteOwners()],
       // Rocks, trees and wheat at the work sites: [id, kind, x, y, r, hp, max].
       nodes: [...this.world.work.nodes.values()].map((n) => [n.id, n.kind, n.x, n.y, n.r, n.hp, n.max]),
@@ -620,16 +620,11 @@ export class Room {
     // A Militsiya front desk: join up (answer the questions) or hand in your badge.
     const desk = this.world.police.stations.find((s) => s.id === id);
     if (desk) return client.player?.alive && client.send({ t: ServerMsg.PLACE, ...this.world.police.describeDesk(client.player, desk) });
-    // The governor: snitch on someone's factory.
-    if (this.world.hires.residence && id === this.world.hires.residence.id) {
-      const d = client.player?.alive && this.world.hires.describeGovernor(client.player);
-      return d && client.send({ t: ServerMsg.PLACE, ...d });
-    }
     // The laundry machine in the shed on the panelka.
     const shed = this.world.buildings[id - 1];
     if (shed?.type === 'laundry') {
       const p = client.player;
-      return p?.alive && client.send({ t: ServerMsg.PLACE, kind: 'laundry', id, owner: this.world.ownsLaundry(p, shed), cash: p.cash, bank: p.account?.bank ?? 0, limit: config.governor.depositLimit });
+      return p?.alive && client.send({ t: ServerMsg.PLACE, kind: 'laundry', id, owner: this.world.ownsLaundry(p, shed), cash: p.cash, bank: p.account?.bank ?? 0 });
     }
     // The bar: the barman's list of muscle for hire, and yours.
     const hires = this.world.hires;
@@ -704,7 +699,7 @@ export class Room {
     if (!p?.alive) return;
     const f = this.world.furnishings;
     let error = null;
-    if (msg.action === 'place') error = f.place(p, msg.angle);
+    if (msg.action === 'place') error = f.place(p, msg.angle, msg.at ?? null);
     else if (msg.action === 'pickup') error = f.pickUp(p, msg.id);
     else if (msg.action === 'sleep') error = f.sleep(p, msg.id);
     else if (msg.action === 'open') {
@@ -725,15 +720,6 @@ export class Room {
     if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
     this.onBankChange?.(p.account);
     client.send({ t: ServerMsg.DONE, what: 'laundered', ...result, cash: p.cash, bank: p.account.bank });
-  }
-
-  /** The governor: snitch on someone else's factory (he sends the inspector, for a fee). */
-  governor(client, msg) {
-    const p = client.player;
-    if (!p?.alive) return;
-    const result = this.world.hires.snitch(p, msg.building);
-    if (typeof result === 'string') return client.send({ t: ServerMsg.ERROR, code: result });
-    client.send({ t: ServerMsg.DONE, what: 'snitched', ...result, cash: p.cash, bank: p.account.bank });
   }
 
   /** A gangster: sell him all your vodka. */
