@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { rudeName } from './moderation.js';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -123,6 +124,7 @@ export class AccountStore {
 
   #freeName(base) {
     let name = base.replace(/[^A-Za-z0-9_]/g, '').slice(0, 12) || 'player';
+    if (rudeName(name)) name = 'player'; // (shown to others on warehouses and leaderboards)
     while (name.length < 3 || this.q.accountByName.get(name)) name = `${name.slice(0, 12)}${Math.floor(Math.random() * 10000)}`;
     return name;
   }
@@ -157,6 +159,20 @@ export class AccountStore {
     this.q.insertIdentity.run(provider, subject, id, null);
     this.db.prepare('UPDATE identities SET email = ? WHERE provider = ? AND subject = ?').run(email, provider, subject);
     return { token: this.#newSession(id), account: this.account(id) };
+  }
+
+  /**
+   * Take the name typed on the start screen, so cars, homes, warehouses and furniture are labelled with
+   * it (not the Google name). Names are unique: returns 'taken' if another account already has it.
+   */
+  setName(id, name) {
+    const live = this.liveAccounts.get(id);
+    if ((live?.name ?? this.account(id)?.name) === name) return null;
+    const other = this.q.accountByName.get(name);
+    if (other && other.id !== id) return 'taken';
+    this.q.rename.run(name, id);
+    if (live) live.name = name;
+    return null;
   }
 
   /** The outside login linked to an account ({ provider, email }), or null. */

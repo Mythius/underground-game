@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { AccountStore } from './accounts.js';
+import { BanList, ReportLog, censor } from './moderation.js';
 import { SoundStore } from './sounds.js';
 import { DialogueStore } from './dialogue.js';
 import { CHASE_MUSIC_DIR, FIGHT_MUSIC_DIR, MUSIC_DIR, PRISON_MUSIC_DIR, RadioStore } from './radio.js';
@@ -57,6 +58,19 @@ World.radioDurations = () => radio.durations(); // (so a car's radio knows when 
     logger.info('radio song moved into the playlist', { slot: `radio${i}` });
   }
 })().catch((err) => logger.warn('radio migration failed', { err: err.message }));
+
+const bans = new BanList();
+const reports = new ReportLog();
+const REPORT_EVERY_MS = 30_000; // one report per player per half-minute
+const MAX_SOCKETS_PER_IP = 8; // a family on one network, not a bot farm
+
+/** Who's really asking: nginx (on this machine) passes the visitor's address in X-Real-IP. */
+function clientIp(req) {
+  const ip = req.socket.remoteAddress ?? '';
+  const local = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  const real = req.headers['x-real-ip'];
+  return local && typeof real === 'string' && real ? real.trim() : ip;
+}
 
 /** Whether a session (its bearer token) is signed in with Google as one of the admin accounts. */
 function isAdminToken(token) {
@@ -168,7 +182,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/map') {
     if (!isAdminToken(bearer(req))) {
-      logger.warn('map save without admin login', { ip: req.socket.remoteAddress });
+      logger.warn('map save without admin login', { ip: clientIp(req) });
       return json(401, { error: 'admin login required' });
     }
     let body;
@@ -181,7 +195,7 @@ const server = http.createServer(async (req, res) => {
     if (error) return json(400, { error });
     saveMap(map);
     rooms.applyMap(map);
-    logger.info('map saved', { buildings: map.buildings.length, trees: map.trees.length, ip: req.socket.remoteAddress });
+    logger.info('map saved', { buildings: map.buildings.length, trees: map.trees.length, ip: clientIp(req) });
     return json(200, { ok: true });
   }
   // ---- sound editor: list, serve, upload (admin), volume (admin), reset (admin) ----
@@ -195,7 +209,7 @@ const server = http.createServer(async (req, res) => {
   const soundRoute = req.url.match(/^\/sounds\/([A-Za-z0-9]+)(\/volume)?$/);
   if (soundRoute && (req.method === 'POST' || req.method === 'DELETE')) {
     if (!isAdminToken(bearer(req))) {
-      logger.warn('sound edit without admin login', { ip: req.socket.remoteAddress });
+      logger.warn('sound edit without admin login', { ip: clientIp(req) });
       return json(401, { error: 'admin login required' });
     }
     const [, slot, volume] = soundRoute;
@@ -235,7 +249,7 @@ const server = http.createServer(async (req, res) => {
   const radioRoute = req.url.match(/^\/(radio|music|prison|fight|chase)(?:\/([a-f0-9]{12}))?(?:\?name=([^&]*))?$/);
   if (radioRoute && ['POST', 'DELETE'].includes(req.method)) {
     if (!isAdminToken(bearer(req))) {
-      logger.warn('playlist edit without admin login', { ip: req.socket.remoteAddress });
+      logger.warn('playlist edit without admin login', { ip: clientIp(req) });
       return json(401, { error: 'admin login required' });
     }
     const [, which, id, name] = radioRoute;
@@ -258,7 +272,7 @@ const server = http.createServer(async (req, res) => {
   const lineRoute = req.url.match(/^\/dialogue\/([A-Za-z]+)$/);
   if (lineRoute && (req.method === 'POST' || req.method === 'DELETE')) {
     if (!isAdminToken(bearer(req))) {
-      logger.warn('dialogue edit without admin login', { ip: req.socket.remoteAddress });
+      logger.warn('dialogue edit without admin login', { ip: clientIp(req) });
       return json(401, { error: 'admin login required' });
     }
     let error;
@@ -274,7 +288,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/auth/device') {
     // A first-time browser asks for its own account; limited per IP so nobody can mint thousands.
-    if (tooManyAuthAttempts(req.socket.remoteAddress)) return json(429, { error: 'Too many tries — wait a minute' });
+    if (tooManyAuthAttempts(clientIp(req))) return json(429, { error: 'Too many tries — wait a minute' });
     return json(200, accounts.createDeviceAccount());
   }
   if (req.method === 'GET' && req.url === '/auth/me') {
@@ -285,7 +299,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && req.url === '/auth/cas') {
     // Finishing Google sign-in: check the CAS token, then link or switch this browser's account.
-    if (tooManyAuthAttempts(req.socket.remoteAddress)) return json(429, { error: 'Too many tries — wait a minute' });
+    if (tooManyAuthAttempts(clientIp(req))) return json(429, { error: 'Too many tries — wait a minute' });
     let body;
     try {
       body = JSON.parse(await readBody(req, 8000));
@@ -320,14 +334,24 @@ const wss = new WebSocketServer({
   maxPayload: config.net.maxPayloadBytes,
   perMessageDeflate: false, // CPU cost isn't worth it for small, frequent frames
   verifyClient: ({ origin }, done) => {
-    if (!config.allowedOrigins || config.allowedOrigins.includes(origin)) return done(true);
+    // Browsers always send their page's address: this stops other websites using ours. (Tools like
+    // scripts/bots.js send none, and could fake one anyway, so they're let through.)
+    if (!config.allowedOrigins || !origin || config.allowedOrigins.includes(origin)) return done(true);
     logger.warn('rejected origin', { origin });
     done(false, 403, 'Forbidden');
   },
 });
 
 wss.on('connection', (ws, req) => {
-  const client = new Client(ws, req.socket.remoteAddress);
+  const client = new Client(ws, clientIp(req));
+  if (bans.isBanned({ ip: client.remoteAddress })) {
+    client.send({ t: ServerMsg.ERROR, code: 'banned' });
+    return ws.close(4003, 'banned');
+  }
+  if ([...clients].filter((c) => c.remoteAddress === client.remoteAddress).length >= MAX_SOCKETS_PER_IP) {
+    client.send({ t: ServerMsg.ERROR, code: 'too_many_connections' });
+    return ws.close(4029, 'too many connections');
+  }
   clients.add(client);
   rooms.join(client);
   logger.info('client connected', { client: client.id, ip: client.remoteAddress, room: client.room?.id });
@@ -360,6 +384,7 @@ function handleMessage(client, msg) {
     case ClientMsg.JOIN: {
       // Each join uses the account the browser holds now (it may have signed in or out since the last one).
       if (client.player?.alive) break;
+      client.admin = Boolean(msg.token) && isAdminToken(msg.token);
       if (client.account && msg.token && accounts.accountForToken(msg.token)?.id !== client.account.id) {
         if (playingAccounts.get(client.account.id) === client) playingAccounts.delete(client.account.id);
         client.account = null;
@@ -368,6 +393,7 @@ function handleMessage(client, msg) {
         if (msg.token) {
           const account = accounts.accountForToken(msg.token);
           if (!account) return client.send({ t: ServerMsg.ERROR, code: 'session_expired' });
+          if (bans.isBanned({ accountId: account.id })) return removeClient(client, 'banned');
           const other = playingAccounts.get(account.id);
           if (other && other !== client && other.isOpen) return client.send({ t: ServerMsg.ERROR, code: 'already_playing' });
           playingAccounts.set(account.id, client);
@@ -463,12 +489,94 @@ function handleMessage(client, msg) {
       client.room?.eat(client);
       break;
     case ClientMsg.CHAT:
-      client.room?.chat(client, msg.text);
+      if (msg.text.startsWith('/') && client.admin) adminCommand(client, msg.text);
+      else client.room?.chat(client, censor(msg.text)); // ("/…" from anyone else is just chat)
+      break;
+    case ClientMsg.REPORT:
+      report(client, msg);
       break;
     case ClientMsg.PING:
       client.send({ t: ServerMsg.PONG, ts: msg.ts, serverTime: Date.now() });
       break;
   }
+}
+
+/** Tell a client why, then hang up on them ('kicked' or 'banned'). */
+function removeClient(client, code) {
+  client.send({ t: ServerMsg.ERROR, code });
+  setTimeout(() => client.close(4003, code), 100); // (let the message go first)
+}
+
+/**
+ * The admin's chat commands (signed in with Google as an admin):
+ * /players · /kick name · /ban name (their IP and account) · /unban name-or-ip · /bans
+ */
+function adminCommand(admin, text) {
+  const reply = (line) => admin.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: line });
+  const [cmd, ...rest] = text.slice(1).split(' ');
+  const arg = rest.join(' ').trim();
+  const playing = [...clients].filter((c) => c.name && c !== admin);
+  const find = () => {
+    const key = arg.toLowerCase();
+    const exact = playing.filter((c) => c.name.toLowerCase() === key);
+    const matches = exact.length ? exact : playing.filter((c) => c.name.toLowerCase().startsWith(key));
+    if (!arg || matches.length === 0) reply(`No player called "${arg}" — /players lists them`);
+    else if (matches.length > 1) reply(`"${arg}" could be ${matches.map((c) => c.name).join(', ')} — type more of the name`);
+    else return matches[0];
+    return null;
+  };
+  switch (cmd.toLowerCase()) {
+    case 'players':
+      return reply(playing.length ? `Playing: ${playing.map((c) => c.name).join(', ')}` : 'Nobody else is playing');
+    case 'kick': {
+      const target = find();
+      if (!target) return;
+      logger.info('admin kicked', { name: target.name, ip: target.remoteAddress });
+      removeClient(target, 'kicked');
+      return reply(`Kicked ${target.name}`);
+    }
+    case 'ban': {
+      const target = find();
+      if (!target) return;
+      const accountId = target.account?.guest ? null : target.account?.id ?? null;
+      bans.ban({ ip: target.remoteAddress, accountId, name: target.name });
+      logger.info('admin banned', { name: target.name, ip: target.remoteAddress, account: accountId });
+      for (const c of clients) if (c !== admin && bans.isBanned({ ip: c.remoteAddress, accountId: c.account?.id })) removeClient(c, 'banned');
+      return reply(`Banned ${target.name} (their IP and account) — /unban ${target.name} lifts it`);
+    }
+    case 'unban': {
+      const n = arg ? bans.unban(arg) : 0;
+      return reply(n ? `Lifted ${n} ban${n === 1 ? '' : 's'} on ${arg}` : `No ban on "${arg}" — /bans lists them`);
+    }
+    case 'reports': {
+      const last = reports.reports.slice(-5);
+      if (!last.length) return reply('No reports yet');
+      for (const r of last) reply(`🚩 ${new Date(r.at).toLocaleString()} · ${r.by.name} → ${r.about.name} (${REASONS[r.reason]})${r.text ? `: ${r.text}` : ''}${r.chat.length ? ` · they said: "${r.chat.slice(-3).join('" "')}"` : ''}`);
+      return;
+    }
+    case 'bans':
+      return reply(bans.bans.length ? `Banned: ${bans.bans.map((b) => `${b.name} (${b.ip ?? 'no IP'})`).join(', ')}` : 'Nobody is banned');
+    default:
+      return reply('Admin commands: /players · /kick name · /ban name · /unban name-or-ip · /bans · /reports');
+  }
+}
+
+const REASONS = { cheating: 'cheating', abuse: 'abusive chat', name: 'rude name', griefing: 'griefing', other: 'other' };
+
+/** A player reports another: saved for the admin (with what the reported player said lately) and shown to any admin online. */
+function report(client, msg) {
+  const reply = (line) => client.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: line });
+  const target = [...clients].find((c) => c.player?.id === msg.id && c.name);
+  if (!client.name || !target || target === client) return reply("Couldn't find that player — they may have left");
+  if (Date.now() - (client.lastReport ?? 0) < REPORT_EVERY_MS) return reply('You just sent a report — wait a little before sending another');
+  client.lastReport = Date.now();
+  const who = (c) => ({ name: c.name, ip: c.remoteAddress, accountId: c.account?.guest ? null : c.account?.id ?? null });
+  reports.add({ by: who(client), about: who(target), reason: msg.reason, text: msg.text, chat: target.recentChat ?? [] });
+  logger.info('player reported', { by: client.name, about: target.name, reason: msg.reason });
+  for (const c of clients) {
+    if (c.admin) c.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: `🚩 ${client.name} reported ${target.name} (${REASONS[msg.reason]})${msg.text ? `: ${msg.text}` : ''} — /kick or /ban` });
+  }
+  reply(`Thanks — your report about ${target.name} was sent to the admin`);
 }
 
 function penalize(client, code) {

@@ -47,6 +47,21 @@
       background: rgba(22, 22, 22, .96); border: 1px solid #444; text-align: left; font-size: .85rem;
       box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
     }
+    #report-open { width: 100%; margin-top: .5rem; font: inherit; padding: .35rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
+    #report-open:hover { border-color: #c0392b; }
+    #report {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 25; width: min(22rem, calc(100vw - 2rem)); box-sizing: border-box;
+      padding: 1rem; border-radius: .6rem; background: rgba(22, 22, 22, .97); border: 1px solid #555; color: #ddd; font-size: .9rem;
+      display: flex; flex-direction: column; gap: .6rem; box-shadow: 0 8px 30px rgba(0, 0, 0, .6);
+    }
+    #report[hidden] { display: none; }
+    #report h3 { margin: 0; font-size: .8rem; letter-spacing: .1em; text-transform: uppercase; color: #e74c3c; }
+    #report label { display: flex; flex-direction: column; gap: .25rem; }
+    #report select, #report textarea, #report button { font: inherit; padding: .4rem; border-radius: .35rem; border: 1px solid #555; background: #1b1b1b; color: #eee; }
+    #report textarea { min-height: 4.5rem; resize: vertical; }
+    #report .row { display: flex; gap: .5rem; justify-content: flex-end; }
+    #report button { cursor: pointer; }
+    #report button[type="submit"] { background: #c0392b; border-color: #c0392b; color: #fff; font-weight: 700; }
     #settings h3 { margin: 0 0 .6rem; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #f4c430; }
     #settings label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .3rem 0; cursor: pointer; }
     #settings input[type="range"] { width: 7rem; accent-color: #f4c430; }
@@ -495,8 +510,22 @@
       <label>Show controls hint <input type="checkbox" id="set-hint"></label>
       <label>Show minimap <input type="checkbox" id="set-minimap"></label>
       <label>Rain effects <input type="checkbox" id="set-rain"></label>
+      <button type="button" id="report-open">🚩 Report a player</button>
     </div>
   </div>
+  <form id="report" hidden>
+    <h3>🚩 Report a player</h3>
+    <label>Who <select id="report-who" required></select></label>
+    <label>Why <select id="report-why">
+      <option value="abuse">Abusive or hateful chat</option>
+      <option value="cheating">Cheating or hacking</option>
+      <option value="name">Rude name</option>
+      <option value="griefing">Griefing / harassing me</option>
+      <option value="other">Something else</option>
+    </select></label>
+    <textarea id="report-text" maxlength="300" placeholder="What happened? (optional)"></textarea>
+    <div class="row"><button type="button" id="report-cancel">Cancel</button><button type="submit">Send report</button></div>
+  </form>
   <div id="touch">
     <div class="stick" id="stick-move"><i></i></div>
     <div class="stick" id="stick-aim"><i></i></div>
@@ -800,8 +829,10 @@
     const send = (msg) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
     ws.onopen = () => { dot.className = 'dot ok'; status.textContent = 'Server online'; play.disabled = false; };
+    let goneWhy = null; // set when the server says why it's hanging up (kicked, banned)
+    const GONE = { kicked: 'You were kicked by the admin — reload to come back', banned: 'You are banned from this server', too_many_connections: 'Too many connections from your network' };
     ws.onclose = () => {
-      dot.className = 'dot bad'; status.textContent = 'Server offline'; play.disabled = true;
+      dot.className = 'dot bad'; status.textContent = goneWhy ?? 'Server offline'; play.disabled = true;
       showMenu();
     };
     ws.onmessage = (e) => {
@@ -1120,6 +1151,7 @@
           renderShop();
           break;
         case 'error':
+          if (GONE[msg.code]) { goneWhy = GONE[msg.code]; toast(goneWhy); break; }
           if (!['chat_too_fast', 'join_first'].includes(msg.code)) sfx('error');
           if (msg.code === 'not_enough_cash') toast('Not enough cash — withdraw some at an ATM');
           if (msg.code === 'not_enough_bank') toast("You don't have that much in the bank");
@@ -1127,6 +1159,7 @@
           else if (homeOpen && HOME_ERRORS[msg.code]) toast(HOME_ERRORS[msg.code]);
           else if (ECON_ERRORS[msg.code]) toast(ECON_ERRORS[msg.code]);
           else if (WH_ERRORS[msg.code]) toast(WH_ERRORS[msg.code]);
+          if (msg.code === 'name_taken') toast(`That name belongs to another player — your things are labelled "${msg.name}"`);
           if (msg.code === 'already_playing') { toast('This account is already playing somewhere else (another tab or device)'); play.disabled = false; }
           if (msg.code === 'session_expired') {
             // This browser's key is no longer known (e.g. the server's data was reset): start a fresh account.
@@ -1509,6 +1542,7 @@
         return toast(linked ? 'This Google account is not an admin' : 'Sign in with Google as the admin first');
       }
       panel.hidden = !panel.hidden;
+      if (!panel.hidden) toast('In game, chat /players, /kick name, /ban name, /unban name, /bans');
     };
 
     function showWho() {
@@ -4782,6 +4816,28 @@
       settingsBtn.setAttribute('aria-expanded', String(!settingsPanel.hidden));
     };
 
+    // Report a player to the admin (from the settings panel): who, why, and what happened.
+    const reportEl = document.getElementById('report');
+    const closeReport = () => { reportEl.hidden = true; };
+    document.getElementById('report-open').onclick = () => {
+      if (!playing) return toast('Join the game to report someone');
+      const others = [...info.values()].filter((p) => p.id !== myId).sort((a, b) => a.name.localeCompare(b.name));
+      if (!others.length) return toast('Nobody else is playing right now');
+      document.getElementById('report-who').replaceChildren(...others.map((p) => Object.assign(document.createElement('option'), { value: p.id, textContent: p.name })));
+      document.getElementById('report-text').value = '';
+      settingsPanel.hidden = true;
+      settingsBtn.setAttribute('aria-expanded', 'false');
+      keys.clear();
+      reportEl.hidden = false;
+    };
+    document.getElementById('report-cancel').onclick = closeReport;
+    reportEl.onsubmit = (e) => {
+      e.preventDefault();
+      send({ t: 'report', id: Number(document.getElementById('report-who').value), reason: document.getElementById('report-why').value, text: document.getElementById('report-text').value });
+      closeReport();
+    };
+    reportEl.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') closeReport(); }); // (typing here doesn't move you)
+
     // ---- sound effects: synthesised with Web Audio, unless the sound editor uploaded a file -------
 
     const audio = { ctx: null, master: null, noise: null, loops: {} };
@@ -4918,11 +4974,11 @@
       const stop = (t) => { for (const o of [o1, o2, sub, lfo, n]) o.stop(t); };
       return { g, set, stop };
     }
-    /** The sound editor's preview of a built-in engine: idle, a rev through two gears, back to idle. */
+    /** The sound editor's preview of a built-in engine as it plays in game: idle, full throttle, back to idle. */
     function engineRevPreview(out, idle) {
       const a = audio.ctx, t = a.currentTime, e = engineVoice(out);
       e.g.gain.setValueAtTime(0.5, t);
-      const steps = [[0, 1, 0], [0.4, 1.4, 1], [0.9, 2.8, 1], [1.0, 1.9, 1], [1.5, 3, 1], [1.7, 1.2, 0], [2.4, 1, 0]];
+      const steps = [[0, 1, 0], [0.6, 3.4, 1], [1.8, 1, 0]];
       for (const [at, mult, load] of steps) e.set(idle * mult, load, t + at, at ? 0.12 : 0.01);
       e.g.gain.setTargetAtTime(0, t + 2.4, 0.1);
       e.stop(t + 3);
@@ -5562,36 +5618,29 @@
     /** The sound editor slot for a kind of car's engine: 'sedan' -> 'engineSedan'. */
     const engineSlot = (type) => `engine${type[0].toUpperCase()}${type.slice(1)}`;
     const ENGINE_PITCH = { sedan: 45, sports: 62, pickup: 38, police: 50, truck: 28 }; // the built-in engine's idle pitch (Hz)
-    const GEAR_TOPS = { sedan: [0.22, 0.42, 0.64, 0.84, 1.2], sports: [0.18, 0.36, 0.55, 0.74, 0.9, 1.2], truck: [0.12, 0.24, 0.38, 0.54, 0.72, 0.88, 1.2] }; // each gear's top, as a share of top speed
     const engineGear = { gear: 0, speed: 0, load: 0, shiftAt: 0, liftUntil: 0, liftPop: false };
     /**
-     * Engine revs for my car: rpm climbs through each gear and drops when the next goes in; load is how hard it's
-     * pulling (from how fast the car is gaining speed). shifted is 'up' / 'down' on the frame a gear changes.
-     * Other cars pass their own gear state as e.
+     * Engine revs: just two sounds, idle and full throttle (the revs in between sounded bad). Full while the
+     * car is pulling away or moving along, idle when it's stopped or creeping; it glides quickly between them.
+     * load is how hard it's pulling (from how fast the car is gaining speed). Other cars pass their own state as e.
      */
     function engineRevs(car, speed, dt, e = engineGear) {
       const now = audio.ctx.currentTime;
       if (!car) { Object.assign(e, { gear: 0, speed: 0, load: 0, liftPop: false }); return { rpm: 0, load: 0, shifted: null }; }
-      const type = vehicleTypes[car.type] ?? {}, tops = GEAR_TOPS[car.type] ?? GEAR_TOPS.sedan;
+      const type = vehicleTypes[car.type] ?? {};
       const frac = speed / ((type.maxSpeed ?? 400) * (car.boosting ? 1.3 : 1));
       const gaining = (speed - e.speed) / Math.max(dt, 0.001);
       e.speed = speed;
       const wasLoad = e.load;
       e.load += ((gaining > 15 || car.boosting ? 1 : 0) - e.load) * Math.min(1, dt * 8);
-      let shifted = null;
-      if (frac > tops[e.gear] && e.gear < tops.length - 1) { e.gear++; shifted = 'up'; }
-      else if (e.gear > 0 && frac < tops[e.gear - 1] - 0.05) { e.gear--; shifted = 'down'; }
-      if (shifted) e.shiftAt = now;
-      const lo = e.gear ? tops[e.gear - 1] : 0, hi = tops[e.gear];
-      const within = Math.max(0, Math.min(1, (frac - lo) / (hi - lo)));
-      const rpm = e.gear ? 0.3 + 0.7 * within : 0.85 * within + (e.load > 0.5 ? 0.12 : 0);
-      // Lifting off at high revs: the exhaust crackles for a moment.
-      if (wasLoad > 0.6 && e.load < 0.4 && rpm > 0.6) e.liftUntil = now + 0.7;
+      const rpm = e.load > 0.5 || frac > 0.12 ? 1 : 0;
+      // Lifting off at speed: the exhaust crackles for a moment.
+      if (wasLoad > 0.6 && e.load < 0.4 && rpm) e.liftUntil = now + 0.7;
       e.liftPop = now < e.liftUntil && e.load < 0.4;
-      return { rpm, load: e.load, shifted };
+      return { rpm, load: e.load, shifted: null };
     }
 
-    // ---- other cars' engines: the nearest few with someone at the wheel, revving through their gears as they go,
+    // ---- other cars' engines: the nearest few with someone at the wheel, idling or at full throttle as they go,
     // fading and muffling with distance, and dropping in pitch as they pass (Doppler). ----
     const ENGINE_RANGE = 1100, MAX_ENGINES = 5, SOUND_SPEED = 1400; // (a slow speed of sound, for a clearer swoosh)
     const carEngines = new Map(); // vehicle id -> { voice, f, pan, gear, x, y, at, speed, dist, idle, file }
@@ -5928,7 +5977,7 @@
       const car = me && playing ? me.car : null;
       const speed = car ? Math.hypot(car.vx, car.vy) : 0;
       const { rpm, load, shifted } = engineRevs(car, speed, dt);
-      if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + rpm * 0.9, now, shifted ? 0.04 : 0.1); // revs through the gears
+      if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + rpm * 0.9, now, shifted ? 0.04 : 0.1); // idle or full throttle
       else engine?.set((ENGINE_PITCH[carNow?.type] ?? 45) * (1 + rpm * 2.4), load, now, shifted ? 0.04 : 0.07);
       const engineVol = car ? (engine?.file ? 0.35 + rpm * 0.25 + load * 0.15 : 0.07 + rpm * 0.05 + load * 0.06) : 0;
       if (shifted && engine) { // the clutch: a moment's dip as the next gear goes in

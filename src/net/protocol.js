@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { censor, rudeName } from '../moderation.js';
 
 // Every message is a JSON object with a `t` (type) field.
 
@@ -7,6 +8,7 @@ export const ClientMsg = Object.freeze({
   INPUT: 'input', // { t, seq, angle, throttle, boost (sprint), aim, fire, reload, use (E: doors/vehicles), slot, gas, steer, drift, rob (F held) }
   PING: 'ping', // { t, ts }
   CHAT: 'chat', // { t, text }
+  REPORT: 'report', // { t, id (player id), reason, text } report a player to the admin
   BUY: 'buy', // { t, item } from a shopkeeper you're standing next to (it goes into your hotbar)
   EAT: 'eat', // { t } E with food selected: eat one (heals over a few seconds)
   BANK: 'bank', // { t, action: 'deposit' | 'withdraw', amount } at an ATM or bank teller
@@ -92,7 +94,8 @@ function sanitizeName(name) {
   if (typeof name !== 'string') return 'Player';
   // Strip control characters and collapse whitespace.
   const clean = name.replace(/[\p{C}]/gu, '').replace(/\s+/g, ' ').trim();
-  return clean.slice(0, config.player.nameMaxLength) || 'Player';
+  const short = clean.slice(0, config.player.nameMaxLength);
+  return short && !rudeName(short) ? short : 'Player';
 }
 
 /** Each part must be a valid index into its list; anything else falls back to a random choice. */
@@ -124,7 +127,14 @@ const validators = {
   [ClientMsg.CHAT]: (m) => {
     if (typeof m.text !== 'string') return null;
     const text = m.text.replace(/[\p{C}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, config.net.chatMaxLength);
-    return text ? { t: m.t, text } : null;
+    // (Admin commands like "/ban name" are checked before the swear filter, so names aren't starred out.)
+    return text ? { t: m.t, text: text.startsWith('/') ? text : censor(text) } : null;
+  },
+
+  [ClientMsg.REPORT]: (m) => {
+    if (!Number.isInteger(m.id) || !['cheating', 'abuse', 'name', 'griefing', 'other'].includes(m.reason)) return null;
+    const text = typeof m.text === 'string' ? m.text.replace(/[\p{C}]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+    return { t: m.t, id: m.id, reason: m.reason, text };
   },
 
   [ClientMsg.BUY]: (m) => (typeof m.item === 'string' && (Object.hasOwn(config.economy.menu, m.item) || m.item === 'rod') ? { t: m.t, item: m.item } : null),

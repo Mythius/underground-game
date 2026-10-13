@@ -554,6 +554,15 @@ export class Room {
   spawn(client, name, look) {
     if (client.player?.alive) return;
     const account = client.account;
+    if (account?.id && !account.guest && name !== 'Player' && this.store?.setName) {
+      // My things are labelled with the name I play under (if nobody else has it).
+      const was = account.name;
+      if (this.store.setName(account.id, name) === 'taken') client.send({ t: ServerMsg.ERROR, code: 'name_taken', name: account.name });
+      else if (account.name !== was) {
+        this.world.furnishings.changed = true; // (owners and homes are re-sent when their lists change)
+        for (const w of this.world.warehouses.all.values()) if (w.owner === account) w.version++;
+      }
+    }
     if (account?.id && !account.guest) {
       this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
       this.world.furnishings.restoreHome(account, account.homeItems); // (once a session)
@@ -583,6 +592,8 @@ export class Room {
     if (!client.name) return client.send({ t: ServerMsg.ERROR, code: 'join_first' });
     if (!client.chatLimiter.tryConsume()) return client.send({ t: ServerMsg.ERROR, code: 'chat_too_fast' });
     const color = client.player?.color ?? '#999';
+    (client.recentChat ??= []).push(text); // (sent along with any report about them)
+    if (client.recentChat.length > 10) client.recentChat.shift();
     this.broadcast({ t: ServerMsg.CHAT, id: client.player?.id ?? null, name: client.name, color, text });
   }
 

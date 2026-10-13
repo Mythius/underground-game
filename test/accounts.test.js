@@ -57,3 +57,15 @@ test('what you carry (cash and hotbar) is kept on the account', () => {
   assert.deepEqual(store.accountForToken(token).carried, [{ type: 'knife' }, { good: 'logs', qty: 4 }, null]);
   assert.equal(store.accountForToken(token).cash, 321);
 });
+
+test('an account takes the name typed on the start screen, unless someone else has it', () => {
+  const store = new AccountStore(':memory:');
+  const a = store.createDeviceAccount().account;
+  const b = store.createDeviceAccount().account;
+  const live = store.live(a.id);
+  assert.equal(store.setName(a.id, 'Ivan the Bold'), null);
+  assert.equal(live.name, 'Ivan the Bold'); // (labels on cars and homes follow it)
+  assert.equal(store.account(a.id).name, 'Ivan the Bold');
+  assert.equal(store.setName(b.id, 'ivan the bold'), 'taken');
+  assert.equal(store.setName(a.id, 'IVAN THE BOLD'), null); // (my own name, in other capitals)
+});
