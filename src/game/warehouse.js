@@ -814,6 +814,20 @@ export class Warehouses {
     return [...this.all.values()].map((w) => [w.id, w.owner?.name ?? null]);
   }
 
+  /** Logged off: each factory they own is put away as after a restart, to bring back into a free warehouse of its size. */
+  unload(account) {
+    if (!account?.id) return;
+    const furn = this.world.furnishings;
+    for (const [slot, w] of this.slots()) {
+      if (w.ownerId !== account.id) continue;
+      this.stored.push({ slot, accountId: w.ownerId, data: { ...w.save(), furnishings: furn.saveIn(w.building) } });
+      furn.removeIn(w.building);
+      w.reset();
+      Object.assign(w, { owner: null, ownerId: null, spent: 0, taxOwed: 0, unpaid: false, heat: 0 });
+      this.changed = true;
+    }
+  }
+
   // ---- saving ---------------------------------------------------------------------
 
   /** Sizes of the saved factories account has waiting to be loaded into a free warehouse. */

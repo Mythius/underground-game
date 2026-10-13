@@ -337,6 +337,22 @@ export class Room {
     furnish.homesChanged.clear();
   }
 
+  /** Closed the game: their homes, factories and cars out on the road are saved and taken off the map (not when they just die). */
+  #unload(account) {
+    if (!account?.id || account.guest || !this.store) return;
+    if ([...this.clients].some((c) => c.account?.id === account.id)) return; // (still playing in another tab)
+    try {
+      const carIds = this.store.cars(account.id).map((c) => c.id);
+      for (const v of this.world.vehicles.values()) if (v.carId && carIds.includes(v.carId)) this.#saveCar(v);
+      const items = this.world.unloadAccount(account, carIds);
+      if (items) this.#store('setHomeItems', account.id, items);
+      this.#saveProperties();
+      this.#saveWarehouses();
+    } catch (err) {
+      logger.error('unloading a player\'s things failed', { err: err.message });
+    }
+  }
+
   #saveCarried(p) {
     if (p.account?.id && !p.account.guest) this.#store('setCarried', p.account.id, p.cash, carriedSlots(p));
   }
@@ -545,6 +561,7 @@ export class Room {
       this.world.removePlayer(client.player.id);
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
     }
+    this.#unload(client.account);
     client.player = null;
     client.room = null;
   }

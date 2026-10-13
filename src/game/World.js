@@ -882,6 +882,22 @@ export class World {
     p.vehicle = null;
   }
 
+  /**
+   * Their account logged off (closed the game): their homes and factories are put away (as after a
+   * restart) and their saved cars (`carIds`, saved first) leave the road for the garage. Returns the
+   * starter home's furniture, for saving.
+   */
+  unloadAccount(account, carIds = []) {
+    const ids = new Set(carIds);
+    for (const v of [...this.vehicles.values()]) {
+      if (!v.carId || !ids.has(v.carId)) continue;
+      for (const p of [v.driver, v.passenger]) if (p) this.leaveSeat(p);
+      this.vehicles.delete(v.id);
+    }
+    this.warehouses.unload(account);
+    return this.homes.unload(account);
+  }
+
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;

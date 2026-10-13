@@ -302,6 +302,13 @@ export class Furnishings {
       const rot = (((s.rot ?? 0) % 4) + 4) % 4;
       const [w, h] = dims(s.kind, rot); // (its size as it is now, however it was saved)
       let r = { ...toWorld(b, { x: s.x, y: s.y, w, h }), rot: (rot + (b.rot ?? 0)) % 4 };
+      // One just like it already there (a tenant's cabinet in their room): it's taken over, not doubled.
+      const same = [...this.items.values()].find((it) => it.building === b.id && it.kind === s.kind && Math.abs(it.x - r.x) < 1 && Math.abs(it.y - r.y) < 1 && it.w === r.w && it.h === r.h);
+      if (same) {
+        Object.assign(same, { owner, ownerId: owner?.id ?? null });
+        this.changed = true;
+        continue;
+      }
       if (!this.fits(b, r)) r = this.#freeSpot(b, r);
       if (r) this.#add(b, s.kind, r, owner, slots);
       else left.push(s);
@@ -351,13 +358,39 @@ export class Furnishings {
     this.loadIn(b, b.furnish ?? [], owner);
   }
 
-  /** Take away whatever nobody owns in building b (the furniture a home was set out with). */
-  clearUnowned(b) {
+  /** Take away whatever nobody owns in building b (the furniture a home was set out with), except what `keep(it)`. */
+  clearUnowned(b, keep = () => false) {
     for (const it of [...this.items.values()]) {
-      if (it.building !== b.id || it.owner) continue;
+      if (it.building !== b.id || it.owner || keep(it)) continue;
       this.items.delete(it.id);
       this.changed = true;
     }
+  }
+
+  /** Take everything out of building b (its owner logged off: it was saved first), except what `keep(it)`. */
+  removeIn(b, keep = () => false) {
+    for (const it of [...this.items.values()]) {
+      if (it.building !== b.id || keep(it)) continue;
+      this.items.delete(it.id);
+      this.changed = true;
+    }
+  }
+
+  /**
+   * Logged off: their home furniture to save (the room saves it), then it's taken out and the home is
+   * set out again like any empty one. Restored from the saved list when they next spawn.
+   */
+  unloadHome(account) {
+    const home = this.world.homes.homeOf(account);
+    const saved = this.saveHome(account);
+    if (home) {
+      this.removeIn(home);
+      this.furnishDefaults(home);
+    }
+    this.restoredHomes.delete(account.id);
+    this.homesChanged.delete(account.id);
+    this.leftOver?.delete(account.id);
+    return saved;
   }
 
   /** Everything in building b changes hands: to `owner`, or to nobody (null). */

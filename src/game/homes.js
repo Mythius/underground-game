@@ -132,7 +132,7 @@ export class Homes {
         if (!saved) return 'nothing_stored';
         this.stored.splice(this.stored.indexOf(saved), 1);
         this.bought.set(b.id, { owner: account, ownerId: account.id, spent: saved.data.spent ?? c.prices[b.type] });
-        furn.clearUnowned(b);
+        furn.clearUnowned(b, (it) => this.tenantOf(it)); // (a tenant's cabinet stays, with their things in it)
         furn.loadIn(b, saved.data.furnishings, account); // your furniture, cabinets and all
         return null;
       }
@@ -238,6 +238,32 @@ export class Homes {
     }
     for (const a of touched) this.world.onBankChange?.(a);
     this.changed = true;
+  }
+
+  /**
+   * Logged off: their starter home is free again (they get it back next time if nobody's taken it),
+   * and each home they bought is put away as after a restart, to bring back into a free one of the
+   * type. Tenants keep their rooms and what's in them. Returns the starter home's furniture to save.
+   */
+  unload(account) {
+    if (!account?.id) return null;
+    const furn = this.world.furnishings;
+    const items = furn.unloadHome(account);
+    const home = this.byAccount.get(account.id);
+    if (home) {
+      this.owners.delete(home.id);
+      this.byAccount.delete(account.id);
+    }
+    for (const b of this.boughtBy(account)) {
+      const own = this.bought.get(b.id);
+      const tenants = (it) => Boolean(this.tenantOf(it));
+      this.stored.push({ accountId: own.ownerId, kind: 'own', slot: null, data: { type: b.type, spent: own.spent, furnishings: furn.saveIn(b, (it) => !tenants(it)) } });
+      this.bought.delete(b.id);
+      furn.removeIn(b, tenants);
+      furn.furnishDefaults(b); // (set out like any home nobody owns; a tenant's cabinet is left as it is)
+      this.changed = true;
+    }
+    return items;
   }
 
   /** For the clients: every home that's someone's, [id, owner name | null, 1 if a starter home, [tenant name | null per room] | null]. */
