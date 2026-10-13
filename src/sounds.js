@@ -38,6 +38,8 @@ export const SOUND_SLOTS = [
     { id: 'skid', name: 'Tyre skid', loop: true, note: 'While sliding or drifting.' },
     { id: 'siren', name: 'Militsiya siren', loop: true, note: 'Louder the closer a car with its siren on.' },
     { id: 'carDoor', name: 'Get in / out of a car' },
+    { id: 'crash', name: 'Crashing your car into something' },
+    { id: 'backfire', name: 'Exhaust backfire', note: 'Pops on a gear change or lifting off at high revs.' },
     { id: 'boost', name: 'Vodka boost (fire from the exhaust)', loop: true, note: 'While a car near you burns its boost (Space).' },
     { id: 'pour', name: 'Pour fuel or vodka into a car' },
   ] },

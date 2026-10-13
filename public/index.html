@@ -4679,18 +4679,24 @@
     // A gain + stereo pan for a sound at world position `at` (or right here if omitted). Null if out of earshot.
     function voice(at, volume) {
       const a = audio.ctx;
-      let gain = volume, pan = 0;
+      let gain = volume, pan = 0, dist = 0;
       if (at && at.x !== undefined) {
         const ear = me && playing ? me : camera;
-        const dist = Math.hypot(at.x - ear.x, at.y - ear.y);
+        dist = Math.hypot(at.x - ear.x, at.y - ear.y);
         gain *= Math.max(0, 1 - dist / 1600) ** 1.5;
         pan = Math.max(-1, Math.min(1, (at.x - ear.x) / 800));
       }
       if (gain < 0.005) return null;
       const g = a.createGain();
       g.gain.value = gain;
+      let tail = g;
+      if (dist > 250) { // far off, the highs die away first: a distant shot is a dull thump, not a crack
+        const f = a.createBiquadFilter(); f.type = 'lowpass';
+        f.frequency.value = 900 + 15000 * Math.max(0, 1 - dist / 1600) ** 2;
+        g.connect(f); tail = f;
+      }
       const p = a.createStereoPanner ? a.createStereoPanner() : null;
-      if (p) { p.pan.value = pan; g.connect(p); p.connect(audio.master); } else g.connect(audio.master);
+      if (p) { p.pan.value = pan; tail.connect(p); p.connect(audio.master); } else tail.connect(audio.master);
       return g;
     }
 
@@ -4724,12 +4730,109 @@
       o.start(t); o.stop(t + dur + 0.05);
     }
 
+    /** A soft clipper: drives a sound into it for weight and punch without harsh digital clipping. */
+    let clipCurve = null;
+    function punch(out, drive = 2.5, keep = false) {
+      if (!clipCurve) {
+        clipCurve = new Float32Array(1024);
+        for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; clipCurve[i] = Math.tanh(x * 3) / Math.tanh(3); }
+      }
+      const a = audio.ctx, pre = a.createGain(), sh = a.createWaveShaper(), post = a.createGain();
+      pre.gain.value = drive; sh.curve = clipCurve; sh.oversample = '2x'; post.gain.value = 1 / Math.sqrt(drive);
+      pre.connect(sh); sh.connect(post); post.connect(out);
+      if (!keep) setTimeout(() => pre.disconnect(), 4000); // (a one-off sound's done by then)
+      return pre;
+    }
+    /**
+     * A gunshot in layers, as a real one is heard: the supersonic crack, the muzzle blast (a burst of noise), a low
+     * thump you feel, then the report rolling back off the buildings. Each shot varies a little so a burst isn't a loop.
+     */
+    function gunshot(out, { crack = 1, blast = 1400, blastQ = 0.7, blastDur = 0.14, thump = 110, thumpDur = 0.12, weight = 0.6, tail = 0.5, tailDur = 0.6, echo = 0.3, drive = 2.5 }) {
+      const v = 0.94 + Math.random() * 0.12; // ±6% pitch
+      const o = punch(out, drive);
+      noiseBurst(o, { dur: 0.018, filter: 'highpass', freq: 4500 * v, vol: crack }); // crack
+      noiseBurst(o, { dur: blastDur, freq: blast * v, endFreq: blast * v * 0.45, q: blastQ, vol: 1 }); // blast
+      tone(o, { dur: thumpDur, freq: thump * v, endFreq: thump * v * 0.35, vol: weight, attack: 0.002 }); // thump
+      tone(o, { dur: thumpDur * 0.5, type: 'triangle', freq: thump * v * 2.1, endFreq: thump * v * 0.7, vol: weight * 0.4, attack: 0.002 });
+      noiseBurst(out, { at: 0.01, dur: tailDur, filter: 'lowpass', freq: 1600 * v, endFreq: 180, q: 0.5, vol: tail * 0.5 }); // rolling report
+      const d = 0.11 + Math.random() * 0.12; // the slap off a wall, duller and quieter
+      noiseBurst(out, { at: d, dur: tailDur * 0.8, filter: 'lowpass', freq: 1100 * v, endFreq: 150, q: 0.5, vol: echo * 0.35 });
+      tone(out, { at: d, dur: thumpDur * 1.5, freq: thump * v * 0.8, endFreq: thump * v * 0.3, vol: weight * echo * 0.5 });
+    }
+    /**
+     * A built-in engine: the firing note (two slightly detuned saws), a sub an octave down, pulsed at the firing rate
+     * so it chugs rather than hums, plus exhaust rasp — through a soft clipper and a filter that opens with the throttle.
+     * set(freq, load) moves it: freq the firing note in Hz, load 0..1 how hard it's working.
+     */
+    function engineVoice(dest) {
+      const a = audio.ctx, osc = (type, f) => { const o = a.createOscillator(); o.type = type; o.frequency.value = f; o.start(); return o; };
+      const o1 = osc('sawtooth', 50), o2 = osc('sawtooth', 50), sub = osc('square', 25), lfo = osc('sine', 25);
+      const mix = a.createGain(); mix.gain.value = 0.5;
+      const subG = a.createGain(); subG.gain.value = 0.7;
+      const am = a.createGain(); am.gain.value = 0.65; // the chug: the mix's level wobbles at half the firing rate
+      const lfoG = a.createGain(); lfoG.gain.value = 0.35; lfo.connect(lfoG); lfoG.connect(am.gain);
+      o1.connect(mix); o2.connect(mix); sub.connect(subG); subG.connect(mix); mix.connect(am);
+      const n = a.createBufferSource(); n.buffer = audio.noise; n.loop = true;
+      const nf = a.createBiquadFilter(); nf.type = 'bandpass'; nf.Q.value = 1.2;
+      const nG = a.createGain(); nG.gain.value = 0.15;
+      n.connect(nf); nf.connect(nG); nG.connect(am); n.start();
+      const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 2;
+      am.connect(punch(lp, 2.2, true));
+      const g = a.createGain(); g.gain.value = 0;
+      lp.connect(g); g.connect(dest);
+      const set = (freq, load, now, smooth = 0.06) => {
+        o1.frequency.setTargetAtTime(freq, now, smooth); o2.frequency.setTargetAtTime(freq * 1.012, now, smooth);
+        sub.frequency.setTargetAtTime(freq / 2, now, smooth); lfo.frequency.setTargetAtTime(freq / 2, now, smooth);
+        nf.frequency.setTargetAtTime(freq * 5, now, smooth);
+        nG.gain.setTargetAtTime(0.08 + load * 0.25, now, 0.1);
+        lp.frequency.setTargetAtTime(250 + freq * 3 + load * 1600, now, 0.08);
+      };
+      set(50, 0, a.currentTime);
+      const stop = (t) => { for (const o of [o1, o2, sub, lfo, n]) o.stop(t); };
+      return { g, set, stop };
+    }
+    /** The sound editor's preview of a built-in engine: idle, a rev through two gears, back to idle. */
+    function engineRevPreview(out, idle) {
+      const a = audio.ctx, t = a.currentTime, e = engineVoice(out);
+      e.g.gain.setValueAtTime(0.5, t);
+      const steps = [[0, 1, 0], [0.4, 1.4, 1], [0.9, 2.8, 1], [1.0, 1.9, 1], [1.5, 3, 1], [1.7, 1.2, 0], [2.4, 1, 0]];
+      for (const [at, mult, load] of steps) e.set(idle * mult, load, t + at, at ? 0.12 : 0.01);
+      e.g.gain.setTargetAtTime(0, t + 2.4, 0.1);
+      e.stop(t + 3);
+    }
+    /** A spent brass case bouncing on the ground. */
+    function casing(out, at = 0.35) {
+      for (let i = 0, t = at, vol = 0.05; i < 3; i++, t += 0.07 - i * 0.015, vol *= 0.55) {
+        const f = 3800 + Math.random() * 1600;
+        tone(out, { at: t, dur: 0.05, freq: f, vol, attack: 0.001 }); tone(out, { at: t, dur: 0.04, freq: f * 1.53, vol: vol * 0.5, attack: 0.001 });
+      }
+    }
+    /** Metal on metal: a slide, a pump or a bolt working. */
+    function clack(out, at, { freq = 2600, vol = 0.3, dur = 0.035 } = {}) {
+      noiseBurst(out, { at, dur, freq, q: 3, vol });
+      tone(out, { at, dur: dur * 1.4, type: 'square', freq: freq * 0.32, endFreq: freq * 0.2, vol: vol * 0.25, attack: 0.001 });
+    }
+
     const SOUNDS = {
-      pistol: (o) => { noiseBurst(o, { dur: 0.14, freq: 1700, q: 0.8, vol: 0.9 }); tone(o, { dur: 0.08, type: 'square', freq: 180, endFreq: 70, vol: 0.25 }); },
+      pistol: (o) => { gunshot(o, { crack: 0.8, blast: 1900, blastDur: 0.11, thump: 150, thumpDur: 0.09, weight: 0.55, tail: 0.4, tailDur: 0.45, echo: 0.3 }); clack(o, 0.03, { freq: 3200, vol: 0.12, dur: 0.02 }); casing(o, 0.4); },
       smg: (o) => { noiseBurst(o, { dur: 0.07, freq: 2600, q: 1, vol: 0.6 }); tone(o, { dur: 0.05, type: 'square', freq: 220, endFreq: 90, vol: 0.15 }); },
-      rifle: (o) => { noiseBurst(o, { dur: 0.16, freq: 1300, q: 0.7, vol: 0.9 }); tone(o, { dur: 0.12, freq: 110, endFreq: 45, vol: 0.5 }); },
-      shotgun: (o) => { noiseBurst(o, { dur: 0.35, filter: 'lowpass', freq: 2200, endFreq: 300, vol: 1.2 }); tone(o, { dur: 0.25, freq: 90, endFreq: 35, vol: 0.7 }); },
-      sniper: (o) => { noiseBurst(o, { dur: 0.5, freq: 1100, q: 0.6, vol: 1.1, endFreq: 400 }); tone(o, { dur: 0.4, freq: 140, endFreq: 40, vol: 0.8 }); tone(o, { at: 0.12, dur: 0.6, freq: 420, endFreq: 200, vol: 0.08 }); },
+      rifle: (o) => { gunshot(o, { crack: 1.1, blast: 1300, blastDur: 0.16, thump: 105, thumpDur: 0.16, weight: 0.8, tail: 0.6, tailDur: 0.8, echo: 0.45, drive: 3 }); casing(o, 0.45); },
+      shotgun: (o) => { // a deep boom, then rack the pump: ka-chunk
+        gunshot(o, { crack: 0.6, blast: 900, blastQ: 0.5, blastDur: 0.3, thump: 80, thumpDur: 0.28, weight: 1.1, tail: 0.8, tailDur: 1, echo: 0.5, drive: 3.5 });
+        clack(o, 0.42, { freq: 1500, vol: 0.35, dur: 0.05 }); clack(o, 0.6, { freq: 2100, vol: 0.4, dur: 0.045 });
+      },
+      sniper: (o) => { // a huge crack that rolls on across the town, then the bolt worked back and forward
+        gunshot(o, { crack: 1.4, blast: 1100, blastQ: 0.6, blastDur: 0.25, thump: 85, thumpDur: 0.3, weight: 1.1, tail: 0.9, tailDur: 1.6, echo: 0.6, drive: 3.5 });
+        noiseBurst(o, { at: 0.45, dur: 1.2, filter: 'lowpass', freq: 600, endFreq: 120, vol: 0.18 }); // a second, far echo
+        clack(o, 0.75, { freq: 1800, vol: 0.25 }); clack(o, 0.95, { freq: 2400, vol: 0.3 });
+      },
+      crash: (o) => { // crunching metal, breaking glass
+        const p = punch(o, 3);
+        noiseBurst(p, { dur: 0.35, filter: 'lowpass', freq: 1400, endFreq: 200, vol: 1 }); tone(p, { dur: 0.25, freq: 75, endFreq: 35, vol: 1, attack: 0.002 });
+        noiseBurst(o, { at: 0.02, dur: 0.4, freq: 900, q: 6, vol: 0.4, endFreq: 500 }); // bending panels
+        for (let i = 0; i < 6; i++) tone(o, { at: 0.04 + Math.random() * 0.25, dur: 0.08, freq: 3000 + Math.random() * 4000, vol: 0.05, attack: 0.001 }); // glass
+      },
+      backfire: (o) => { const p = punch(o, 4); noiseBurst(p, { dur: 0.06, filter: 'lowpass', freq: 1800, vol: 0.9 }); tone(p, { dur: 0.07, freq: 95, endFreq: 50, vol: 0.8, attack: 0.001 }); },
       reload: (o) => { tone(o, { dur: 0.05, type: 'square', freq: 1400, vol: 0.15 }); tone(o, { at: 0.18, dur: 0.06, type: 'square', freq: 900, vol: 0.15 }); noiseBurst(o, { at: 0.3, dur: 0.08, freq: 3000, q: 2, vol: 0.3 }); },
       hurt: (o) => { tone(o, { dur: 0.18, type: 'triangle', freq: 320, endFreq: 110, vol: 0.5 }); noiseBurst(o, { dur: 0.08, filter: 'lowpass', freq: 900, vol: 0.4 }); },
       hit: (o) => { tone(o, { dur: 0.05, type: 'square', freq: 1100, vol: 0.12 }); },
@@ -4811,8 +4914,9 @@
         } catch {}
       }));
       // Loops are rebuilt so they pick up new files.
-      for (const l of Object.values(audio.loops)) if (l) { try { l.src?.stop(); l.o?.stop(); } catch {} l.g.disconnect(); }
+      for (const l of Object.values(audio.loops)) if (l) { try { l.src?.stop(); l.o?.stop(); l.stop?.(0); } catch {} l.g.disconnect(); }
       audio.loops = {};
+      for (const id of [...carEngines.keys()]) dropCarEngine(id);
 
     }
 
@@ -4820,12 +4924,12 @@
 
     const soundsEl = document.getElementById('sounds');
     const LOOP_PREVIEWS = { // what the built-in loops sound like, for the preview button
-      engine: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 70, endFreq: 140, vol: 0.15, attack: 0.1 }),
-      engineSedan: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 70, endFreq: 140, vol: 0.15, attack: 0.1 }),
-      engineSports: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 95, endFreq: 210, vol: 0.15, attack: 0.1 }),
-      enginePickup: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 58, endFreq: 115, vol: 0.16, attack: 0.1 }),
-      enginePolice: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 78, endFreq: 160, vol: 0.15, attack: 0.1 }),
-      engineTruck: (o) => tone(o, { dur: 1.5, type: 'sawtooth', freq: 42, endFreq: 85, vol: 0.18, attack: 0.1 }),
+      engine: (o) => engineRevPreview(o, 45),
+      engineSedan: (o) => engineRevPreview(o, 45),
+      engineSports: (o) => engineRevPreview(o, 62),
+      enginePickup: (o) => engineRevPreview(o, 38),
+      enginePolice: (o) => engineRevPreview(o, 50),
+      engineTruck: (o) => engineRevPreview(o, 28),
       skid: (o) => noiseBurst(o, { dur: 1.2, freq: 1400, q: 4, vol: 0.6 }),
       rain: (o) => noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 1800, q: 0.5, vol: 0.5 }),
       siren: (o) => { for (let i = 0; i < 4; i++) tone(o, { at: i * 0.5, dur: 0.5, type: 'triangle', freq: i % 2 ? 900 : 650, endFreq: i % 2 ? 650 : 900, vol: 0.25 }); },
@@ -4963,9 +5067,9 @@
     const PLAYLIST_INFO = {
       radio: { title: '📻 Car radio playlist', added: '📻 {n} added to the radio', intro: 'A car\'s radio (V on/off, N next song) plays one of these on repeat, and everyone near the car hears it; N moves on to the next. Upload as many as you like — pick several files at once. With none, radios play a built-in tune.' },
       music: { title: '🎵 Background music', added: '🎵 {n} added to the background music', intro: 'Played now and then in a shuffled order: each song fades in and out, with 1–6 minutes of silence between songs. Upload as many as you like — pick several files at once. Players set how loud it is with the Music slider in ⚙ settings.' },
-      fight: { title: '👊 Fight music', added: '👊 {n} added to the fight music', intro: 'Fades in when shots are fired or someone gets hurt near you, plays straight on while the fighting lasts, and fades out about 15 seconds after it stops. Shuffled. With none, the normal music carries on.' },
-      chase: { title: '🚨 Car chase music', added: '🚨 {n} added to the car chase music', intro: 'Fades in when you\'re wanted, in a car, with a Militsiya siren close behind, and fades out about 8 seconds after you lose them. Takes priority over fight music. Shuffled. With none, the normal music carries on.' },
-      prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, fading in and out, with 1–6 minutes of silence between songs. With none, prisoners hear the normal background music.' },
+      fight: { title: '👊 Fight music', added: '👊 {n} added to the fight music', intro: 'Fades in when shots are fired or someone gets hurt near you, plays song after song while the fighting lasts, and fades out about 15 seconds after it stops. Shuffled. With none, the normal music carries on.' },
+      chase: { title: '🚨 Car chase music', added: '🚨 {n} added to the car chase music', intro: 'Fades in when you\'re wanted, in a car, with a Militsiya siren close behind, then plays song after song for as long as the cops are after you (until you\'re no longer wanted, or get locked up), fading out about 8 seconds after. Takes priority over fight music. Shuffled. With none, the normal music carries on.' },
+      prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, song after song with no silence, until you get out. With none, prisoners hear the normal background music.' },
     };
     const songList = (kind) => (kind === 'radio' ? playlist : musicLists[kind]);
     // The upload queue: songs picked for any playlist wait here, and up to UPLOAD_AT_ONCE go up together, each
@@ -5328,7 +5432,103 @@
     const loopGain = (l, name, value, now, smooth = 0.3) => l?.g.gain.setTargetAtTime(value * slotVolume(name), now, smooth);
     /** The sound editor slot for a kind of car's engine: 'sedan' -> 'engineSedan'. */
     const engineSlot = (type) => `engine${type[0].toUpperCase()}${type.slice(1)}`;
-    const ENGINE_PITCH = { sedan: 45, sports: 62, pickup: 38, police: 50, truck: 28 }; // the built-in drone's idle pitch (Hz)
+    const ENGINE_PITCH = { sedan: 45, sports: 62, pickup: 38, police: 50, truck: 28 }; // the built-in engine's idle pitch (Hz)
+    const GEAR_TOPS = { sedan: [0.22, 0.42, 0.64, 0.84, 1.2], sports: [0.18, 0.36, 0.55, 0.74, 0.9, 1.2], truck: [0.12, 0.24, 0.38, 0.54, 0.72, 0.88, 1.2] }; // each gear's top, as a share of top speed
+    const engineGear = { gear: 0, speed: 0, load: 0, shiftAt: 0, liftUntil: 0, liftPop: false };
+    /**
+     * Engine revs for my car: rpm climbs through each gear and drops when the next goes in; load is how hard it's
+     * pulling (from how fast the car is gaining speed). shifted is 'up' / 'down' on the frame a gear changes.
+     * Other cars pass their own gear state as e.
+     */
+    function engineRevs(car, speed, dt, e = engineGear) {
+      const now = audio.ctx.currentTime;
+      if (!car) { Object.assign(e, { gear: 0, speed: 0, load: 0, liftPop: false }); return { rpm: 0, load: 0, shifted: null }; }
+      const type = vehicleTypes[car.type] ?? {}, tops = GEAR_TOPS[car.type] ?? GEAR_TOPS.sedan;
+      const frac = speed / ((type.maxSpeed ?? 400) * (car.boosting ? 1.3 : 1));
+      const gaining = (speed - e.speed) / Math.max(dt, 0.001);
+      e.speed = speed;
+      const wasLoad = e.load;
+      e.load += ((gaining > 15 || car.boosting ? 1 : 0) - e.load) * Math.min(1, dt * 8);
+      let shifted = null;
+      if (frac > tops[e.gear] && e.gear < tops.length - 1) { e.gear++; shifted = 'up'; }
+      else if (e.gear > 0 && frac < tops[e.gear - 1] - 0.05) { e.gear--; shifted = 'down'; }
+      if (shifted) e.shiftAt = now;
+      const lo = e.gear ? tops[e.gear - 1] : 0, hi = tops[e.gear];
+      const within = Math.max(0, Math.min(1, (frac - lo) / (hi - lo)));
+      const rpm = e.gear ? 0.3 + 0.7 * within : 0.85 * within + (e.load > 0.5 ? 0.12 : 0);
+      // Lifting off at high revs: the exhaust crackles for a moment.
+      if (wasLoad > 0.6 && e.load < 0.4 && rpm > 0.6) e.liftUntil = now + 0.7;
+      e.liftPop = now < e.liftUntil && e.load < 0.4;
+      return { rpm, load: e.load, shifted };
+    }
+
+    // ---- other cars' engines: the nearest few with someone at the wheel, revving through their gears as they go,
+    // fading and muffling with distance, and dropping in pitch as they pass (Doppler). ----
+    const ENGINE_RANGE = 1100, MAX_ENGINES = 5, SOUND_SPEED = 1400; // (a slow speed of sound, for a clearer swoosh)
+    const carEngines = new Map(); // vehicle id -> { voice, f, pan, gear, x, y, at, speed, dist, idle, file }
+    function dropCarEngine(id) {
+      const c = carEngines.get(id);
+      if (!c) return;
+      const now = audio.ctx.currentTime;
+      c.voice.g.gain.setTargetAtTime(0, now, 0.1);
+      setTimeout(() => { try { c.voice.stop(0); } catch {} c.voice.g.disconnect(); c.pan?.disconnect(); }, 600);
+      carEngines.delete(id);
+    }
+    /** A file engine (the sound editor's upload) as a voice: it pitches by playback rate. */
+    function fileEngineVoice(buffer, dest) {
+      const a = audio.ctx, src = a.createBufferSource(); src.buffer = buffer; src.loop = true;
+      src.loopStart = 0; src.start(0, Math.random() * buffer.duration);
+      const g = a.createGain(); g.gain.value = 0; src.connect(g); g.connect(dest);
+      return { g, src, stop: (t) => src.stop(t) };
+    }
+    function updateCarEngines(now, dt) {
+      const a = audio.ctx;
+      const ear = me && playing && !settings.mute ? me : null;
+      const mine = me?.car?.id ?? riding ?? null; // (my own car's engine is the loop above)
+      const near = [];
+      if (ear) for (const [id, v] of snapshots.at(-1)?.vehicles ?? []) {
+        if (id === mine || !v.driver) continue;
+        const d = Math.hypot(v.x - ear.x, v.y - ear.y);
+        if (d < ENGINE_RANGE) near.push([d, id, v]);
+      }
+      near.sort((p, q) => p[0] - q[0]);
+      const want = new Set();
+      for (const [d, id, v] of near.slice(0, MAX_ENGINES)) {
+        want.add(id);
+        let c = carEngines.get(id);
+        if (!c) {
+          const f = a.createBiquadFilter(); f.type = 'lowpass';
+          const pan = a.createStereoPanner ? a.createStereoPanner() : null;
+          if (pan) { f.connect(pan); pan.connect(audio.master); } else f.connect(audio.master);
+          const slot = engineSlot(v.type), buffer = custom.buffers.get(slot) ?? custom.buffers.get('engine');
+          const voice = buffer ? fileEngineVoice(buffer, f) : engineVoice(f);
+          c = { voice, f, pan, file: !!buffer, slot: custom.buffers.has(slot) ? slot : buffer ? 'engine' : slot,
+            gear: { gear: 0, speed: 0, load: 0, shiftAt: 0, liftUntil: 0, liftPop: false }, x: v.x, y: v.y, at: now, speed: 0, dist: d, vr: 0 };
+          carEngines.set(id, c);
+        }
+        // Speed from how far it moved since its position last changed (snapshots arrive a few times a frame-second).
+        if (v.x !== c.x || v.y !== c.y) {
+          const el = Math.max(now - c.at, 0.016), moved = Math.hypot(v.x - c.x, v.y - c.y) / el;
+          c.speed += (Math.min(moved, 800) - c.speed) * Math.min(1, el * 6);
+          [c.x, c.y, c.at] = [v.x, v.y, now];
+        } else if (now - c.at > 0.25) c.speed *= Math.exp(-dt * 4); // (stopped)
+        c.vr += ((d - c.dist) / Math.max(dt, 0.001) - c.vr) * Math.min(1, dt * 5); // closing (−) or receding (+) speed
+        c.dist = d;
+        const doppler = SOUND_SPEED / (SOUND_SPEED + Math.max(-600, Math.min(600, c.vr)));
+        const { rpm, load, shifted } = engineRevs(v, c.speed, dt, c.gear);
+        const smooth = shifted ? 0.04 : 0.08;
+        if (c.file) c.voice.src.playbackRate.setTargetAtTime((0.7 + rpm * 0.9) * doppler, now, smooth);
+        else c.voice.set((ENGINE_PITCH[v.type] ?? 45) * (1 + rpm * 2.4) * doppler, load, now, smooth);
+        const fade = Math.max(0, 1 - d / ENGINE_RANGE) ** 1.6;
+        const vol = (c.file ? 0.3 + rpm * 0.25 + load * 0.1 : 0.06 + rpm * 0.05 + load * 0.05) * fade * slotVolume(c.slot) * (shifted ? 0.5 : 1);
+        c.voice.g.gain.setTargetAtTime(vol, now, shifted ? 0.02 : 0.1);
+        c.f.frequency.setTargetAtTime(700 + 15000 * fade ** 2, now, 0.1); // muffled far off
+        c.pan?.pan.setTargetAtTime(Math.max(-1, Math.min(1, (v.x - ear.x) / 700)), now, 0.1);
+        if (shifted === 'up' && Math.random() < 0.25) sfx('backfire', v, 0.4);
+        if (c.gear.liftPop && Math.random() < dt * 4) sfx('backfire', v, 0.3);
+      }
+      for (const id of [...carEngines.keys()]) if (!want.has(id)) dropCarEngine(id);
+    }
 
     // ---- car radios: every car with its radio on plays its song; you hear the ones near you, fading with distance ----
     const RADIO_RANGE = 900;
@@ -5377,14 +5577,15 @@
     }
     // ---- music: the uploaded songs, shuffled, each fading in and out. Which playlist plays, first that has songs:
     // chase (wanted, in a car, a siren close behind), fight (shots or hits near me), prison (locked up), background.
-    // Background and prison music leave 1–6 minutes of silence between songs; fight and chase music play straight on
-    // while the action lasts, then fade out. Switching playlists crossfades. ----
+    // Background music leaves 1–6 minutes of silence between songs; fight, chase and prison music play song after song
+    // while the event lasts (the fight goes on, the cops are after me, I'm locked up), then fade out. Switching playlists crossfades. ----
     const MUSIC_FADE_IN = 5, MUSIC_FADE_OUT = 8; // seconds, at a song's start and end
     const ACTION_FADE_IN = 2, SWITCH_FADE = 3; // fight/chase music comes in quicker; a song cut short fades over this
     const MUSIC_GAP = [60, 360]; // silence between background / prison songs, seconds (random in this range)
     const FIGHT_HOLD = 15, CHASE_HOLD = 8; // seconds the action music keeps going after the last shot / siren
     const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] } }; // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
     const ACTION_MUSIC = new Set(['fight', 'chase']);
+    const REPEAT_MUSIC = new Set(['fight', 'chase', 'prison']); // songs follow one another with no silence until the event is over
     const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null, fightUntil: 0, chaseUntil: 0 }; // now: { id, el, g }; times on the audio clock
     async function loadMusic(kind = 'music') {
       try {
@@ -5427,8 +5628,12 @@
     const musicGap = () => MUSIC_GAP[0] + Math.random() * (MUSIC_GAP[1] - MUSIC_GAP[0]);
     function updateMusic(now) {
       const a = audio.ctx;
-      // A chase: wanted, in a car, and a Militsiya car with its siren on close by.
-      if (me && playing && (me.car || riding) && crimeState.wanted > 0) {
+      // A chase starts when I'm wanted, in a car, with a Militsiya car's siren close by — and then lasts until the
+      // cops give up on me (no longer wanted), on foot or not. Getting locked up ends it.
+      const chasing = now < music.chaseUntil;
+      if (prisonState || !crimeState.wanted) { if (chasing && prisonState) music.chaseUntil = 0; }
+      else if (chasing) music.chaseUntil = now + CHASE_HOLD;
+      else if (me && playing && (me.car || riding)) {
         for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {
           if (v.siren && Math.hypot(v.x - me.x, v.y - me.y) < 1400) { music.chaseUntil = now + CHASE_HOLD; break; }
         }
@@ -5440,7 +5645,7 @@
       if (kind !== music.kind) {
         const was = music.kind;
         // Action starts at once; after it, the calm music comes back after the usual silence; prison <-> outside soon.
-        const gap = ACTION_MUSIC.has(kind) ? 0 : ACTION_MUSIC.has(was) ? musicGap() : 5;
+        const gap = ACTION_MUSIC.has(kind) ? 0 : ACTION_MUSIC.has(was) && kind === 'music' ? musicGap() : 5;
         if (music.now) stopMusic(gap, SWITCH_FADE);
         Object.assign(music, { kind, queue: [], nextAt: now + gap });
       }
@@ -5449,7 +5654,7 @@
       music.nextAt ??= now + 5; // the first song soon after the game starts
       const m = music.now;
       const song = m && list.songs.find((s) => s.id === m.id);
-      if (m && (!song || m.el.ended || m.el.error)) { stopMusic(m.el.error ? 10 : ACTION_MUSIC.has(kind) ? 0 : musicGap(), song ? 0 : SWITCH_FADE); return; }
+      if (m && (!song || m.el.ended || m.el.error)) { stopMusic(m.el.error ? 10 : REPEAT_MUSIC.has(kind) ? 0 : musicGap(), song ? 0 : SWITCH_FADE); return; }
       if (!m) {
         if (now < music.nextAt) return;
         const next = nextMusicSong(list);
@@ -5546,13 +5751,7 @@
       const carNow = me && playing ? me.car : null;
       const typeSlot = carNow ? engineSlot(carNow.type) : 'engine';
       const engineName = custom.buffers.has(typeSlot) ? typeSlot : custom.buffers.has('engine') ? 'engine' : typeSlot;
-      const engine = loop(engineName, () => {
-        const o = a.createOscillator(); o.type = 'sawtooth';
-        const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500;
-        const g = a.createGain(); g.gain.value = 0;
-        o.connect(f); f.connect(g); g.connect(audio.master); o.start();
-        return { o, g };
-      });
+      const engine = loop(engineName, () => engineVoice(audio.master));
       for (const [name, l] of Object.entries(audio.loops)) if (name.startsWith('engine') && name !== engineName) loopGain(l, name, 0, now, 0.1); // (the last car's engine falls quiet)
       const skid = loop('skid', noiseLoop('bandpass', 1400, 4));
       const rain = loop('rain', noiseLoop('lowpass', 1800, 0.5));
@@ -5574,9 +5773,17 @@
 
       const car = me && playing ? me.car : null;
       const speed = car ? Math.hypot(car.vx, car.vy) : 0;
-      if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + Math.min(speed / 500, 1) * 0.9, now, 0.1); // revs with speed
-      else engine?.o.frequency.setTargetAtTime((ENGINE_PITCH[carNow?.type] ?? 45) + speed * 0.22, now, 0.1);
-      loopGain(engine, engineName, car ? (engine?.file ? 0.35 : 0.05) + Math.min(speed / 500, 1) * (engine?.file ? 0.35 : 0.05) : 0, now, 0.15);
+      const { rpm, load, shifted } = engineRevs(car, speed, dt);
+      if (engine?.file) engine.src.playbackRate.setTargetAtTime(0.7 + rpm * 0.9, now, shifted ? 0.04 : 0.1); // revs through the gears
+      else engine?.set((ENGINE_PITCH[carNow?.type] ?? 45) * (1 + rpm * 2.4), load, now, shifted ? 0.04 : 0.07);
+      const engineVol = car ? (engine?.file ? 0.35 + rpm * 0.25 + load * 0.15 : 0.07 + rpm * 0.05 + load * 0.06) : 0;
+      if (shifted && engine) { // the clutch: a moment's dip as the next gear goes in
+        engine.g.gain.cancelScheduledValues(now);
+        engine.g.gain.setTargetAtTime(engineVol * slotVolume(engineName) * 0.45, now, 0.02);
+        engine.g.gain.setTargetAtTime(engineVol * slotVolume(engineName), now + 0.09, 0.06);
+      } else if (now > engineGear.shiftAt + 0.2) loopGain(engine, engineName, engineVol, now, 0.1);
+      if (shifted === 'up' && Math.random() < 0.35) sfx('backfire', null, 0.4); // a pop on the upshift
+      if (engineGear.liftPop && Math.random() < dt * 6) sfx('backfire', null, 0.3 + Math.random() * 0.3); // crackle off the throttle at high revs
       const slip = car ? Math.abs(-car.vx * Math.sin(car.angle) + car.vy * Math.cos(car.angle)) : 0;
       loopGain(skid, 'skid', slip > 90 ? Math.min((slip - 90) / 200, 1) * (skid?.file ? 0.5 : 0.12) : 0, now, 0.05);
       const winter = season.main === 'winter';
@@ -5585,6 +5792,7 @@
       loopGain(night, 'night', playing ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
       updateMusic(now);
       updateRadios(now);
+      updateCarEngines(now, dt);
       // The vodka boost: my own car's, or the nearest other car burning one.
       let boostNear = car?.boosting ? 0 : Infinity;
       if (me && playing) for (const v of snapshots.at(-1)?.vehicles.values() ?? []) if (v.boosting) boostNear = Math.min(boostNear, Math.hypot(v.x - me.x, v.y - me.y));
@@ -9710,7 +9918,7 @@
           const carSpeed = Math.hypot(me.car.vx, me.car.vy);
           if (me.lastCarId !== me.car.id) [me.lastCarId, me.lastCarSpeed] = [me.car.id, carSpeed]; // (just got in)
           const lost = me.lastCarSpeed - carSpeed - vehicleTypes[me.car.type].brake * dt * 1.2;
-          if (lost > 60) addShake(Math.min(16, 3 + lost / 22));
+          if (lost > 60) { addShake(Math.min(16, 3 + lost / 22)); if (lost > 90) sfx('crash', null, Math.min(1, 0.35 + lost / 400)); }
           me.lastCarSpeed = carSpeed;
           me.car.x += me.cx * k; me.car.y += me.cy * k; me.car.angle += me.car.ca * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k; me.car.ca -= me.car.ca * k;
