@@ -695,7 +695,12 @@
     const GRID = 50; // world units between grid lines
 
     // Other players are drawn this far in the past so there are always two snapshots to blend between.
+    // It grows with how unevenly snapshots arrive (Wi-Fi, phones), so a late one doesn't freeze everyone.
     const INTERP_DELAY_MS = 100;
+    const MAX_INTERP_DELAY_MS = 300;
+    const MAX_EXTRAPOLATE_MS = 100; // when the next snapshot is late, carry things on this far before holding
+    let jitterMs = 0; // how late snapshots arrive beyond the fastest one (rises fast, falls slowly)
+    let interpDelay = INTERP_DELAY_MS; // eased toward its target so the view's clock never jumps
 
     let world = { width: 4000, height: 4000 };
     let buildings = []; // from the welcome message; static for the room's lifetime
@@ -7768,6 +7773,8 @@
       // Track the smallest observed delay; drift up slowly so clock skew can't build up.
       const offset = now - serverTime;
       clockOffset = clockOffset === null || offset < clockOffset ? offset : clockOffset + (offset - clockOffset) * 0.02;
+      const late = offset - clockOffset;
+      if (late < 1000) jitterMs = late > jitterMs ? late : jitterMs + (late - jitterMs) * 0.005; // (a backgrounded tab's backlog isn't jitter)
 
       const players = new Map();
       for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping });
@@ -7897,9 +7904,10 @@
       while (i > 0 && snapshots[i - 1].time > time) i--;
       const b = snapshots[i];
       const a = snapshots[i - 1];
-      if (!a || time >= b.time) return b;
+      if (!a) return b;
 
-      const t = (time - a.time) / (b.time - a.time);
+      // Past the newest snapshot (the next one is late): keep things moving a little rather than freeze, then catch up.
+      const t = Math.min((time - a.time) / (b.time - a.time), 1 + MAX_EXTRAPOLATE_MS / (b.time - a.time));
       const players = new Map();
       for (const [id, pb] of b.players) {
         const pa = a.players.get(id);
@@ -10462,13 +10470,16 @@
       season = seasonNow(frameTime);
       snowAmount = seasonWeight('winter');
       if (season.main !== mapSeason) buildMinimap(); // the minimap follows the season
-      const view = clockOffset === null ? interpolated(0) : interpolated(frameTime - clockOffset - INTERP_DELAY_MS);
+      const delayTarget = Math.min(MAX_INTERP_DELAY_MS, Math.max(INTERP_DELAY_MS, tickMs * 1.5 + jitterMs));
+      interpDelay += (delayTarget - interpDelay) * Math.min(1, dt * (delayTarget > interpDelay ? 2 : 0.3)); // (slow enough that the view's clock only slows or speeds a touch)
+      const view = clockOffset === null ? interpolated(0) : interpolated(frameTime - clockOffset - interpDelay);
       const shown = new Map(view.players); // copy: view may be a buffered snapshot
 
       // Move my player locally every frame, and fold in a share of any server correction.
       if (me && playing) {
         const { angle, throttle, boost, gas, steer, drift } = moveInput();
-        const k = 1 - Math.exp(-dt * 10);
+        // Big corrections fold in fast; the few-pixel ones that network timing causes, gently, so they don't jitter.
+        const k = 1 - Math.exp(-dt * (Math.hypot(me.cx, me.cy) > 12 ? 10 : 4));
         const ridingIn = riding ? view.vehicles.get(riding) : null;
         if (riding) { // a passenger: sit in the car (drawn as the car), following it smoothly
           if (ridingIn) { me.x = ridingIn.x; me.y = ridingIn.y; }
