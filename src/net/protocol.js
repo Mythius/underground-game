@@ -47,7 +47,7 @@ export const ClientMsg = Object.freeze({
 
 export const ServerMsg = Object.freeze({
   WELCOME: 'welcome', // { t, clientId, roomId, world, tickRate, snapshotRate, buildings, doorReach, vehicles, env, rainGrip, shop, terrain, player, weapons }
-  SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}] }
+  SPAWNED: 'spawned', // { t, playerId, account (account name, null for guests), players: [{id,name,color,look}], achievements: [id] (earned) }
   PLAYER_JOINED: 'player_joined', // { t, id, name, color, look }
   PLAYER_LEFT: 'player_left', // { t, id }
   SNAPSHOT: 'snapshot', // { t, tick, ack, you: {id,x,y,mass,stamina,cash,bank,trunk: [vehicleId, type, slots] | null,job: {id,good,qty,from,to,reward,picked,secondsLeft} | null,wanted,jail (s left),rob: [kind, 0–1] | null,arrest (0–1),slot,home: [buildingId, x, y] | null,car: [x,y,angle,vx,vy,id,type,fuel],inv: [[gun, ammo, reload] | ['goods', good, qty] | ['food', item, qty] | ['tool', type] | null], heal (left to come from food eaten)}, players: [[id,x,y,r,health,aim,weapon,maxHealth,cop (in uniform),wanted (only sent to officers),sleeping,held (goods or 'food:item' in hand, icon key)]], food, pickups: [[id,x,y,gunType] | [id,x,y,'cash',amount] | [id,x,y,'goods',good,qty]], vehicles: [[id,type,x,y,angle,driverId,health,color,slipping,ownerName,siren,lights,locked (to me),boosting,radio ([song, seconds playing] | 0)]], npcs: [[id,x,y,angle,fighting]] (townsfolk), cops: [[id,x,y,angle]] (officers on foot), crew: [[id,x,y,angle,role (0 goon, 1 guard, 2 hitman),mine,health %]] (hired muscle on foot), team: [[playerId,x,y,driving]] (teammates anywhere); vehicles[10] = siren, bullets: [[id,x,y,weapon]] }
@@ -85,6 +85,7 @@ export const ServerMsg = Object.freeze({
   TEAM: 'team', // { t, members: [{id (client), name, player (player id, 0 if dead), me}], invites: [{id (client), name}], max } your team panel
   TEAM_INVITE: 'team_invite', // { t, id (client), name } someone invited you
   ENV: 'env', // { t, clock, daySec, nightSec, rain, fog } every couple of seconds
+  ACHIEVE: 'achieve', // { t, id } you earned an achievement (the full list comes with SPAWNED)
   ERROR: 'error', // { t, code, message }
 });
 

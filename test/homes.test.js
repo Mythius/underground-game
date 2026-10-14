@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
+config.crime.newcomer.crimes = 0; // (no newcomer fines: crimes give stars straight away; they have their own test)
 import { AccountStore } from '../src/accounts.js';
 import { World } from '../src/game/World.js';
 import { Room } from '../src/game/Room.js';

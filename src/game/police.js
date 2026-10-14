@@ -182,6 +182,7 @@ export class Police {
       if (kind !== 'near_body') this.#fire(p, kind); // any real crime, seen or not, costs an officer the badge
     }
     if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
+    if (this.#newcomerFine(p, kind)) return true;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
     // The search starts from here.
@@ -199,6 +200,30 @@ export class Police {
       u.route = [];
     }
     if (p.wanted > before && p.kind === 'hire') this.world.hires.traced(p, kind, stars); // a witness may know who they work for
+    return true;
+  }
+
+  /**
+   * A new player's first few crimes: a fine on the spot instead of stars (cash first, then the bank,
+   * as much as they have). True if that's how it was dealt with.
+   */
+  #newcomerFine(p, kind) {
+    const rule = config.crime.newcomer;
+    if (p.kind !== 'player' || p.wanted || p.jailed || !p.account) return false;
+    if (this.time - (p.newcomerFinedAt ?? -Infinity) < rule.coverSec) return true; // same incident: already fined
+    const used = p.account.fines ?? 0;
+    if (used >= rule.crimes) return false;
+    p.account.fines = used + 1;
+    this.world.onFinesChange?.(p.account);
+    p.newcomerFinedAt = this.time;
+    const fromCash = Math.min(p.cash, rule.fine);
+    const fromBank = Math.max(0, Math.min(Math.floor(p.account.bank ?? 0), rule.fine - fromCash));
+    p.cash -= fromCash;
+    if (fromBank) {
+      p.account.bank -= fromBank;
+      this.world.onBankChange?.(p.account);
+    }
+    this.events.push({ player: p, kind: 'newcomer_fined', crime: kind, amount: fromCash + fromBank, left: rule.crimes - p.account.fines });
     return true;
   }
 

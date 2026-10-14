@@ -138,6 +138,34 @@
     #leaderboard li .score { font-variant-numeric: tabular-nums; color: #bbb; }
     #leaderboard li.me { color: #fff; font-weight: 700; }
     #leaderboard li.me .score { color: #f4c430; }
+    #side-col { display: flex; flex-direction: column; gap: .5rem; align-items: stretch; }
+    #side-col[hidden], #next-ach[hidden], #ach-btn[hidden] { display: none; }
+    #next-ach {
+      min-width: 12rem; max-width: 45vw; box-sizing: border-box; padding: .5rem .8rem; border-radius: .5rem; border: 1px solid #5a4a14;
+      background: rgba(0, 0, 0, .55); color: #eee; font: inherit; font-size: .85rem; text-align: left; cursor: pointer;
+    }
+    #next-ach:hover { border-color: #f4c430; }
+    #next-ach small { display: block; font-size: .65rem; letter-spacing: .1em; text-transform: uppercase; color: #f4c430; margin-bottom: .15rem; }
+    #ach-btn {
+      width: 2.4rem; height: 2.4rem; border-radius: .5rem; border: 1px solid #444; background: rgba(0, 0, 0, .55);
+      color: #eee; font-size: 1.2rem; cursor: pointer; display: grid; place-items: center; padding: 0;
+    }
+    #ach-btn:hover { border-color: #f4c430; }
+    #achpanel { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; width: min(520px, calc(100vw - 1rem)); box-sizing: border-box;
+      max-height: 80vh; overflow-y: auto; padding: 1rem 1.1rem; border-radius: .8rem; background: rgba(22, 22, 22, .96);
+      border: 2px solid #f4c430; text-align: left; box-shadow: 0 10px 40px rgba(0, 0, 0, .6); font-size: .88rem; scrollbar-color: #555 transparent; scrollbar-width: thin; }
+    #achpanel[hidden] { display: none; }
+    #achpanel h2 { margin: 0 0 .2rem; font-size: 1.2rem; }
+    #achpanel .sub { color: #aaa; margin-bottom: .6rem; }
+    #achpanel .ach { border-radius: .5rem; background: #262626; margin: .3rem 0; }
+    #achpanel .ach > button { all: unset; box-sizing: border-box; width: 100%; display: flex; gap: .6rem; align-items: center; padding: .5rem .7rem; cursor: pointer; }
+    #achpanel .ach .ico { font-size: 1.3rem; width: 1.8rem; text-align: center; }
+    #achpanel .ach .name { flex: 1; font-weight: 600; }
+    #achpanel .ach .tick { color: #2ecc71; font-weight: 700; }
+    #achpanel .ach.done { opacity: .6; }
+    #achpanel .ach.next { border: 1px solid #f4c430; background: #302a18; }
+    #achpanel .ach p { margin: 0; padding: 0 .7rem .6rem 3.1rem; color: #ccc; line-height: 1.4; }
+    #achpanel .close { float: right; font: inherit; border: 1px solid #444; background: #262626; color: #eee; border-radius: .35rem; padding: .15rem .55rem; cursor: pointer; }
     #minimap {
       position: fixed; top: 1rem; left: 1rem; z-index: 2; width: 190px; height: 190px;
       border-radius: .6rem; border: 2px solid rgba(255, 255, 255, .25); background: #5d6b78;
@@ -481,6 +509,7 @@
     #touch-buttons button.big { width: 3.4rem; height: 3.4rem; border-radius: 50%; font-size: 1.3rem; border-color: rgba(244, 196, 48, .7); }
     #touch-buttons button.down { background: rgba(244, 196, 48, .45); }
     #touch-menu-btn { display: none; }
+    body.touch #ach-btn { display: none; } /* (on a phone: the card under the leaderboard, or ☰ → Achievements) */
     body.touch #touch-menu-btn { display: grid; }
     #touch-menu { position: fixed; top: 4rem; right: 1rem; z-index: 6; display: grid; gap: .4rem; padding: .6rem; border-radius: .6rem;
       background: rgba(18, 18, 18, .95); border: 1px solid #444; }
@@ -565,8 +594,12 @@
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
     <button id="touch-menu-btn" type="button" title="Menu">☰</button>
+    <button id="ach-btn" type="button" title="Achievements" aria-controls="achpanel" hidden>🏆</button>
     <button id="settings-btn" type="button" title="Settings" aria-expanded="false" aria-controls="settings">⚙️</button>
-    <aside id="leaderboard" hidden><h2>Richest</h2><ol id="leaderboard-list"></ol></aside>
+    <div id="side-col">
+      <aside id="leaderboard" hidden><h2>Richest</h2><ol id="leaderboard-list"></ol></aside>
+      <button id="next-ach" type="button" hidden title="How to do it"></button>
+    </div>
     <div id="settings" hidden>
       <h3>Settings</h3>
       <label>Volume <input type="range" id="set-volume" min="0" max="100" step="5"></label>
@@ -575,6 +608,7 @@
       <label>Show controls hint <input type="checkbox" id="set-hint"></label>
       <label>Show minimap <input type="checkbox" id="set-minimap"></label>
       <label>Rain effects <input type="checkbox" id="set-rain"></label>
+      <label>Show achievements <input type="checkbox" id="set-ach"></label>
       <button type="button" id="report-open">🚩 Report a player</button>
       <button type="button" id="feedback-open">🐞 Bug report / update request</button>
     </div>
@@ -613,6 +647,7 @@
   <div id="furnishpanel" hidden role="dialog" aria-label="Cabinet"></div>
   <div id="garagepanel" hidden role="dialog" aria-label="Garage"></div>
   <div id="jobs" hidden role="dialog" aria-label="Job board"></div>
+  <div id="achpanel" hidden role="dialog" aria-label="Achievements"></div>
   <div id="jobhud" hidden></div>
   <div id="wanted" hidden></div>
   <div id="crimebar" hidden><span></span><div class="bar"><i></i></div></div>
@@ -841,6 +876,7 @@
     let lastWelcome = null;
     function applyWelcome(msg) {
       world = msg.world;
+      achList = msg.achievements ?? [];
       buildings = msg.buildings ?? [];
       if (msg.homes) {
         homeCfg = msg.homes;
@@ -920,6 +956,14 @@
     ws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       switch (msg.t) {
+        case 'achieve':
+          achDone.add(msg.id);
+          renderAchievements();
+          if (settings.achievements) {
+            const a = achList.find((x) => x.id === msg.id);
+            if (a) { sfx('pickup'); setTimeout(() => toast(`🏆 Achievement: ${a.icon} ${a.name}`, 3500), 900); } // (after the toast for what they just did)
+          }
+          break;
         case 'welcome':
           lastWelcome = msg;
           if (!editing) applyWelcome(msg);
@@ -933,6 +977,8 @@
           break;
         case 'spawned':
           myId = msg.playerId;
+          achDone = new Set(msg.achievements ?? []);
+          renderAchievements();
           wh.account = msg.account ?? null;
           buildMinimap(); // my warehouses show gold
           me = null; // set from the first snapshot
@@ -1030,6 +1076,7 @@
           if (msg.kind === 'cop_arrested' && msg.prison) { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — off to the prison camp: dig ${msg.quota} coal or pay ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`, 6000); }
           else if (msg.kind === 'cop_arrested') { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — ${msg.jail}s in jail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`); }
           if (msg.kind === 'cop_fired') { sfx('error'); toast('🚔 You broke the law — you\'ve been thrown out of the Militsiya. Badge and uniform gone.'); }
+          if (msg.kind === 'newcomer_fined') { sfx('error'); toast(`🚔 ${CRIME_NAMES[msg.crime] ?? 'A crime'} — the Militsiya let a newcomer off with a ${money(msg.amount)} fine. ${msg.left ? `${msg.left} more warning${msg.left === 1 ? '' : 's'}, then it's stars, chases and prison.` : 'That was your last warning — next time it\'s stars, chases and prison.'}`); }
           if (msg.kind === 'cop_fined') { sfx('error'); toast(`🚔 Officer ${msg.by} fined you ${money(msg.amount)}`); }
           if (msg.kind === 'illegal_gun_seen') toast('🚨 A cop saw the unregistered gun in your hand!');
           if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. You've ${msg.grace ?? 8}s to stop moving; shoot and he opens fire.`); }
@@ -4876,9 +4923,61 @@
     }
     document.getElementById('randomize').onclick = () => { myLook = randomLook(); lookChanged(); };
 
+    // ---- achievements: the next thing to learn, under the leaderboard ------------------
+
+    let achList = []; // [{ id, icon, name, how }] in the order worth learning them (from the welcome)
+    let achDone = new Set();
+    const nextAchEl = document.getElementById('next-ach');
+    const achBtn = document.getElementById('ach-btn');
+    const achPanel = document.getElementById('achpanel');
+    let achOpen = null; // the one whose how-to is showing in the panel
+
+    function renderAchievements() {
+      const show = settings.achievements && achList.length > 0;
+      const next = achList.find((a) => !achDone.has(a.id));
+      achBtn.hidden = !show;
+      nextAchEl.hidden = !show || !next;
+      if (next) nextAchEl.innerHTML = `<small>Next achievement · ${achDone.size}/${achList.length}</small>${next.icon} ${escapeHTML(next.name)}`;
+      if (!show) achPanel.hidden = true;
+      if (!achPanel.hidden) renderAchPanel();
+    }
+
+    function renderAchPanel() {
+      const next = achList.find((a) => !achDone.has(a.id));
+      const head = document.createElement('div');
+      head.innerHTML = `<button type="button" class="close">✕</button><h2>🏆 Achievements</h2><div class="sub">${achDone.size} of ${achList.length} · each one teaches you a part of the game. Tap one to see how. (Hide them in ⚙️ Settings.)</div>`;
+      head.querySelector('.close').onclick = () => { achPanel.hidden = true; };
+      const rows = achList.map((a) => {
+        const row = document.createElement('div');
+        row.className = 'ach' + (achDone.has(a.id) ? ' done' : '') + (a === next ? ' next' : '');
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.innerHTML = `<span class="ico">${a.icon}</span><span class="name">${escapeHTML(a.name)}</span>${achDone.has(a.id) ? '<span class="tick">✓</span>' : ''}`;
+        b.onclick = () => { achOpen = achOpen === a.id ? null : a.id; renderAchPanel(); };
+        row.append(b);
+        if (achOpen === a.id) {
+          const how = document.createElement('p');
+          how.textContent = a.how;
+          row.append(how);
+        }
+        return row;
+      });
+      achPanel.replaceChildren(head, ...rows);
+    }
+
+    function openAchievements(id = null) {
+      if (!achList.length) return;
+      achOpen = id ?? achList.find((a) => !achDone.has(a.id))?.id ?? null;
+      renderAchPanel();
+      achPanel.hidden = false;
+    }
+    nextAchEl.onclick = () => (achPanel.hidden ? openAchievements() : (achPanel.hidden = true));
+    achBtn.onclick = () => (achPanel.hidden ? openAchievements() : (achPanel.hidden = true));
+    addEventListener('keydown', (e) => { if (e.code === 'Escape' && !achPanel.hidden) achPanel.hidden = true; });
+
     // ---- settings (top right) -----------------------------------------------------
 
-    const settings = loadSaved('ug-settings', { volume: 70, music: 40, mute: false, hint: true, minimap: true, rain: true });
+    const settings = loadSaved('ug-settings', { volume: 70, music: 40, mute: false, hint: true, minimap: true, rain: true, achievements: true });
     const settingsBtn = document.getElementById('settings-btn');
     const settingsPanel = document.getElementById('settings');
     const settingInputs = {
@@ -4888,6 +4987,7 @@
       hint: document.getElementById('set-hint'),
       minimap: document.getElementById('set-minimap'),
       rain: document.getElementById('set-rain'),
+      achievements: document.getElementById('set-ach'),
     };
 
     function applySettings() {
@@ -4895,6 +4995,7 @@
       document.getElementById('minimap').style.display = settings.minimap ? '' : 'none';
       document.getElementById('minimap-label').style.display = settings.minimap ? '' : 'none';
       if (playing) hint.hidden = !settings.hint;
+      renderAchievements();
     }
 
     for (const [key, input] of Object.entries(settingInputs)) {
@@ -7536,6 +7637,7 @@
       ['📋 Jobs', () => pressKey('keydown', 'KeyJ')],
       ['👥 Team', () => pressKey('keydown', 'KeyT')],
       ['🏬 Property', () => pressKey('keydown', 'KeyB')],
+      ['🏆 Achievements', () => (settings.achievements ? openAchievements() : toast('Achievements are hidden — turn them on in ⚙️ Settings'))],
       [`💵 Drop ${CASH_DROP} ₽`, () => (coins > 0 ? send({ t: 'drop', cash: CASH_DROP }) : toast('No cash to drop'))],
       ['⛶ Full screen', () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {})],
     ];

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
+config.crime.newcomer.crimes = 0; // (no newcomer fines: crimes give stars straight away; they have their own test)
 import { World, roughly } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 

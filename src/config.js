@@ -485,6 +485,9 @@ export const config = Object.freeze({
     // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
     // from where you were last seen; they give up this long (by stars) after last seeing you.
     searchSec: [0, 30, 50, 75, 110, 150],
+    // New players: their first few crimes get an on-the-spot fine instead of stars (no chase, no
+    // shooting, no prison). Whatever else they do within coverSec counts as the same crime.
+    newcomer: { crimes: 7, fine: 50, coverSec: 30 },
   },
   // The prison (ИТК, a gulag on the edge of town): every arrest ends up here. Half of it is a coal
   // mine. Get out by paying the warden your bail (or a friend pays it), by mining your quota of coal

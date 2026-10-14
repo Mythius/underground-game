@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
+config.crime.newcomer.crimes = 0; // (no newcomer fines: crimes give stars straight away; they have their own test)
 import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { makeWeapon } from '../src/game/entities.js';
@@ -649,4 +650,34 @@ test('a guard stands inside the bank, goes for anyone robbing it, and walks back
   Object.assign(o, { x: door.x + door.nx * 300 + 120, y: door.y + door.ny * 300 });
   for (let i = 0; i < 30 * 25; i++) world.step(1 / 30);
   assert.ok(Math.hypot(o.x - post.x, o.y - post.y) < 10, `back in from outside (${Math.round(Math.hypot(o.x - post.x, o.y - post.y))} away)`);
+});
+
+test('a new player\'s first crimes get a $50 fine instead of stars; after that, the real thing', () => {
+  const crimes = config.crime.newcomer.crimes;
+  config.crime.newcomer.crimes = 7;
+  try {
+    const { world, p, police } = town();
+    nobodyAround(world);
+    p.account.fines = 0;
+    p.cash = 30;
+    p.account.bank = 500;
+    for (let i = 0; i < 7; i++) {
+      assert.equal(police.crime(p, 'assault', true), true);
+      assert.equal(p.wanted, 0, `crime ${i + 1} is just a fine`);
+      // Whatever else they do straight after is the same incident: no second fine.
+      police.crime(p, 'fire', true);
+      assert.equal(p.account.fines, i + 1);
+      p.newcomerFinedAt -= config.crime.newcomer.coverSec; // (time passes)
+    }
+    assert.equal(p.cash, 0, 'cash first…');
+    assert.equal(p.account.bank, 500 - (7 * 50 - 30), '…then the bank');
+    const fines = police.events.filter((e) => e.kind === 'newcomer_fined');
+    assert.equal(fines.length, 7);
+    assert.equal(fines.at(-1).left, 0);
+    // The eighth: stars.
+    police.crime(p, 'assault', true);
+    assert.equal(p.wanted, config.crime.stars.assault);
+  } finally {
+    config.crime.newcomer.crimes = crimes;
+  }
 });

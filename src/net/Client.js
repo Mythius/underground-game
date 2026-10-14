@@ -30,6 +30,7 @@ export class Client {
     if (!this.isOpen) return false;
     if (droppable && this.ws.bufferedAmount > config.net.maxBufferedBytes) return false;
     this.ws.send(encode(msg));
+    this.onSend?.(msg); // (the room watches what happens to the player: achievements)
     return true;
   }
 

@@ -78,8 +78,12 @@ export class AccountStore {
     if (!has('accounts', 'home_items')) this.db.exec('ALTER TABLE accounts ADD COLUMN home_items TEXT'); // JSON: furniture placed at home
     if (!has('accounts', 'cop')) this.db.exec('ALTER TABLE accounts ADD COLUMN cop INTEGER NOT NULL DEFAULT 0'); // joined the Militsiya
     if (!has('accounts', 'prison')) this.db.exec('ALTER TABLE accounts ADD COLUMN prison TEXT'); // JSON: the sentence still to serve ({ quota, coal, bail })
+    if (!has('accounts', 'fines')) this.db.exec('ALTER TABLE accounts ADD COLUMN fines INTEGER NOT NULL DEFAULT 0'); // newcomer fines used (a fine instead of stars for the first few crimes)
+    if (!has('accounts', 'achievements')) this.db.exec('ALTER TABLE accounts ADD COLUMN achievements TEXT'); // JSON: ids of the achievements earned
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison, fines, achievements FROM accounts WHERE id = ?'),
+      setAchievements: this.db.prepare('UPDATE accounts SET achievements = ? WHERE id = ?'),
+      setFines: this.db.prepare('UPDATE accounts SET fines = ? WHERE id = ?'),
       setPrison: this.db.prepare('UPDATE accounts SET prison = ? WHERE id = ?'),
       setHomeItems: this.db.prepare('UPDATE accounts SET home_items = ? WHERE id = ?'),
       setCop: this.db.prepare('UPDATE accounts SET cop = ? WHERE id = ?'),
@@ -193,7 +197,7 @@ export class AccountStore {
     const row = this.q.accountById.get(id);
     if (!row) return null;
     const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
-    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison) };
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison), fines: row.fines, achievements: json(row.achievements) ?? [] };
   }
 
   /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
@@ -208,6 +212,20 @@ export class AccountStore {
     this.q.setCop.run(cop ? 1 : 0, id);
     const live = this.liveAccounts.get(id);
     if (live) live.cop = Boolean(cop);
+  }
+
+  /** The achievements they've earned (ids). */
+  setAchievements(id, list) {
+    this.q.setAchievements.run(JSON.stringify(list ?? []), id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.achievements = list;
+  }
+
+  /** How many newcomer fines they've had (a fine instead of stars for their first few crimes). */
+  setFines(id, n) {
+    this.q.setFines.run(n, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.fines = n;
   }
 
   /** The prison sentence still to serve ({ quota, coal, bail }), or null once out. */

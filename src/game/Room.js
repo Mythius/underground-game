@@ -7,6 +7,7 @@ import { Environment } from './Environment.js';
 import { Teams } from './teams.js';
 import { createWorld } from './World.js';
 import { makeWeapon } from './entities.js';
+import { ACHIEVEMENTS, earn, fromMessage, fromState } from './achievements.js';
 
 /** Asleep, as far as skipping the night goes: in bed, or in a dumpster. */
 const asleep = (p) => Boolean(p.sleeping || p.hidden?.dumpster);
@@ -137,6 +138,7 @@ export class Room {
     this.world.onBankChange = this.onBankChange;
     const { deaths, doorChanges, explosions } = this.world.step(dt);
     this.#sleep(dt);
+    if (this.world.tick % config.tickRate === 0) for (const c of this.clients) if (c.player) for (const id of fromState(c.player)) this.#earn(c, id);
     // Tell players about arrests, releases, robberies and new stars.
     // Roadblock searches, raids on warehouses (to their owner) and on shops (everyone hears), the train.
     // Work sites: what changed at the rock face / in the fields, and what happened to whom.
@@ -313,6 +315,7 @@ export class Room {
     };
     w.onCarLost = (v) => this.#saveCar(v);
     w.onCopChange = (account) => !account.guest && this.#store('setCop', account.id, account.cop);
+    w.onFinesChange = (account) => account.id && !account.guest && this.#store('setFines', account.id, account.fines);
     w.prison.onChange = (account) => account.id && !account.guest && this.#store('setPrison', account.id, account.prison ?? null);
   }
 
@@ -438,6 +441,7 @@ export class Room {
   addClient(client) {
     this.clients.add(client);
     client.room = this;
+    client.onSend = (msg) => this.#earn(client, fromMessage(msg));
     client.send({
       t: ServerMsg.WELCOME,
       clientId: client.id,
@@ -460,6 +464,7 @@ export class Room {
       crows: { reach: config.crows.reach },
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
+      achievements: ACHIEVEMENTS,
       rainGrip: config.environment.rainGrip,
       gravelGrip: config.vehicles.gravelGrip,
       looks: config.looks,
@@ -549,6 +554,7 @@ export class Room {
 
   removeClient(client) {
     if (!this.clients.delete(client)) return;
+    client.onSend = null;
     this.teams.remove(client);
     this.#sendTeams();
     if (client.player) {
@@ -587,6 +593,7 @@ export class Room {
     }
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
+    player.achStart = { x: player.x, y: player.y }; // (walking away from here is the first achievement)
     // Back with what they had on them when they last left.
     if (account?.id && !account.guest) {
       player.cash = account.cash ?? 0;
@@ -600,6 +607,7 @@ export class Room {
       playerId: player.id,
       account: client.account?.guest ? null : client.account?.name ?? null, // to tell which warehouses are mine
       players: [...this.world.players.values()].map((p) => p.publicInfo),
+      achievements: client.account?.achievements ?? [],
     });
     this.broadcast({ t: ServerMsg.PLAYER_JOINED, ...player.publicInfo }, client);
     for (const c of [client, ...this.teams.mates(client)]) this.teams.changed.add(c); // my new player id, for their maps
@@ -628,6 +636,15 @@ export class Room {
     if (!p?.alive) return;
     const error = this.world.eat(p);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
+    else this.#earn(client, 'eat');
+  }
+
+  /** Achievement `id` earned (if it's new: saved, and they're told). */
+  #earn(client, id) {
+    const account = client.player?.account ?? client.account;
+    if (!id || !earn(account, id)) return;
+    if (account.id && !account.guest) this.#store('setAchievements', account.id, account.achievements);
+    client.send({ t: ServerMsg.ACHIEVE, id });
   }
 
   /** Markets and factories: describe, trade, factory actions and refuelling. */
