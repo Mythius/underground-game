@@ -182,9 +182,9 @@ export class Bodies {
       else b.items[slot] = null;
       return null;
     }
-    // A gun.
+    // A gun (or a bunker key).
     if (!p.inventory.includes(null)) return 'no_room';
-    p.addWeapon({ ...item, reloadTimer: 0 });
+    p.addWeapon(item.type === 'bunkerkey' ? { type: 'bunkerkey', tool: true } : { ...item, reloadTimer: 0 });
     b.items[slot] = null;
     return null;
   }

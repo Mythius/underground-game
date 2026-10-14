@@ -14,7 +14,7 @@ const asleep = (p) => Boolean(p.sleeping || p.hidden?.dumpster);
 
 /** Hotbar slots as saved on the account: guns by type and ammo, goods and food by kind and count (borrowed tools go back). In prison: what the warden's keeping. */
 export function carriedSlots(p) {
-  return (p.jailed?.stash ?? p.inventory).map((s) => (s?.type === 'rod' ? { type: 'rod' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
+  return (p.jailed?.stash ?? p.inventory).map((s) => (s?.type === 'rod' ? { type: 'rod' } : s?.type === 'bunkerkey' ? { type: 'bunkerkey' } : !s || s.tool ? null : s.good ? { good: s.good, qty: s.qty } : s.food ? { food: s.food, qty: s.qty } : { type: s.type, ammo: s.ammo, ...(s.illegal ? { illegal: true } : {}) }));
 }
 
 /** Saved hotbar slots back into a player's hotbar (anything no longer in the game is dropped). */
@@ -26,6 +26,7 @@ export function restoreSlots(p, slots) {
     if (s?.good && config.goods[s.good] && qty(s.qty)) return { good: s.good, qty: s.qty };
     if (s?.food && config.economy.menu[s.food] && qty(s.qty)) return { food: s.food, qty: s.qty };
     if (s?.type === 'rod') return { type: 'rod', tool: true };
+    if (s?.type === 'bunkerkey') return { type: 'bunkerkey', tool: true };
     if (s?.type && config.weapons[s.type]) return { ...makeWeapon(s.type), ammo: Math.min(qty(s.ammo), config.weapons[s.type].magazineSize), ...(s.illegal ? { illegal: true } : {}) };
     return null;
   });
@@ -847,6 +848,15 @@ export class Room {
     if (hires.bar) this.inspect(client, hires.bar.id);
   }
 
+  /** A bunker's trapdoor: a guard's key opens it. */
+  trapdoorAction(client, msg) {
+    const p = client.player;
+    if (!p) return;
+    const error = this.world.openTrapdoor(p, msg.id);
+    if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+    client.send({ t: ServerMsg.DONE, what: 'trapdoor_open', id: msg.id });
+  }
+
   /** The clipboard: put away, bring out, fire, or give orders to one of your goons and guards. */
   crewAction(client, msg) {
     const p = client.player;
@@ -1063,6 +1073,7 @@ export class Room {
           ack: me ? me.lastInputSeq : -1,
           you: me ? this.#privateState(me) : null,
           players,
+          traps: this.world.openTrapdoors.size ? [...this.world.openTrapdoors] : 0, // bunkers whose trapdoor is open
           lines,
           food,
           pickups,

@@ -82,6 +82,7 @@ export class World {
 
   #near = new Set(); // (scratch set for car-grid lookups; never used by two loops at once)
   constructor(opts = config.world, playerOpts = config.player, weapons = config.weapons, map = null) {
+    this.openTrapdoors = new Set(); // bunkers whose trapdoor a guard's key has opened (until the next restart)
     this.opts = map ? { ...opts, width: map.width, height: map.height } : opts;
     opts = this.opts;
     this.playerOpts = playerOpts;
@@ -919,7 +920,7 @@ export class World {
       this.bodies.add({
         x: p.x, y: p.y, angle: p.input.aim ?? 0, kind: 'player', name: p.name, victimId: p.id,
         look: [p.look.skin, p.look.shirt, p.look.pants, p.look.hat],
-        items: p.inventory.map((s) => (s && s.type !== STARTER_WEAPON && (!s.tool || s.type === 'rod') ? (s.good || s.food ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
+        items: p.inventory.map((s) => (s && s.type !== STARTER_WEAPON && (!s.tool || s.type === 'rod' || s.type === 'bunkerkey') ? (s.good || s.food ? { ...s } : { ...s, reloadTimer: 0 }) : null)),
         cash: p.cash,
       });
       p.cash = 0;
@@ -1040,6 +1041,28 @@ export class World {
   /** Is `door` locked to p: someone else's warehouse or a home that isn't theirs (lock not picked)? */
   lockedFor(door, p) {
     return this.warehouses.lockedFor(door, p) || this.homes.lockedFor(door, p) || this.prison.lockedFor(door);
+  }
+
+  /** The trapdoor in bunker b's floor (world rect), or null. */
+  trapdoorOf(b) {
+    return b?.type === 'bunker' ? b.decor?.find((d) => d.trapdoor) ?? null : null;
+  }
+
+  /**
+   * E on a bunker's trapdoor with a key off one of the governor's guards: it opens (the key's used up)
+   * and stays open. (Where it goes comes later.)
+   */
+  openTrapdoor(p, id) {
+    const b = this.buildings[id - 1];
+    const t = this.trapdoorOf(b);
+    if (!t || !p.alive || p.vehicle) return 'too_far';
+    if (Math.hypot(t.x + t.w / 2 - p.x, t.y + t.h / 2 - p.y) > 60 + p.radius) return 'too_far';
+    if (this.openTrapdoors.has(b.id)) return 'trapdoor_open';
+    const key = p.inventory.findIndex((s) => s?.type === 'bunkerkey');
+    if (key < 0) return 'trapdoor_locked';
+    p.inventory[key] = null;
+    this.openTrapdoors.add(b.id);
+    return null;
   }
 
   /** A door locked to p within reach, for lock picking. */

@@ -385,7 +385,9 @@ export class Hires {
     if (attacker) this.noteAttack(attacker, h);
     if ((attacker?.kind === 'player' || attacker?.kind === 'hire') && attacker.side !== 'state') this.world.police.crime(attacker, h.health <= 0 ? 'murder' : 'assault');
     if (h.health > 0) return false;
-    this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items: [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }], cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
+    const items = [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }];
+    if (h.role === 'govguard') items.push({ type: 'bunkerkey', tool: true }); // each of the governor's guards carries a key to a bunker trapdoor
+    this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items, cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     this.#tell(h, 'hire_died');
     this.#remove(h, true);
     return true;

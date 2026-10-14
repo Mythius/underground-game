@@ -1244,6 +1244,7 @@
           if (msg.what === 'refuel') toast('⛽ Tank filled');
           if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
+          if (msg.what === 'trapdoor_open') { sfx('furnish'); toast('🗝️ The key turns. The padlock drops away and the hatch swings up — an iron ladder goes down into the dark. (The key stays in the lock.)', 4500); }
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
           if (msg.what === 'garage_take') toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} is parked and ready`);
@@ -2026,6 +2027,8 @@
       no_post: "That guard's post isn't on the map — load the property, or pick another post on the clipboard",
       already_away: "He's already put away",
       already_out: "He's already out",
+      trapdoor_locked: "🔒 Locked tight — it needs a key off one of the governor's guards",
+      trapdoor_open: '🕳️ It’s already open',
       not_now: "You can't do that right now",
       not_your_building: 'You can only post guards in your own home or warehouses',
       no_target: "That player isn't here any more",
@@ -3858,7 +3861,7 @@
           c.onclick = () => take(i);
           c.innerHTML = it[0] === 'goods' ? `<span class="icon">${iconHTML(it[1], 30)}</span><span class="qty">×${it[2]}</span>`
             : it[0] === 'food' ? `<span class="icon">${iconHTML(`food:${it[1]}`, 30)}</span><span class="qty">×${it[2]}</span>`
-            : it[0] === 'rod' ? `<span class="icon">${iconHTML('tool:rod', 30)}</span>`
+            : it[0] === 'rod' || it[0] === 'bunkerkey' ? `<span class="icon">${iconHTML(`tool:${it[0]}`, 30)}</span>`
             : `<img src="${gunIcon(it[0])}" alt="${it[0]}">`;
           grid.append(c);
         });
@@ -3954,9 +3957,13 @@
       'You knock. The echo goes down a long, long way.',
       'Locked. The padlock looks newer than the bunker.',
     ];
+    let openTraps = new Set(), openTrapsKey = ''; // the trapdoors (decor) a guard's key has opened
     function rattleTrapdoor() {
+      const t = nearestTrapdoor();
+      if (t && openTraps.has(t)) return toast('🕳️ The hatch hangs open. An iron ladder goes down into the dark… (nothing to find down there yet)', 3800);
+      if (t && inv.some((s) => isTool(s) && s[1] === 'bunkerkey')) return send({ t: 'trapdoor', id: t.bunker });
       sfx('error');
-      toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]}`, 3200);
+      toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]} (One of the governor's guards might carry a key.)`, 3600);
     }
 
     function nearestTrapdoor() {
@@ -3967,6 +3974,7 @@
         for (const t of b.decor) {
           if (!t.trapdoor) continue;
           const d = Math.hypot(t.x + t.w / 2 - me.x, t.y + t.h / 2 - me.y);
+          t.bunker = b.id;
           if (d < 40 + radiusOf(me.mass) && d < bd) [best, bd] = [t, d];
         }
       }
@@ -7472,8 +7480,8 @@
     const isVodka = (w) => isGoods(w) && VODKAS.has(w[1]);
     const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'fish' || w[1] === 'bat' || w[1] === 'blackguns')) || isVodka(w); // (bakery bread and fish eat too; vodka drinks; a bat from the factory is taken up)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
-    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧', key: '⟦tool:key⟧' }; // drawn icons (see ICON_DRAW)
-    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod', key: "Guard's key" };
+    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧', key: '⟦tool:key⟧', bunkerkey: '⟦tool:bunkerkey⟧' }; // drawn icons (see ICON_DRAW)
+    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod', key: "Guard's key", bunkerkey: 'Bunker key' };
     const holdingRod = () => isTool(inv[selectedSlot]) && inv[selectedSlot][1] === 'rod';
 
     function renderHotbar() {
@@ -7495,7 +7503,9 @@
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`food:${w[1]}`, 40)}</span><span class="goods-qty"></span>`);
         } else if (isTool(w)) {
           slot.classList.add('goods');
-          slot.title = w[1] === 'rod' ? 'Fishing rod — click a river or lake to cast; when a fish bites, pull (click) each time it tires' : `${TOOL_NAMES[w[1]] ?? w[1]} — the foreman's; click to work, it goes back when you leave the site`;
+          slot.title = w[1] === 'rod' ? 'Fishing rod — click a river or lake to cast; when a fish bites, pull (click) each time it tires'
+            : w[1] === 'bunkerkey' ? "Bunker key — off one of the governor's guards. E at a bunker's trapdoor opens it (the key stays in the lock)"
+            : `${TOOL_NAMES[w[1]] ?? w[1]} — the foreman's; click to work, it goes back when you leave the site`;
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`tool:${w[1]}`, 42)}</span>`);
         } else if (w) {
           const [type] = w;
@@ -8176,6 +8186,10 @@
 
     function onSnapshot(msg) {
       snapshot = msg;
+      if (String(msg.traps || '') !== openTrapsKey) { // bunker trapdoors opened with a guard's key
+        openTrapsKey = String(msg.traps || '');
+        openTraps = new Set((msg.traps || []).map((id) => buildings[id - 1]?.decor?.find((d) => d.trapdoor)).filter(Boolean));
+      }
       const now = performance.now();
       const serverTime = msg.tick * tickMs;
 
@@ -8545,6 +8559,12 @@
           rect(0.2, 0.75, -0.07, 0.07, '#7a4a2a');
           rect(0.75, 2.6, -0.035, 0.035, '#c9a26a');
           g.fillStyle = '#7d838a'; g.beginPath(); g.arc(0.55, 0.16, 0.13, 0, Math.PI * 2); g.fill();
+          break;
+        case 'bunkerkey': // a heavy iron key with a red tag
+          g.strokeStyle = '#8d949c'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0, 0.18, 0, Math.PI * 2); g.stroke();
+          rect(0.68, 1.2, -0.05, 0.05, '#8d949c');
+          rect(1.02, 1.12, 0.05, 0.2, '#8d949c'); rect(0.86, 0.94, 0.05, 0.15, '#8d949c');
+          rect(0.2, 0.36, -0.12, 0.12, '#b03a2e');
           break;
         case 'key':
           g.strokeStyle = '#d4a017'; g.lineWidth = 0.08; g.beginPath(); g.arc(0.5, 0, 0.16, 0, Math.PI * 2); g.stroke();
@@ -9434,6 +9454,14 @@
     /** A decor rect; concrete ones (pump pads) get the texture and a worn, darker edge. */
     function drawDecor(d) {
       if (d.prop) return drawProp(d); // a fitting drawn in detail (a rug, a shelf, a heap…)
+      if (d.trapdoor && openTraps.has(d)) { // opened: the hatch flung back, a dark shaft and the top of a ladder
+        ctx.fillStyle = '#2a2826'; ctx.fillRect(d.x - 2, d.y - 2, d.w + 4, d.h + 4);
+        ctx.fillStyle = '#050505'; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.fillStyle = '#6d655b'; for (let k = 0; k < 3; k++) ctx.fillRect(d.x + 7, d.y + 6 + k * 9, d.w - 14, 2.5); // rungs
+        ctx.fillStyle = '#5c544a'; ctx.fillRect(d.x + 5, d.y + 3, 2.5, d.h - 6); ctx.fillRect(d.x + d.w - 7.5, d.y + 3, 2.5, d.h - 6);
+        ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y - d.h * 0.45, d.w, d.h * 0.4); // the lid, thrown back
+        return;
+      }
       if (d.trapdoor) { // an iron trapdoor in the bunker floor: riveted, a padlocked hasp
         ctx.fillStyle = '#2a2826'; ctx.fillRect(d.x - 2, d.y - 2, d.w + 4, d.h + 4); // the frame
         ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);

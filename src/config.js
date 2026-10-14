@@ -453,7 +453,7 @@ export const config = Object.freeze({
   // owner; hold F at a door to pick it (a break-in).
   homes: {
     starterTypes: ['house', 'cabin'], // what can be handed out as a starter house
-    lockedTypes: ['house', 'cabin', 'mansion', 'panelka', 'garages', 'garage'], // whose outside doors are locked (a lock-up garage box opens for its tenant, else the owner)
+    lockedTypes: ['house', 'cabin', 'mansion', 'panelka', 'garages', 'garage', 'bunker'], // whose outside doors are locked (a lock-up garage box opens for its tenant, else the owner; a bunker's, nobody's: pick it)
     lockpickSec: 5,
     unlockedSec: 90, // a picked lock stays open this long
     garageReach: 140, // from the middle of the car pad outside
