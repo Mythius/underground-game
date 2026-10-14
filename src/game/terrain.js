@@ -118,6 +118,31 @@ export function generateLamps(roads, water) {
 }
 
 /**
+ * Sewer vents: iron grates in the pavement at the kerb, along the town's roads (nothing comes of
+ * them — walk up, E, and you hear or smell something down there). `isClear(rect)` keeps them off
+ * buildings, lots, dumpsters and the like.
+ */
+export function generateVents(roads, city, isClear) {
+  const out = [];
+  const S = 30;
+  for (const r of roads) {
+    const horizontal = r.w > r.h;
+    const len = horizontal ? r.w : r.h;
+    for (let s = 150 + Math.random() * 300; s < len - 150; s += 550 + Math.random() * 500) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const cx = horizontal ? r.x + s : side > 0 ? r.x + r.w + 20 : r.x - 20;
+      const cy = horizontal ? (side > 0 ? r.y + r.h + 20 : r.y - 20) : r.y + s;
+      if (city && !(cx > city.x && cx < city.x + city.w && cy > city.y && cy < city.y + city.h)) continue; // (town only)
+      const v = { x: Math.round(cx - S / 2), y: Math.round(cy - S / 2), w: S, h: S };
+      if (roads.some((o) => v.x < o.x + o.w && o.x < v.x + S && v.y < o.y + o.h && o.y < v.y + S)) continue; // (not out in the road at a junction)
+      if (!isClear(v) || out.some((o) => Math.abs(o.x - v.x) < 300 && Math.abs(o.y - v.y) < 300)) continue;
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+/**
  * Forests (dense patches with a darker floor) plus scattered single trees, clear of roads,
  * buildings, paths, water and each other. Returns { trees, forests }.
  */

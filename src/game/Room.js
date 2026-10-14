@@ -511,6 +511,7 @@ export class Room {
         atms: this.world.atms,
         blocks: this.world.blocks,
         dumpsters: this.world.dumpsters,
+        vents: this.world.vents, // sewer vents (E: inspect — the client makes something up)
         lots: this.world.lots,
         city: this.world.city, // asphalt + sidewalks inside, gravel outside (null: asphalt everywhere)
         bays: this.world.bays,

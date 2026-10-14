@@ -53,7 +53,9 @@ export class Police {
 
   /**
    * Guards walking a loop inside the prison's wire. They deal with trouble in and round the camp like
-   * a bank guard; a prisoner can lift the key off one's belt from behind (see Prison.liftKey).
+   * a bank guard; a prisoner can lift the key off one's belt from behind (see Prison.liftKey). The
+   * first is Mike, who drops hints about getting out (his lines are on the client; a replacement for
+   * him is Mike again).
    */
   postPrisonGuards(b) {
     const s = b.prison;
@@ -61,7 +63,7 @@ export class Police {
     for (let i = 0; i < config.prison.guards; i++) {
       const leg = Math.floor((i * s.patrol.length) / config.prison.guards);
       const at = s.patrol[leg];
-      const u = this.#newUnit(this.#nearestStation(c.x, c.y), { guard: b.id, prison: true, x: c.x, y: c.y, angle: 0, range: Math.max(s.inner.w, s.inner.h), patrol: s.patrol });
+      const u = this.#newUnit(this.#nearestStation(c.x, c.y), { guard: b.id, prison: true, x: c.x, y: c.y, angle: 0, range: Math.max(s.inner.w, s.inner.h), patrol: s.patrol, mike: i === 0 });
       Object.assign(u.officer, { x: at.x, y: at.y });
       u.leg = (leg + 1) % s.patrol.length;
     }
@@ -1034,7 +1036,7 @@ export class Police {
     for (const u of this.units) {
       const o = u.officer;
       if (!o.onFoot || o.health <= 0 || Math.abs(o.x - x) > range || Math.abs(o.y - y) > range) continue;
-      out.push([o.id, Math.round(o.x), Math.round(o.y), Math.round(o.angle * 100) / 100, u.post?.prison ? 1 : 0]); // (1: a prison guard)
+      out.push([o.id, Math.round(o.x), Math.round(o.y), Math.round(o.angle * 100) / 100, u.post?.prison ? (u.post.mike ? 2 : 1) : 0]); // (1: a prison guard, 2: Mike)
     }
     return out;
   }

@@ -3851,6 +3851,56 @@
       }
     }
 
+    /** Sewer vents: a rusty iron grate set in the pavement, dark slots down into the sewer. */
+    function drawVents() {
+      for (const v of terrain.vents ?? []) {
+        if (v.x > viewBox.r || v.x + v.w < viewBox.l || v.y > viewBox.b || v.y + v.h < viewBox.t) continue;
+        ctx.fillStyle = '#4a4440';
+        ctx.fillRect(v.x, v.y, v.w, v.h);
+        ctx.fillStyle = '#141210'; // the slots
+        for (let k = 0; k < 5; k++) ctx.fillRect(v.x + 4 + k * ((v.w - 8) / 5) + 1, v.y + 4, (v.w - 8) / 5 - 3, v.h - 8);
+        ctx.strokeStyle = '#6b5a48'; ctx.lineWidth = 2; // a rusty rim
+        ctx.strokeRect(v.x + 1, v.y + 1, v.w - 2, v.h - 2);
+        if (snowAmount > 0.02) { ctx.fillStyle = `rgba(240, 244, 248, ${0.4 * snowAmount})`; ctx.fillRect(v.x + 2, v.y + 2, v.w - 4, v.h / 3); } // (warm air from below: most of the snow melts)
+      }
+    }
+
+    // What you notice, crouching at a sewer vent (E). Nothing ever comes of it… as far as anyone knows.
+    const VENT_LINES = [
+      'You thought you heard footsteps down there.',
+      'It smells awful. Something died down there. Recently.',
+      'You hear faint scratching sounds.',
+      'A warm draught breathes up through the grate.',
+      'Water drips somewhere far below. Then stops. Then drips again.',
+      'Was that a whisper? …No. Probably the pipes.',
+      'Something splashes, then everything goes quiet.',
+      'You hear a radio playing, very faintly. An old Soviet march.',
+      'A pair of eyes glints in the dark — and is gone.',
+      'Tapping on a pipe. Three short, three long, three short.',
+      'It smells of cabbage soup and diesel.',
+      'Somebody down there is laughing. Quietly.',
+      'Squeaking. Lots of squeaking. Big rats, by the sound of it.',
+      'You hear a cough echo down the tunnel.',
+      'Total silence. Somehow that\'s worse.',
+    ];
+    let lastVentLine = -1;
+    function inspectVent() {
+      let i = Math.floor(Math.random() * VENT_LINES.length);
+      if (i === lastVentLine) i = (i + 1) % VENT_LINES.length; // (not the same twice running)
+      lastVentLine = i;
+      toast(`🕳 ${VENT_LINES[i]}`, 3200);
+    }
+
+    function nearestVent() {
+      if (!me) return null;
+      let best = null, bd = Infinity;
+      for (const v of terrain.vents ?? []) {
+        const d = Math.hypot(v.x + v.w / 2 - me.x, v.y + v.h / 2 - me.y);
+        if (d < 70 + radiusOf(me.mass) && d < bd) [best, bd] = [v, d];
+      }
+      return best;
+    }
+
     function drawDumpsters() {
       for (const d of terrain.dumpsters ?? []) {
         if (d.x > viewBox.r || d.x + d.w < viewBox.l || d.y > viewBox.b || d.y + d.h < viewBox.t) continue;
@@ -7455,6 +7505,7 @@
           else if (t?.kind === 'cat') send({ t: 'cat', action: t.feed ? 'feed' : 'pickup', id: t.target }); // a fish for it, or up into my arms
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
+          else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
           else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
@@ -7999,7 +8050,7 @@
       const npcs = new Map();
       for (const [id, x, y, angle, state, job = 0, work = 0] of msg.npcs ?? []) npcs.set(id, { x, y, angle, armed: state === 1 || state === 3, robbed: state === 3, fleeing: state === 2, job, work });
       const cops = new Map();
-      for (const [id, x, y, angle, guard] of msg.cops ?? []) cops.set(id, { x, y, angle, guard: guard === 1 });
+      for (const [id, x, y, angle, guard] of msg.cops ?? []) cops.set(id, { x, y, angle, guard: guard === 1 || guard === 2, mike: guard === 2 });
       const wolves = new Map();
       for (const [id, x, y, angle, running] of msg.wolves ?? []) wolves.set(id, { x, y, angle, running: running === 1 });
       otherLines = msg.lines ?? [];
@@ -8151,7 +8202,7 @@
       const cops = new Map();
       for (const [id, cb] of b.cops ?? []) {
         const ca = a.cops?.get(id);
-        cops.set(id, ca ? { x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t), guard: cb.guard } : cb);
+        cops.set(id, ca ? { x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t), guard: cb.guard, mike: cb.mike } : cb);
       }
       const crew = new Map();
       for (const [id, hb] of b.crew ?? []) {
@@ -9852,6 +9903,8 @@
       if (cat && (holdingFish() || cat.knows)) options.push({ kind: 'cat', target: cat.id, dist: cat.d - 25, x: cat.x, y: cat.y - 32, feed: holdingFish() });
       const flock = crowsToFeed();
       if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
+      const vent = nearestVent();
+      if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
@@ -10272,6 +10325,11 @@
           const edge = approach(s, d, 260, 340);
           if (crimeState.arrest > 0 && d < 160 && t > (s.cuff ?? 0)) { s.cuff = t + 2.5 + Math.random(); return { text: pick(SPEECH.copArrest), urgent: true }; } // arresting me
           if (wantedNow && d < 700 && t > (s.shout ?? 0)) { s.shout = t + 4 + Math.random() * 3; return { text: pick(SPEECH.copWanted), urgent: true }; }
+          if (o.mike && !wantedNow) { // Mike: a hint as you walk up, and another every so often while you stay near
+            if (edge === 'in') { s.next = t + 7 + Math.random() * 3; return { text: pick(SPEECH.mike), urgent: true }; }
+            if (d < 300 && t > (s.next ?? 0)) { s.next = t + 7 + Math.random() * 3; return { text: pick(SPEECH.mike) }; }
+            return null;
+          }
           if (!wantedNow && edge === 'in' && Math.random() < 0.4) return { text: pick(o.guard ? SPEECH.prisonGuard : SPEECH.copIdle) };
           return null;
         });
@@ -10791,6 +10849,7 @@
       drawRoads();
       drawRailway(frameTime);
       drawParking();
+      drawVents();
       drawRails();
       drawLamps(1 - daylight(clockNow(frameTime)));
       drawSkids(frameTime);
@@ -10912,7 +10971,17 @@
       // Police officers on foot.
       for (const [, o] of view.cops ?? []) {
         if (o.x < viewBox.l || o.x > viewBox.r || o.y < viewBox.t || o.y > viewBox.b) continue;
-        if (o.guard) { drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'rifle' }, GUARD_LOOK); continue; } // a prison guard: interior troops, a rifle and an ushanka
+        if (o.guard) { // a prison guard: interior troops, a rifle and an ushanka
+          drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'rifle' }, GUARD_LOOK);
+          if (o.mike && !hiddenUnderRoof(o.x, o.y)) { // Mike: his name over his head
+            ctx.font = '600 12px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#e8d9a8';
+            ctx.fillText('Mike', o.x, o.y - 32);
+          }
+          continue;
+        }
         drawPerson({ x: o.x, y: o.y, r: 20, aim: o.angle, weapon: 'pistol' }, { ...POLICE_LOOK, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' });
       }
       // Hired muscle on foot: yours get a gold tag; anyone hurt shows a health bar.

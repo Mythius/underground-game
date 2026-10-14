@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { clamp, distSq, pushCircleOutOfRect, randRange, segmentDistSq, segmentRectHit } from '../utils/math.js';
 import { WAREHOUSE_SIZES, atmSpotsFor, buildBuilding, buildingSize, generateBuildings } from './buildings.js';
-import { generateLamps, generatePaths, generateTrees, makeTree } from './terrain.js';
+import { generateLamps, generatePaths, generateVents, generateTrees, makeTree } from './terrain.js';
 import { SIDEWALK, cityBox, generateTownRoads, inBox, placeSites, placeTown } from './placement.js';
 import { Work } from './work.js';
 import { generateLakes, generateRails, generateRivers, isSwimming, onIce, pushOutOfWater, waterDistance } from './water.js';
@@ -140,6 +140,11 @@ export class World {
       !this.buildings.some((b) => r.x < b.x + b.w + 6 && b.x < r.x + r.w + 6 && r.y < b.y + b.h + 6 && b.y < r.y + r.h + 6) &&
       ![...roadZones, ...this.lots, ...this.bays, ...this.pads, ...railStrip, ...fixtures].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
       !this.trees.some((t) => Math.abs(t.x - (r.x + r.w / 2)) < 40 && Math.abs(t.y - (r.y + r.h / 2)) < 40) && !wetRect(r));
+    // Sewer vents in the pavement at the kerb, in town (E on one: a strange noise or smell, nothing more).
+    this.vents = generateVents(this.roads, this.city, (r) =>
+      !this.buildings.some((b) => r.x < b.x + b.w + 6 && b.x < r.x + r.w + 6 && r.y < b.y + b.h + 6 && b.y < r.y + r.h + 6) &&
+      ![...this.lots, ...this.bays, ...this.pads, ...railStrip, ...fixtures, ...this.dumpsters].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
+      !(this.lamps ?? []).some((l) => Math.abs(l.x - (r.x + r.w / 2)) < 40 && Math.abs(l.y - (r.y + r.h / 2)) < 40) && !wetRect(r));
     const station = this.buildings.find((b) => b.type === 'station') ?? null;
     this.railway = this.railwayY !== null ? new Railway(this, this.railwayY, station) : null;
     this.blocks = [
