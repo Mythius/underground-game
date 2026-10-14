@@ -417,9 +417,11 @@ export class Prison {
       this.lockdown = true;
       this.lockedAt = this.time;
       for (const door of this.cellDoors) this.unlockedUntil.delete(door);
+      this.events.push({ kind: 'prison_lockdown', on: true }); // (everyone: a locked cell door can be picked with F)
       for (const p of w.players.values()) if (p.alive && p.jailed?.prison) this.events.push({ player: p, kind: 'lights_out', sec: c.curfewWarnSec });
     } else if (!w.night && this.lockdown) {
       this.lockdown = false;
+      this.events.push({ kind: 'prison_lockdown', on: false });
       for (const door of this.cellDoors) if (!door.open) { door.open = true; w.pendingDoors.push(door); } // morning: the cells are opened up
       for (const p of w.players.values()) if (p.jailed?.prison) { p.jailed.out = null; if (p.alive) this.events.push({ player: p, kind: 'cells_open' }); }
     }

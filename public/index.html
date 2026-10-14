@@ -855,6 +855,12 @@
         if (at && b.doors.length) prisonWall.door = b.doors.reduce((best, x) => (Math.hypot(x.x + x.w / 2 - at.x, x.y + x.h / 2 - at.y) < Math.hypot(best.x + best.w / 2 - at.x, best.y + best.h / 2 - at.y) ? x : best)).id;
       }
       [prisonWall.hits, prisonWall.max] = msg.prisonWall ?? [0, 1];
+      // The cell doors: locked at night (picked open with F).
+      prisonCells.doors = new Set();
+      for (const b of buildings) {
+        for (const at of b.prison?.cellDoors ?? []) if (b.doors.length) prisonCells.doors.add(b.doors.reduce((best, x) => (Math.hypot(x.x + x.w / 2 - at.x, x.y + x.h / 2 - at.y) < Math.hypot(best.x + best.w / 2 - at.x, best.y + best.h / 2 - at.y) ? x : best)).id);
+      }
+      prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
       doorReach = msg.doorReach ?? doorReach;
@@ -1010,6 +1016,7 @@
           if (msg.kind === 'coal_in') toast(`🪨 ${msg.qty} coal into the bunker — ${msg.coal} / ${msg.quota}`);
           if (msg.kind === 'key_lifted') { sfx('pickpocket'); toast('🗝 You lifted the guard\'s key — the door in the outer fence (north side) opens with it', 5000); }
           if (msg.kind === 'prison_wall') prisonWall.hits = msg.hits;
+          if (msg.kind === 'prison_lockdown') prisonCells.locked = msg.on;
           if (msg.kind === 'slept') toast('☀️ Everyone slept through the night — good morning', 4000);
           if (msg.kind === 'rent_paid') toast(`🔑 Rent paid for your ${ROOM_NAMES[msg.type]?.toLowerCase() ?? 'room'}: ${money(msg.amount)}`);
           if (msg.kind === 'rent_in') toast(msg.from ? `🏢 ${msg.from} paid you ${money(msg.amount)} rent (${HOME_NAMES[msg.type] ?? 'home'})` : `🏢 Rent from the tenants in your ${HOME_NAMES[msg.type]?.toLowerCase() ?? 'building'}: ${money(msg.amount)}`);
@@ -1831,6 +1838,7 @@
     const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force' };
     const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden', 'laundry']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
+    const prisonCells = { doors: new Set(), locked: false }; // the cell doors' ids, and whether they're locked for the night
     const prisonWall = { door: null, hits: 0, max: 1 }; // the inner fence's concrete section (its door id) and how far the digging's got
     let rail = null; // the railway: { y, stopX, length, station, smuggler, wagons, x, speed, state, nextIn, at }
     let roadblocks = { list: [], bribe: 500 };
@@ -2641,6 +2649,16 @@
           if (!door.open && Math.hypot(x - me.x, y - me.y) < 90 + r && homeDoorLocked(b, d)) return { x, y, kind: 'lockpick' };
         }
       }
+      // A cell door at night (shut and locked): pick it to get out (or to let a friend out).
+      if (prisonCells.locked) {
+        for (const id of prisonCells.doors) {
+          const d = doorById.get(id);
+          if (!d || d.open) continue;
+          const x = d.x + d.w / 2, y = d.y + d.h / 2;
+          if (Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
+        }
+      }
+      if (prisonState) return null; // (inside the wire there's nothing else to pick)
       // Someone else's car, nobody in it.
       if (!me.car && !riding) {
         for (const v of snapshots.at(-1)?.vehicles.values() ?? []) {

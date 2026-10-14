@@ -234,7 +234,8 @@ export class Police {
     if (p.jailed?.prison && !p.robbing) { // inside the wire, only the lock on the outer fence's door
       const door = w.lockedDoorNear(p);
       if (!door || !w.prison.isPrisonDoor(door)) return 'nothing_to_rob';
-      p.robbing = { kind: 'lockpick', door, prison: true, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec: config.prison.lockpickSec };
+      const sec = w.prison.cellDoors?.has(door) ? config.prison.cellLockpickSec : config.prison.lockpickSec; // (locked in your cell at night: pick your way out)
+      p.robbing = { kind: 'lockpick', door, prison: true, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec };
       return null;
     }
     if (p.vehicle || p.robbing || p.jailed) return 'busy';

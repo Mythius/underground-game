@@ -289,6 +289,23 @@ test('lights out: back to the cells or a guard comes with his baton (more coal);
   assert.ok(!world.lockedFor(door, p) && door.open);
 });
 
+test('locked in your cell at night: hold F at the door to pick it open', () => {
+  const { world, p, prison, s } = camp();
+  prison.jail(p, 1);
+  const cell = s.cells[0];
+  Object.assign(p, { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2 });
+  world.night = true;
+  for (let i = 0; i < 30 * 5; i++) world.step(1 / 30);
+  const door = prison.cellDoorList[0];
+  assert.ok(!door.open && world.lockedFor(door, p), 'locked in for the night');
+  assert.ok(prison.events.splice(0).some((e) => e.kind === 'prison_lockdown' && e.on && !e.player), 'everyone told the cells are locked');
+  Object.assign(p, { x: (p.x + door.x + door.w / 2) / 2, y: (p.y + door.y + door.h / 2) / 2 }); // up at the door, still inside
+  assert.equal(world.lockedDoorNear(p), door);
+  p.applyInput({ seq: seq++, angle: 0, throttle: 0, aim: 0, rob: true });
+  for (let i = 0; i < 30 * (config.prison.cellLockpickSec + 0.5); i++) world.step(1 / 30);
+  assert.ok(door.open && !world.lockedFor(door, p), 'picked open');
+});
+
 test('the big convicts dig coal and tip it in the bunker; hit one and he fights back with his fists', () => {
   const { world, p, prison, b } = camp();
   world.townsfolk.people.length = 0;

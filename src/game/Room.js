@@ -474,6 +474,7 @@ export class Room {
       // Rocks, trees and wheat at the work sites: [id, kind, x, y, r, hp, max].
       nodes: [...this.world.work.nodes.values()].map((n) => [n.id, n.kind, n.x, n.y, n.r, n.hp, n.max]),
       prisonWall: [this.world.prison.wallHits ?? 0, config.prison.wallHits], // how far the digging at the inner fence has got
+      prisonLocked: Boolean(this.world.prison.lockdown), // the cell doors are locked for the night
       railway: this.world.railway?.station
         ? { y: this.world.railway.y, stopX: this.world.railway.stopX, length: this.world.railway.length, station: this.world.railway.station.id, smuggler: this.world.railway.smuggler, wagons: config.railway.wagons, reach: config.railway.reach, ...this.world.railway.state() }
         : null,
