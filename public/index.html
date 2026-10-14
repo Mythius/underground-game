@@ -165,6 +165,9 @@
     #achpanel .ach.done { opacity: .6; }
     #achpanel .ach.next { border: 1px solid #f4c430; background: #302a18; }
     #achpanel .ach p { margin: 0; padding: 0 .7rem .6rem 3.1rem; color: #ccc; line-height: 1.4; }
+    #achpanel .ach .follow { margin: 0 .7rem .6rem 3.1rem; font: inherit; font-weight: 600; border: 1px solid #f4c430; background: #302a18; color: #f4c430; border-radius: .35rem; padding: .3rem .8rem; cursor: pointer; }
+    #achpanel .ach .follow.on { background: #f4c430; color: #111; }
+    #achpanel .ach .following { color: #f4c430; font-size: .75rem; font-weight: 700; }
     #achpanel .close { float: right; font: inherit; border: 1px solid #444; background: #262626; color: #eee; border-radius: .35rem; padding: .15rem .55rem; cursor: pointer; }
     #minimap {
       position: fixed; top: 1rem; left: 1rem; z-index: 2; width: 190px; height: 190px;
@@ -959,6 +962,7 @@
         case 'achieve':
           achDone.add(msg.id);
           renderAchievements();
+          if (achFollow === msg.id) setAchFollow(null); // (done: the arrow goes)
           if (settings.achievements) {
             const a = achList.find((x) => x.id === msg.id);
             if (a) { sfx('pickup'); setTimeout(() => toast(`🏆 Achievement: ${a.icon} ${a.name}`, 3500), 900); } // (after the toast for what they just did)
@@ -4931,13 +4935,21 @@
     const achBtn = document.getElementById('ach-btn');
     const achPanel = document.getElementById('achpanel');
     let achOpen = null; // the one whose how-to is showing in the panel
+    let achFollow = (() => { try { return localStorage.getItem('ug-ach-follow') || null; } catch { return null; } })(); // the one the yellow arrow leads to
+
+    function setAchFollow(id) {
+      achFollow = id;
+      try { id ? localStorage.setItem('ug-ach-follow', id) : localStorage.removeItem('ug-ach-follow'); } catch {}
+      renderAchievements();
+    }
 
     function renderAchievements() {
       const show = settings.achievements && achList.length > 0;
-      const next = achList.find((a) => !achDone.has(a.id));
+      const followed = achFollow && !achDone.has(achFollow) ? achList.find((a) => a.id === achFollow) : null;
+      const next = followed ?? achList.find((a) => !achDone.has(a.id));
       achBtn.hidden = !show;
       nextAchEl.hidden = !show || !next;
-      if (next) nextAchEl.innerHTML = `<small>Next achievement · ${achDone.size}/${achList.length}</small>${next.icon} ${escapeHTML(next.name)}`;
+      if (next) nextAchEl.innerHTML = `<small>${followed ? '➤ Following' : 'Next achievement'} · ${achDone.size}/${achList.length}</small>${next.icon} ${escapeHTML(next.name)}`;
       if (!show) achPanel.hidden = true;
       if (!achPanel.hidden) renderAchPanel();
     }
@@ -4952,17 +4964,74 @@
         row.className = 'ach' + (achDone.has(a.id) ? ' done' : '') + (a === next ? ' next' : '');
         const b = document.createElement('button');
         b.type = 'button';
-        b.innerHTML = `<span class="ico">${a.icon}</span><span class="name">${escapeHTML(a.name)}</span>${achDone.has(a.id) ? '<span class="tick">✓</span>' : ''}`;
+        const following = achFollow === a.id && !achDone.has(a.id);
+        b.innerHTML = `<span class="ico">${a.icon}</span><span class="name">${escapeHTML(a.name)}</span>${following ? '<span class="following">➤ FOLLOWING</span>' : ''}${achDone.has(a.id) ? '<span class="tick">✓</span>' : ''}`;
         b.onclick = () => { achOpen = achOpen === a.id ? null : a.id; renderAchPanel(); };
         row.append(b);
         if (achOpen === a.id) {
           const how = document.createElement('p');
           how.textContent = a.how;
           row.append(how);
+          if (!achDone.has(a.id)) {
+            const f = document.createElement('button');
+            f.type = 'button';
+            f.className = 'follow' + (following ? ' on' : '');
+            f.textContent = following ? '✓ Following — tap to stop' : (ACH_TARGETS[a.id] ? '➤ Follow (a yellow arrow shows the way)' : '➤ Follow');
+            f.onclick = () => setAchFollow(following ? null : a.id);
+            row.append(f);
+          }
         }
         return row;
       });
       achPanel.replaceChildren(head, ...rows);
+    }
+
+    // Where each achievement is done, if it's somewhere: candidate spots (the arrow takes the nearest).
+    const WORKSITE_TYPES = new Set(['mine', 'logging', 'farm', 'oilwell', 'prison']);
+    const placesOf = (test) => () => econ.places.filter(test);
+    const whSpots = (test) => () => [...wh.layouts.values()].filter(test).map(whBuilding).filter(Boolean).map((b) => ({ x: b.x + b.w / 2, y: b.y + b.h / 2 }));
+    const myOrForSaleWarehouse = () => { const mine = whSpots((l) => whMine(l))(); return mine.length ? mine : whSpots((l) => !l.owner)(); };
+    const ACH_TARGETS = {
+      shop: () => shop.shopkeepers.filter((k) => k.building),
+      bank: () => [...bankData.atms.filter((a) => !atmBroken(a)), ...bankData.tellers],
+      work: placesOf((p) => WORKSITE_TYPES.has(p.type) && p.type !== 'prison' && p.type !== 'oilwell'),
+      fish: () => [...terrain.water.lakes.map((l) => { const a = Math.atan2(me.y - l.y, me.x - l.x); return { x: l.x + Math.cos(a) * l.r, y: l.y + Math.sin(a) * l.r }; }), ...terrain.water.rivers.flatMap((r) => r.points.map(([x, y]) => ({ x, y })))],
+      sell: placesOf((p) => p.role === 'market' && !WORKSITE_TYPES.has(p.type)),
+      process: placesOf((p) => p.role === 'factory'),
+      buy_car: placesOf((p) => p.role === 'dealer'),
+      rob: () => [...bankData.atms.filter((a) => !atmBroken(a)), ...shop.shopkeepers.filter((k) => k.building), ...bankData.tellers],
+      factory: whSpots((l) => !l.owner),
+      vodka: myOrForSaleWarehouse,
+      counterfeit: myOrForSaleWarehouse,
+      blackguns: myOrForSaleWarehouse,
+      smuggler: placesOf((p) => p.role === 'smuggler'),
+      hire: placesOf((p) => p.role === 'barman'),
+    };
+
+    /** The yellow arrow (like a job's) to the nearest place the followed achievement is done. */
+    function drawAchArrow(now) {
+      if (!achFollow || achDone.has(achFollow) || !settings.achievements || !me || !playing) return;
+      let target = null, best = Infinity;
+      for (const t of ACH_TARGETS[achFollow]?.() ?? []) {
+        const d = Math.hypot(t.x - me.x, t.y - me.y);
+        if (d < best) { best = d; target = t; }
+      }
+      if (!target || best < 200) return;
+      const a = Math.atan2(target.y - me.y, target.x - me.x);
+      const r = radiusOf(me.mass) + 34 + Math.sin(now / 200) * 3;
+      ctx.save();
+      ctx.translate(me.x + Math.cos(a) * r, me.y + Math.sin(a) * r);
+      ctx.rotate(a);
+      ctx.fillStyle = '#f4c430';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-8, -10); ctx.lineTo(-3, 0); ctx.lineTo(-8, 10); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.rotate(-a); // the achievement's icon just behind it, so it's not mistaken for the job's
+      ctx.font = '14px system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(achList.find((x) => x.id === achFollow)?.icon ?? '', -Math.cos(a) * 20, -Math.sin(a) * 20);
+      ctx.restore();
     }
 
     function openAchievements(id = null) {
@@ -11044,6 +11113,7 @@
       updateJobHud();
       updateCrimeHud();
       drawJobArrow(frameTime);
+      drawAchArrow(frameTime);
       drawPlaceLabels();
       for (const t of bankData.tellers) {
         if (t.x < viewBox.l || t.x > viewBox.r || t.y < viewBox.t || t.y > viewBox.b || hiddenUnderRoof(t.x, t.y)) continue;

@@ -379,6 +379,7 @@ export class Warehouse {
       // Contraband production draws attention, much less out in a shack in the woods.
       const value = Object.entries(recipe.out).reduce((sum, [g, q]) => sum + config.goods[g].base * q, 0);
       this.heat += (value / config.warehouses.heatPerValue) * (this.size === 'shack' ? config.warehouses.shackHeat : 1);
+      if (this.owner) for (const g of Object.keys(recipe.out)) (this.owner.madeIllegal ??= new Set()).add(g); // (for the achievements)
     }
   }
 

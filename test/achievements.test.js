@@ -43,11 +43,17 @@ test('achievements: earned from what happens to you, once each, told to you and 
   for (let i = 0; i < config.tickRate; i++) room.step(1 / config.tickRate);
   assert.ok(client.sent.some((m) => m.t === 'achieve' && m.id === 'walk'));
 
+  // Making contraband: the warehouse marks what its owner made.
+  client.account.madeIllegal = new Set(['vodka', 'jetvodka']);
+  for (let i = 0; i < config.tickRate; i++) room.step(1 / config.tickRate);
+  assert.ok(client.sent.some((m) => m.t === 'achieve' && m.id === 'vodka'));
+  delete client.account.madeIllegal;
+
   // Saved: they come back with the next spawn.
   room.removeClient(client);
   client = join(room, store, account.id);
-  assert.deepEqual(new Set(client.sent.find((m) => m.t === 'spawned').achievements), new Set(['sell', 'fish', 'walk']));
-  assert.deepEqual(new Set(store.account(account.id).achievements), new Set(['sell', 'fish', 'walk']));
+  assert.deepEqual(new Set(client.sent.find((m) => m.t === 'spawned').achievements), new Set(['sell', 'fish', 'walk', 'vodka']));
+  assert.deepEqual(new Set(store.account(account.id).achievements), new Set(['sell', 'fish', 'walk', 'vodka']));
 });
 
 test('which messages count', () => {
@@ -58,6 +64,8 @@ test('which messages count', () => {
   assert.equal(fromMessage({ t: 'done', what: 'hire_vodka' }), null);
   assert.equal(fromMessage({ t: 'done', what: 'hire_goon' }), 'hire');
   assert.equal(fromMessage({ t: 'police', kind: 'stole', amount: 5 }), 'pickpocket');
+  assert.equal(fromMessage({ t: 'done', what: 'black_sell', good: 'vodka', qty: 1 }), 'smuggler', 'the man in the leather jacket');
+  assert.equal(ACHIEVEMENTS[1].id, 'pickpocket', 'robbing someone comes second');
   assert.equal(fromMessage({ t: 'team', members: [{}] }), null, 'a team of one');
   assert.equal(fromMessage({ t: 'team', members: [{}, {}] }), 'team');
 });
