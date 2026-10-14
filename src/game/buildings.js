@@ -66,11 +66,11 @@ function industrial({ roof, wall = '#9aa1a8', floor = '#6f7378', machines = [], 
     walls: [
       ...perimeter(w, h, 14, { s: door(0.42, 120), e: door(0.75, 60) }),
       ...wallLine(false, 270, 140, 256, 10, door(0.5, 60)), // office partition
-      ...machines.filter((m) => m.solid).map(({ x, y, w: mw, h: mh, c }) => ({ x, y, w: mw, h: mh, c })),
+      ...machines.filter((m) => m.solid).map(({ solid, ...m }) => m),
     ],
     decor: [
-      { x: 284, y: 150, w: 80, h: 30, c: '#5a4632' }, // office desk
-      { x: 20, y: 236, w: 230, h: 8, c: '#c9a227' }, // floor markings
+      fit('officedesk', 284, 150, 80, 30, '#5a4632', 0, -1), // office desk
+      fit('stripe', 20, 236, 230, 8, '#c9a227'), // floor markings
       ...machines.filter((m) => !m.solid),
     ],
     roofDecor,
@@ -120,7 +120,7 @@ function yard({ w = 360, h = 270, ground, fence = '#8a6d4a', props = [], decor =
     w, h,
     walls: [
       ...(fenced ? perimeter(w, h, 6, { s: door(0.5, 130) }) : []),
-      ...props.map(({ x, y, w: pw, h: ph, c }) => ({ x, y, w: pw, h: ph, c })),
+      ...props,
     ],
     decor: [{ x: 0, y: 0, w, h, c: ground }, ...decor],
     roofDecor: [],
@@ -174,6 +174,8 @@ function warehouse(size) {
 const fireplace = (x, y, w, h, nx, ny) => ({ x, y, w, h, c: '#7d746a', fireplace: true, nx, ny });
 /** Solid furniture that comes with a building (a desk, sofa, bookshelf…), its front facing (nx, ny). Drawn by the client's drawProp. */
 const prop = (kind, x, y, w, h, nx, ny) => ({ x, y, w, h, c: '#5a3418', prop: kind, nx, ny });
+/** A fitting drawn in detail by the client's drawProp (a counter, shelf, rug, machine…), keeping its colour; front toward (nx, ny). Works as a wall or as decor. */
+const fit = (kind, x, y, w, h, c, nx = 0, ny = 1) => ({ x, y, w, h, c, prop: kind, nx, ny });
 /** Its chimney on the roof (a little smoke drifts off it). */
 const chimney = (x, y) => ({ x, y, w: 22, h: 22, c: '#6e5a50', chimney: true, small: true });
 /**
@@ -247,9 +249,9 @@ export const BUILDING_TYPES = {
     w: 150, h: 110,
     walls: [
       ...perimeter(150, 110, 8),
-      { x: 20, y: 72, w: 110, h: 10, c: '#6b4a2b' }, // counter under the window
+      fit('counter', 20, 72, 110, 10, '#6b4a2b'), // counter under the window
     ],
-    decor: [{ x: 14, y: 14, w: 122, h: 30, c: '#c94a2b' }], // shelves of snacks and vodka
+    decor: [fit('shelf', 14, 14, 122, 30, '#6b4a2b')], // shelves of snacks and vodka
     roofDecor: [],
     npc: { x: 75, y: 50, angle: Math.PI / 2, role: 'shop' },
     floor: '#b8a890', wall: '#3f6d8a', roof: '#d8a23a', pattern: 'flat', label: 'ЛАРЁК',
@@ -260,15 +262,15 @@ export const BUILDING_TYPES = {
     w: 320, h: 240,
     walls: [
       ...perimeter(320, 240, 12, { s: door(0.75, 70) }),
-      { x: 30, y: 80, w: 170, h: 18, c: '#5a3a22' }, // the bar
+      fit('bar', 30, 80, 170, 18, '#5a3a22'), // the bar
       { x: 210, y: 12, w: 12, h: 100 }, // back room
     ],
     decor: [
-      { x: 24, y: 20, w: 180, h: 16, c: '#7a4a2a' }, // bottles on the back shelf
-      { x: 40, y: 140, w: 36, h: 36, c: '#6b4a2b' }, // tables
-      { x: 110, y: 160, w: 36, h: 36, c: '#6b4a2b' },
-      { x: 240, y: 30, w: 56, h: 56, c: '#2f5a3a' }, // card table in the back
-      { x: 30, y: 196, w: 120, h: 20, c: '#8b1a1a' }, // worn carpet
+      fit('shelf', 24, 20, 180, 16, '#7a4a2a'), // bottles on the back shelf
+      fit('table', 40, 140, 36, 36, '#6b4a2b'), // tables
+      fit('table', 110, 160, 36, 36, '#6b4a2b'),
+      fit('cardtable', 240, 30, 56, 56, '#2f5a3a'), // card table in the back
+      fit('carpet', 30, 196, 120, 20, '#8b1a1a'), // worn carpet
     ],
     roofDecor: [{ x: 250, y: 160, w: 30, h: 30, c: '#4a4f54' }], // vent
     npc: { x: 110, y: 56, angle: Math.PI / 2, role: 'barman' }, // behind the bar
@@ -289,14 +291,14 @@ export const BUILDING_TYPES = {
     walls: [
       ...perimeter(420, 300, 14, { s: door(0.5, 130), n: door(0.2) }),
       // Hay bales: solid cover.
-      { x: 40, y: 50, w: 50, h: 34, c: '#d8b24a' },
-      { x: 40, y: 90, w: 50, h: 34, c: '#cfa940' },
-      { x: 320, y: 60, w: 34, h: 50, c: '#d8b24a' },
-      { x: 300, y: 200, w: 50, h: 34, c: '#cfa940' },
+      fit('hay', 40, 50, 50, 34, '#d8b24a'),
+      fit('hay', 40, 90, 50, 34, '#cfa940'),
+      fit('hay', 320, 60, 34, 50, '#d8b24a', 1, 0),
+      fit('hay', 300, 200, 50, 34, '#cfa940'),
     ],
     decor: [
-      { x: 150, y: 40, w: 120, h: 80, c: '#a88c4e' }, // loose straw
-      { x: 30, y: 180, w: 80, h: 90, c: '#5a4632' }, // stall
+      fit('straw', 150, 40, 120, 80, '#a88c4e'), // loose straw
+      fit('stall', 30, 180, 80, 90, '#5a4632'), // stall
     ],
     roofDecor: [
       { x: 0, y: 145, w: 420, h: 10, c: '#5a2019' }, // ridge
@@ -317,14 +319,14 @@ export const BUILDING_TYPES = {
     w: 720, h: 260,
     walls: [
       ...perimeter(720, 260, 16, { s: [{ at: 0.2, width: 90 }, { at: 0.5, width: 110 }, { at: 0.8, width: 90 }], n: door(0.5, 80) }),
-      { x: 300, y: 130, w: 160, h: 18, c: '#6b4a2b' }, // freight office counter
+      fit('counter', 300, 130, 160, 18, '#6b4a2b'), // freight office counter
     ],
     decor: [
-      { x: 40, y: 40, w: 200, h: 60, c: '#7a5a3a' }, // waiting benches
-      { x: 480, y: 40, w: 200, h: 60, c: '#7a5a3a' },
-      { x: 300, y: 30, w: 160, h: 50, c: '#2c3e50' }, // departures board
-      { x: 60, y: 170, w: 160, h: 50, c: '#8a6236' }, // crates waiting to ship
-      { x: 520, y: 170, w: 140, h: 50, c: '#8a6236' },
+      fit('benches', 40, 40, 200, 60, '#7a5a3a'), // waiting benches
+      fit('benches', 480, 40, 200, 60, '#7a5a3a'),
+      fit('board', 300, 30, 160, 50, '#2c3e50'), // departures board
+      fit('crates', 60, 170, 160, 50, '#8a6236'), // crates waiting to ship
+      fit('crates', 520, 170, 140, 50, '#8a6236'),
     ],
     roofDecor: [
       { x: 330, y: 20, w: 60, h: 60, c: '#c9a227', round: true }, // clock
@@ -361,10 +363,16 @@ export const BUILDING_TYPES = {
     w: 200, h: 200,
     walls: perimeter(200, 200, 28, { w: door(0.5, 50) }),
     decor: [
-      { x: 50, y: 50, w: 40, h: 100, c: '#4a5a3a' }, // cots
-      { x: 110, y: 50, w: 40, h: 100, c: '#4a5a3a' },
+      fit('cot', 40, 60, 36, 92, '#4a5a3a'), // cots
+      fit('cot', 90, 60, 36, 92, '#4a5a3a'),
+      { x: 136, y: 34, w: 32, h: 32, c: '#5a5146', trapdoor: true }, // a locked iron trapdoor in the corner (E: rattle it)
+      // Broken vodka bottles, left from somebody's long night down here.
+      { x: 140, y: 112, w: 24, h: 18, c: '#4f7a5a', glass: true },
+      { x: 136, y: 146, w: 30, h: 20, c: '#4f7a5a', glass: true },
+      { x: 92, y: 34, w: 26, h: 16, c: '#8fb3a0', glass: true },
+      { x: 44, y: 156, w: 28, h: 12, c: '#4f7a5a', glass: true },
     ],
-    roofDecor: [{ x: 80, y: 80, w: 40, h: 40, c: '#4a4f54' }], // hatch
+    roofDecor: [{ x: 136, y: 34, w: 32, h: 32, c: '#4a4f54' }], // the hatch over the trapdoor
     floor: '#55595c', wall: '#3a3d40', roof: '#5f6468', pattern: 'flat',
   }),
 
@@ -373,10 +381,11 @@ export const BUILDING_TYPES = {
     // Orthodox: no pews (people stand), an icon screen before the altar, onion domes on the roof.
     walls: [...perimeter(240, 440, 14, { s: door(0.5, 70), e: door(0.2, 56) })],
     decor: [
-      { x: 30, y: 110, w: 180, h: 14, c: '#c9a227' }, // iconostasis
-      ...[0, 1, 2, 3, 4].map((i) => ({ x: 40 + i * 34, y: 96, w: 24, h: 14, c: '#8b5a2b' })), // icons
-      { x: 80, y: 40, w: 80, h: 40, c: '#e0d6b8' }, // altar
-      { x: 110, y: 130, w: 20, h: 300, c: '#8b2232' }, // carpet
+      fit('runner', 110, 130, 20, 300, '#8b2232'), // carpet
+      fit('iconostasis', 30, 110, 180, 14, '#c9a227'), // iconostasis
+      ...[0, 1, 2, 3, 4].map((i) => fit('icon', 40 + i * 34, 96, 24, 14, '#8b5a2b')), // icons
+      fit('altar', 80, 40, 80, 40, '#e0d6b8'), // altar
+      fit('candles', 40, 150, 26, 26, '#c9a227'), fit('candles', 174, 150, 26, 26, '#c9a227'), // candle stands
     ],
     roofDecor: [
       { x: 80, y: 180, w: 80, h: 80, c: '#d4a017', round: true }, // main dome
@@ -394,7 +403,7 @@ export const BUILDING_TYPES = {
   watchtower: () => ({
     w: 140, h: 140,
     walls: perimeter(140, 140, 10, { n: door(0.5, 50), s: door(0.5, 50), e: door(0.5, 50), w: door(0.5, 50) }),
-    decor: [{ x: 50, y: 50, w: 40, h: 40, c: '#4b3a24' }], // ladder
+    decor: [fit('ladder', 50, 50, 40, 40, '#4b3a24')], // ladder
     roofDecor: [{ x: 60, y: 60, w: 20, h: 20, c: '#4a1f1f' }],
     floor: '#6b5536', wall: '#4b3a24', roof: '#7b2f2f', pattern: 'tiles',
   }),
@@ -506,8 +515,8 @@ export const BUILDING_TYPES = {
     w: 140, h: 120,
     walls: perimeter(140, 120, 10, { s: door(0.5, 50) }),
     decor: [
-      { x: 18, y: 18, w: 40, h: 26, c: '#3d5a3a' }, // bundles of notes on a table
-      { x: 92, y: 70, w: 30, h: 30, c: '#4a4a4a', round: true }, // an old tyre
+      fit('cashtable', 18, 18, 40, 26, '#5a4632'), // bundles of notes on a table
+      fit('tyre', 92, 70, 30, 30, '#2a2a2a'), // an old tyre
     ],
     roofDecor: [],
     npc: { x: 82, y: 40, angle: Math.PI / 2, role: 'laundry' }, // the machine, facing the door
@@ -522,12 +531,14 @@ export const BUILDING_TYPES = {
       { x: 288, y: 30, w: 22, h: 22, c: '#d0d0d0' },
       { x: 30, y: 168, w: 22, h: 22, c: '#d0d0d0' },
       { x: 288, y: 168, w: 22, h: 22, c: '#d0d0d0' },
-      { x: 120, y: 95, w: 30, h: 30, c: '#c8312b' }, // pumps
-      { x: 190, y: 95, w: 30, h: 30, c: '#c8312b' },
+      fit('pump', 120, 95, 30, 30, '#c8312b'), // pumps
+      fit('pump', 190, 95, 30, 30, '#c8312b'),
     ],
     decor: [
       { x: 0, y: 0, w: 340, h: 220, c: '#3f4247' },
-      { x: 60, y: 108, w: 220, h: 4, c: '#e8e8e8' },
+      fit('island', 100, 88, 140, 44, '#8a8d91'), // the pump island, a kerb round it
+      fit('stain', 60, 140, 60, 30, '#2a2c30'), // oil stains
+      fit('stain', 220, 50, 46, 26, '#2a2c30'),
     ],
     roofDecor: [{ x: 0, y: 0, w: 340, h: 14, c: '#f2f2f2' }],
     npc: { x: 170, y: 168, angle: Math.PI / 2, role: 'shop' }, // by the pumps
@@ -538,13 +549,12 @@ export const BUILDING_TYPES = {
     w: 320, h: 240,
     walls: [
       ...perimeter(320, 240, 16, { s: door(0.5, 80) }),
-      { x: 60, y: 110, w: 200, h: 18, c: '#8a6d3b' }, // teller counter
-      { x: 30, y: 24, w: 70, h: 56, c: '#6b7078' }, // vault
+      fit('teller', 60, 110, 200, 18, '#8a6d3b'), // teller counter
+      fit('vault', 30, 24, 70, 56, '#6b7078'), // vault
     ],
     decor: [
-      { x: 120, y: 30, w: 170, h: 50, c: '#3b5f4a' }, // back office carpet
-      { x: 130, y: 150, w: 60, h: 60, c: '#7a1e2e' }, // rug
-      { x: 50, y: 40, w: 34, h: 24, c: '#4a4f57', round: true }, // vault door wheel
+      fit('carpet', 120, 30, 170, 50, '#3b5f4a'), // back office carpet
+      fit('carpet', 130, 150, 60, 60, '#7a1e2e'), // rug
     ],
     roofDecor: [{ x: 140, y: 100, w: 40, h: 40, c: '#c9a227', round: true }],
     npc: { x: 160, y: 90, angle: Math.PI / 2, role: 'teller' }, // behind the counter
@@ -553,51 +563,51 @@ export const BUILDING_TYPES = {
 
   // ---- factories (one per production chain) ----
   sawmill: () => industrial({ label: 'ЛЕСОПИЛКА', roof: '#7a5434', machines: [
-    { x: 40, y: 50, w: 180, h: 40, c: '#8b5a2b', solid: true }, // saw line
-    { x: 40, y: 130, w: 70, h: 70, c: '#a0703c' }, // log stack
+    { ...fit('sawline', 40, 50, 180, 40, '#8b5a2b'), solid: true }, // saw line
+    fit('logs', 40, 130, 70, 70, '#a0703c'), // log stack
+    fit('planks', 130, 140, 90, 50, '#c9a06a'), // sawn planks
   ], roofDecor: [{ x: 60, y: 60, w: 26, h: 26, c: '#5a3d22', round: true }] }),
   furniture: () => industrial({ label: 'МЕБЕЛЬ', roof: '#8b4a2b', machines: [
-    { x: 40, y: 50, w: 70, h: 50, c: MACHINE, solid: true },
-    { x: 140, y: 50, w: 70, h: 50, c: MACHINE, solid: true },
-    { x: 40, y: 140, w: 170, h: 60, c: '#7a2e2e' }, // sofas waiting to ship
+    { ...fit('machine', 40, 50, 70, 50, MACHINE), solid: true },
+    { ...fit('machine', 140, 50, 70, 50, MACHINE), solid: true },
+    fit('sofas', 40, 140, 170, 60, '#7a2e2e'), // sofas waiting to ship
   ] }),
   flourmill: () => industrial({ label: 'МЕЛЬНИЦА', roof: '#c9b27a', machines: [
-    { x: 50, y: 50, w: 80, h: 80, c: '#d9d2c3', solid: true, round: true }, // millstone
-    { x: 160, y: 60, w: 70, h: 120, c: '#e8dcc0' }, // sacks
+    { ...fit('millstone', 50, 50, 80, 80, '#d9d2c3'), solid: true, round: true }, // millstone
+    fit('sacks', 160, 60, 70, 120, '#e8dcc0'), // sacks
   ], roofDecor: [{ x: 70, y: 70, w: 40, h: 40, c: '#9a8a6a', round: true }] }),
   bakery: () => industrial({ label: 'ХЛЕБОЗАВОД', roof: '#c0782f', floor: '#c9c1b4', machines: [
-    { x: 40, y: 50, w: 110, h: 40, c: '#5a5a5a', solid: true }, // ovens
-    { x: 40, y: 140, w: 180, h: 40, c: '#d9b07a' }, // dough tables
+    { ...fit('ovens', 40, 50, 110, 40, '#5a5a5a'), solid: true }, // ovens
+    fit('dough', 40, 140, 180, 40, '#d9b07a'), // dough tables
   ], roofDecor: [{ x: 70, y: 40, w: 22, h: 22, c: '#3a3a3a' }, { x: 120, y: 40, w: 22, h: 22, c: '#3a3a3a' }] }),
   foundry: () => industrial({ label: 'ЛИТЕЙНЫЙ ЦЕХ', roof: '#4a4f57', floor: '#4a4a4a', machines: [
-    { x: 50, y: 50, w: 90, h: 90, c: '#2a2a2a', solid: true }, // furnace
-    { x: 60, y: 60, w: 70, h: 70, c: '#e0582f', round: true }, // molten glow
-    { x: 170, y: 60, w: 70, h: 110, c: '#6b7078' }, // ingots
+    { ...fit('furnace', 50, 50, 90, 90, '#2a2a2a'), solid: true }, // furnace (the molten glow drawn in it)
+    fit('ingots', 170, 60, 70, 110, '#6b7078'), // ingots
   ], roofDecor: [{ x: 75, y: 75, w: 40, h: 40, c: '#222', round: true }] }),
   machineshop: () => industrial({ label: 'МЕХЦЕХ', roof: '#5d6d7e', machines: [
-    { x: 40, y: 50, w: 50, h: 50, c: MACHINE, solid: true },
-    { x: 110, y: 50, w: 50, h: 50, c: MACHINE, solid: true },
-    { x: 180, y: 50, w: 50, h: 50, c: MACHINE, solid: true },
-    { x: 40, y: 140, w: 190, h: 50, c: '#7f8c8d' }, // parts racks
+    { ...fit('lathe', 40, 50, 50, 50, MACHINE), solid: true },
+    { ...fit('lathe', 110, 50, 50, 50, MACHINE), solid: true },
+    { ...fit('lathe', 180, 50, 50, 50, MACHINE), solid: true },
+    fit('racks', 40, 140, 190, 50, '#7f8c8d'), // parts racks
   ] }),
   refinery: () => industrial({ label: 'НПЗ', roof: '#7f8c8d', machines: [
-    { x: 40, y: 40, w: 70, h: 70, c: '#bdc3c7', solid: true, round: true }, // tanks
-    { x: 130, y: 40, w: 70, h: 70, c: '#bdc3c7', solid: true, round: true },
-    { x: 40, y: 140, w: 200, h: 14, c: '#e67e22' }, // pipes
+    { ...fit('tank', 40, 40, 70, 70, '#bdc3c7'), solid: true, round: true }, // tanks
+    { ...fit('tank', 130, 40, 70, 70, '#bdc3c7'), solid: true, round: true },
+    fit('pipes', 40, 140, 200, 14, '#e67e22'), // pipes
   ], roofDecor: [{ x: 210, y: 40, w: 30, h: 30, c: '#2c3e50', round: true }] }),
   glassworks: () => industrial({ label: 'СТЕКОЛЬНЫЙ', roof: '#48c9b0', machines: [
-    { x: 50, y: 50, w: 80, h: 60, c: '#2a2a2a', solid: true }, // kiln
-    { x: 160, y: 50, w: 80, h: 130, c: '#aee9f0' }, // panes
+    { ...fit('kiln', 50, 50, 80, 60, '#2a2a2a'), solid: true }, // kiln
+    fit('panes', 160, 50, 80, 130, '#aee9f0'), // panes
   ] }),
   carfactory: () => industrial({ label: 'АВТОЗАВОД', roof: '#34495e', machines: [
-    { x: 30, y: 50, w: 230, h: 20, c: '#e1b12c' }, // assembly line
-    { x: 50, y: 90, w: 60, h: 100, c: '#2e86de' }, // cars on the line
-    { x: 150, y: 90, w: 60, h: 100, c: '#c0392b' },
+    fit('assembly', 30, 50, 230, 20, '#e1b12c'), // assembly line
+    fit('carbody', 50, 90, 60, 100, '#2e86de'), // cars on the line
+    fit('carbody', 150, 90, 60, 100, '#c0392b'),
   ], roofDecor: [{ x: 40, y: 40, w: 200, h: 60, c: '#2d4f7c' }] }),
   gunfactory: () => industrial({ label: 'ОРУЖЕЙНЫЙ ЗАВОД', roof: '#3d3d3d', machines: [
-    { x: 40, y: 50, w: 60, h: 60, c: MACHINE, solid: true },
-    { x: 130, y: 50, w: 110, h: 40, c: '#2a2a2a', solid: true }, // test range wall
-    { x: 40, y: 150, w: 200, h: 30, c: '#5d4037' }, // crates
+    { ...fit('machine', 40, 50, 60, 60, MACHINE), solid: true },
+    { ...fit('rangewall', 130, 50, 110, 40, '#2a2a2a'), solid: true }, // test range wall
+    fit('crates', 40, 150, 200, 30, '#5d4037'), // crates
   ] }),
 
   // ---- the coal power station (ТЭЦ): the power lines run from here to every building ----
@@ -606,12 +616,12 @@ export const BUILDING_TYPES = {
     walls: [
       ...perimeter(560, 400, 16, { s: door(0.3, 120), e: door(0.6, 60) }),
       ...wallLine(false, 300, 16, 384, 12, door(0.6, 60)), // boiler house | turbine hall
-      { x: 40, y: 40, w: 220, h: 90, c: '#3b3b3b' }, // boilers
-      { x: 330, y: 60, w: 180, h: 60, c: '#5d6d7e' }, // turbines
+      fit('boilers', 40, 40, 220, 90, '#3b3b3b'), // boilers
+      fit('turbine', 330, 60, 180, 60, '#5d6d7e'), // turbines
     ],
     decor: [
-      { x: 40, y: 180, w: 220, h: 120, c: '#161616' }, // coal heap
-      { x: 330, y: 180, w: 180, h: 140, c: '#4a5560' }, // switchgear
+      fit('coalheap', 40, 180, 220, 120, '#161616'), // coal heap
+      fit('switchgear', 330, 180, 180, 140, '#4a5560'), // switchgear
     ],
     roofDecor: [
       { x: 90, y: 70, w: 60, h: 60, c: '#b03a2e', round: true, chimney: true }, // red-and-white stacks
@@ -629,10 +639,10 @@ export const BUILDING_TYPES = {
     const { w, h } = size;
     return site({ ...size, label: 'ЛЕСПРОМХОЗ', ground: '#6e6247', fence: '#7a5a3a', groundDecor: false, // the trees stand on the ordinary ground
       decor: [
-        { x: 60, y: h - 280, w: w * 0.35, h: 60, c: '#8b5a2b' }, { x: 60, y: h - 200, w: w * 0.35, h: 60, c: '#7a4a22' }, // log stacks by the gate
-        { x: w * 0.42, y: h - 300, w: 90, h: 90, c: '#a0703c', round: true }, // sawdust heap
+        fit('logs', 60, h - 280, w * 0.35, 60, '#8b5a2b'), fit('logs', 60, h - 200, w * 0.35, 60, '#7a4a22'), // log stacks by the gate
+        { ...fit('heap', w * 0.42, h - 300, 90, 90, '#a0703c'), round: true }, // sawdust heap
       ],
-      props: [{ x: w * 0.42 + 120, y: h - 290, w: 140, h: 40, c: '#5a4a3a' }], // loading ramp
+      props: [fit('ramp', w * 0.42 + 120, h - 290, 140, 40, '#5a4a3a')], // loading ramp
     });
   },
   // A kolkhoz: straight rows of wheat on brown ploughed earth inside a white picket fence, with a red
@@ -650,9 +660,9 @@ export const BUILDING_TYPES = {
       work: { x: 70, y: 70, w: w - 140, h: h - 380 },
       npc: { x: barn.x + barn.w / 2, y: barn.y + barn.h + 34, angle: Math.PI / 2, role: 'market' },
       decor: [
-        { x: barn.x + 10, y: barn.y + 10, w: barn.w - 20, h: barn.h - 20, c: '#8a6a44' }, // barn floor
-        { x: barn.x + 20, y: barn.y + 20, w: 80, h: 50, c: '#d8b24a' }, { x: barn.x + 20, y: barn.y + 76, w: 80, h: 50, c: '#cfa940' }, // hay bales
-        { x: barn.x + 180, y: barn.y + 30, w: 90, h: 50, c: '#b03a2e' }, // the tractor, under cover
+        fit('straw', barn.x + 12, barn.y + 12, barn.w - 24, barn.h - 24, '#a88c4e'), // straw on the barn floor
+        fit('hay', barn.x + 20, barn.y + 20, 80, 50, '#d8b24a'), fit('hay', barn.x + 20, barn.y + 76, 80, 50, '#cfa940'), // hay bales
+        fit('tractor', barn.x + 180, barn.y + 30, 90, 50, '#b03a2e'), // the tractor, under cover
         { x: silo.x - silo.r - 6, y: silo.y - silo.r - 6, w: (silo.r + 6) * 2, h: (silo.r + 6) * 2, c: 'rgba(0,0,0,.25)', round: true }, // the silo
         { x: silo.x - silo.r, y: silo.y - silo.r, w: silo.r * 2, h: silo.r * 2, c: '#a9afb5', round: true },
         { x: silo.x - silo.r + 12, y: silo.y - silo.r + 12, w: (silo.r - 12) * 2, h: (silo.r - 12) * 2, c: '#c6ccd2', round: true },
@@ -673,8 +683,8 @@ export const BUILDING_TYPES = {
     // An open pit stepping down in terraces, a headframe and an ore heap by the gate.
     const pit = [0, 1, 2, 3].map((i) => ({ x: 60 + i * 70, y: 60 + i * 60, w: w - 120 - i * 140, h: h - 380 - i * 120, c: ['#6b6258', '#5e564d', '#524b43', '#463f38'][i] }));
     return site({ ...size, label: 'ШАХТА', ground: '#77706a', fence: '#5a5a5a',
-      decor: [...pit, { x: 70, y: h - 270, w: 160, h: 120, c: '#3d3833', round: true }], // ore heap
-      props: [{ x: w - 320, y: h - 290, w: 90, h: 90, c: '#3a3d42' }], // headframe base
+      decor: [...pit.map((p) => fit('terrace', p.x, p.y, p.w, p.h, p.c)), { ...fit('heap', 70, h - 270, 160, 120, '#3d3833'), round: true }], // ore heap
+      props: [fit('headframe', w - 320, h - 290, 90, 90, '#3a3d42')], // headframe base
       roofs: [{ x: w - 330, y: h - 300, w: 110, h: 110, c: '#4a4f55', pattern: 'metal', ridge: true }], // the headframe's housing
       work: { x: 90, y: 90, w: w - 180, h: h - 420 },
     });
@@ -712,11 +722,11 @@ export const BUILDING_TYPES = {
     });
   },
   scrapyard: () => yard({ label: 'МЕТАЛЛОЛОМ', ground: '#5f5a52', fence: '#7a7a7a', props: [
-    { x: 40, y: 40, w: 80, h: 60, c: '#6d6d6d' }, { x: 150, y: 50, w: 70, h: 50, c: '#8a5a3a' }, { x: 250, y: 40, w: 70, h: 70, c: '#5a6268' },
+    fit('scrap', 40, 40, 80, 60, '#6d6d6d'), fit('wreck', 150, 50, 70, 50, '#8a5a3a'), fit('scrap', 250, 40, 70, 70, '#5a6268'),
   ] }),
   quarry: () => yard({ label: 'КАРЬЕР', ground: '#c9b27a', fence: '#8a7a5a', props: [
-    { x: 40, y: 40, w: 60, h: 50, c: '#9a8a6a' }, { x: 260, y: 50, w: 60, h: 40, c: '#8a7a5a' },
-  ], decor: [{ x: 110, y: 60, w: 130, h: 110, c: '#b89a5a', round: true }] }),
+    fit('blocks', 40, 40, 60, 50, '#9a8a6a'), fit('blocks', 260, 50, 60, 40, '#8a7a5a'),
+  ], decor: [{ ...fit('heap', 110, 60, 130, 110, '#b89a5a'), round: true }] }),
 
   // ---- the prison (ИТК): a gulag on the edge of town, filling a country block ----
   // Two barbed-wire fences with a raked "death strip" between them and watchtowers on the corners.
@@ -886,14 +896,14 @@ export const BUILDING_TYPES = {
     w: 380, h: 280,
     walls: [
       ...perimeter(380, 280, 16, { s: door(0.3, 90), e: door(0.5, 70) }),
-      { x: 30, y: 30, w: 14, h: 100, c: '#6b7078' }, // cell bars
-      { x: 110, y: 30, w: 14, h: 100, c: '#6b7078' },
-      { x: 30, y: 130, w: 94, h: 10, c: '#6b7078' },
-      { x: 220, y: 120, w: 120, h: 18, c: '#2c3e50' }, // front desk
+      fit('bars', 30, 30, 14, 100, '#6b7078'), // cell bars
+      fit('bars', 110, 30, 14, 100, '#6b7078'),
+      fit('bars', 30, 130, 94, 10, '#6b7078'),
+      fit('counter', 220, 120, 120, 18, '#2c3e50'), // front desk
     ],
     decor: [
-      { x: 44, y: 40, w: 66, h: 30, c: '#5a4632' }, // cell bench
-      { x: 160, y: 40, w: 180, h: 60, c: '#1f3a5f' }, // briefing room carpet
+      fit('bench', 44, 40, 66, 30, '#5a4632'), // cell bench
+      fit('carpet', 160, 40, 180, 60, '#1f3a5f'), // briefing room carpet
     ],
     roofDecor: [{ x: 300, y: 30, w: 40, h: 40, c: '#c0392b', round: true }, { x: 300, y: 80, w: 40, h: 40, c: '#2e86de', round: true }],
     npc: { x: 280, y: 100, angle: Math.PI / 2, role: 'police' },
@@ -965,10 +975,10 @@ export const BUILDING_TYPES = {
       ...wallLine(false, 260, 12, 150, 10),
     ],
     decor: [
-      { x: 30, y: 40, w: 80, h: 40, c: '#5a4632' }, // desks
-      { x: 160, y: 40, w: 80, h: 40, c: '#5a4632' },
-      { x: 290, y: 40, w: 80, h: 40, c: '#5a4632' },
-      { x: 60, y: 210, w: 280, h: 60, c: '#4a3a2a' }, // meeting table
+      fit('officedesk', 30, 40, 80, 40, '#5a4632'), // desks
+      fit('officedesk', 160, 40, 80, 40, '#5a4632'),
+      fit('officedesk', 290, 40, 80, 40, '#5a4632'),
+      fit('meeting', 60, 210, 280, 60, '#4a3a2a'), // meeting table
     ],
     roofDecor: [
       { x: 30, y: 30, w: 120, h: 70, c: '#2d4f7c' }, // solar panels

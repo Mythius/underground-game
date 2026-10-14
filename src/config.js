@@ -98,7 +98,7 @@ export const config = Object.freeze({
     healthRegenPerSec: 1, // everyone slowly heals on their own (food heals faster)
     staminaRegenDelaySec: 0.8, // pause after sprinting before stamina refills
     staminaMinToSprint: 25, // after running dry, wait until this much is back
-    massShrinkPerSec: 0.01, // extra size from overeating fades by this fraction per second
+    massShrinkPerSec: 0.005, // extra size from overeating fades by this fraction per second (eating a feast every ~7 s holds you near 18× mass)
     spawnSafeDistance: 400,
     maxHealth: 100, // at start mass; grows with size
     inventorySize: 5,
@@ -110,9 +110,9 @@ export const config = Object.freeze({
   // barrel: where bullets leave the gun, in player radii from the centre (matches the drawing).
   weapons: {
     knife: { name: 'Knife', melee: true, share: 1 / 3, reach: 38, cooldownSec: 0.55, magazineSize: 0, reloadSec: 0, barrel: 1.1, spawnWeight: 0 },
-    // A baseball bat: hits harder the bigger you are (share × your size against a starting player's,
-    // within sizeRange), reaches further than the knife, and smashes ATMs open (robbery.atmSmash).
-    bat: { name: 'Baseball bat', melee: true, share: 0.2, sizeScale: true, sizeRange: [0.8, 3], reach: 52, cooldownSec: 0.7, magazineSize: 0, reloadSec: 0, barrel: 1.7, spawnWeight: 0 },
+    // A baseball bat: hits harder and reaches further the bigger you are (share and reach × your width against
+    // a starting player's, within sizeRange: at 4.25×, 18× the mass, a hit takes 85%), reaches further than the knife, and smashes ATMs open (robbery.atmSmash).
+    bat: { name: 'Baseball bat', melee: true, share: 0.2, sizeScale: true, sizeRange: [0.8, 4.25], reach: 52, cooldownSec: 0.7, magazineSize: 0, reloadSec: 0, barrel: 1.7, spawnWeight: 0 },
     pistol: { name: 'Pistol', damage: 20, cooldownSec: 0.2, magazineSize: 5, reloadSec: 1.5, bulletSpeed: 900, bulletLifetimeSec: 1.2, pellets: 1, spread: 0, barrel: 1.6, spawnWeight: 0 },
     smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
     shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
@@ -466,10 +466,10 @@ export const config = Object.freeze({
     buyReach: 260, // from the building's edge (or inside it)
     // Renting: a flat in a panelka or a box in a row of lock-up garages, as locked storage (its cabinet).
     // Rent is taken from your bank at every dawn and goes to the building's owner; can't pay and you're
-    // out (what you'd stored is kept for your next rental of that kind). Owners of these also get npcRent
-    // a day from NPC tenants, less each room a player rents.
+    // out (what you'd stored is kept for your next rental of that kind). The owner's take is npcRent a
+    // day for the building: what player tenants pay counts toward it and NPC tenants make up the rest.
     rent: { panelka: 100, garages: 60 },
-    npcRent: 300,
+    npcRent: { panelka: 500, garages: 300 },
     // Sleeping in your bed at night (E on it) — or in a dumpster: once every player on the server has been
     // asleep this long, the night's skipped and it's morning.
     sleepSkipSec: 3,
@@ -485,9 +485,9 @@ export const config = Object.freeze({
     // Everyone sees a half circle in front of them (walls block). After a crime the Militsiya search
     // from where you were last seen; they give up this long (by stars) after last seeing you.
     searchSec: [0, 30, 50, 75, 110, 150],
-    // New players: their first few crimes get an on-the-spot fine instead of stars (no chase, no
-    // shooting, no prison). Whatever else they do within coverSec counts as the same crime.
-    newcomer: { crimes: 7, fine: 50, coverSec: 30 },
+    // New players: the Militsiya chase them as usual, but don't shoot, and the first few times they're
+    // caught it's an on-the-spot fine instead of an arrest.
+    newcomer: { crimes: 7, fine: 20 },
   },
   // The prison (ИТК, a gulag on the edge of town): every arrest ends up here. Half of it is a coal
   // mine. Get out by paying the warden your bail (or a friend pays it), by mining your quota of coal
@@ -546,6 +546,9 @@ export const config = Object.freeze({
     reach: 50, // from the thing's edge to yours
     nudge: 80, // a spot that isn't quite clear: furniture slides up to this far to the nearest one that is
     placeReach: 450, // how far from you (centre to centre) you can set one down with the mouse
+    // Cabinets nobody owns (in homes nobody lives in) sometimes have things left in them: `chance` of
+    // 1 to `most` things, by the relative odds in `odds`. Empty ones are looked at again every restockSec.
+    loot: { chance: 0.5, most: 3, restockSec: 900, odds: { bread: 4, burger: 3, drink: 3, feast: 0.5, rod: 1.2, bat: 1, pistol: 0.6 }, pistolAmmo: [1, 5] },
   },
   // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while a fish bites and
   // fights the line; every `cycleSec` (± a little) it tires for `tiredShare` of the cycle, and that's when
@@ -607,6 +610,8 @@ export const config = Object.freeze({
   // Bodies: loot them (E), carry them (slowly, no shooting), and hide them before someone finds them.
   bodies: { reach: 55, waterReach: 40, lifeSec: 600, max: 60, carrySpeed: 0.65, nearRange: 120 }, // nearRange: seen this close to a body (in the open) and you're wanted
   pickpocket: { reach: 45, npcMin: 10, npcMax: 60, playerShare: 0.15, cooldownSec: 3 },
+  // Townsfolk sometimes have something to eat on them: lifted when you pick their pocket, or on their body.
+  pocketFood: { robChance: 0.25, bodyChance: 0.5, odds: { bread: 4, burger: 3, drink: 3, feast: 0.3 } },
   police: {
     carsPerBuildings: 1 / 12, // patrol cars on duty, per building…
     maxUnits: 20, // …but never more than this on a map (anyone killed is replaced, see respawnSec)
@@ -673,7 +678,7 @@ export const config = Object.freeze({
   // machines or contraband does he fine you `fine` (from your bank) and seize the contraband.
   // The laundry shed on a panelka banks your cash without the inspector noticing (only for the panelka's owner).
   governor: {
-    governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19 },
+    governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19, cash: 10000 }, // (kill him and it's on his body)
     govguard: { health: 220, armor: 0.5, weapon: 'rifle', radius: 27 },
     inspector: { health: 160, armor: 0.7, weapon: 'smg', radius: 18 },
     respawnSec: 300,
@@ -704,6 +709,8 @@ export const config = Object.freeze({
     joyrideSec: [40, 70],
     fightRange: 700,
     vodkaPrice: 3,
+    vodkaPerSale: 30, // bottles he'll take at a time (the rest stays with you)
+    vodkaCooldownSec: 60, // after a sale, this long before that same gangster buys from you again (the others still will)
     tradeReach: 110,
     respawnSec: 120,
   },
@@ -767,8 +774,11 @@ export const config = Object.freeze({
     goonOfflineSec: 120, // goons whose boss has left go home after this
     boardRange: 400, // goons this close to your car when you get in walk over and hop in
     lockpickSec: 5, // a hitman picks a locked door this fast
-    goon: { name: 'Goon', fee: 2500, wagePerMin: 40, max: 2 },
-    guard: { name: 'Guard', fee: 2000, wagePerMin: 30, max: 3 },
+    goon: { name: 'Goon', fee: 2500, wagePerMin: 30, max: 2 }, // (750 a game day)
+    guard: { name: 'Guard', fee: 2000, wagePerMin: 20, max: 3 }, // (500 a game day)
+    // Goons and guards are yours until you fire them (saved with your account). Put away (the clipboard,
+    // logging off, or for goons, dying) they cost awayPerDay each at dawn while you're on — nothing while you're off.
+    awayPerDay: 10,
     // A hitman drives his own car, parks in range and snipes: he lines up each shot for aimSec (a red
     // laser shows), likes to be range[0]–range[1] away, and drives again when you're past driveFrom.
     hitman: { name: 'Hitman', fee: 6000, contractSec: 600, refundShare: 0.5, max: 1, weapon: 'sniper', car: 'sedan', range: [450, 1150], aimSec: 1.1, spread: 0.02, driveFrom: 1600 },

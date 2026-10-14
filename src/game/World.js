@@ -25,7 +25,7 @@ import { Labour } from './labour.js';
 import { Cats } from './cats.js';
 import { Wolves } from './wolves.js';
 import { radioAt } from '../radio.js';
-import { Furnishings } from './furnishing.js';
+import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
 
 /**
@@ -140,7 +140,7 @@ export class World {
       !this.buildings.some((b) => r.x < b.x + b.w + 6 && b.x < r.x + r.w + 6 && r.y < b.y + b.h + 6 && b.y < r.y + r.h + 6) &&
       ![...roadZones, ...this.lots, ...this.bays, ...this.pads, ...railStrip, ...fixtures].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
       !this.trees.some((t) => Math.abs(t.x - (r.x + r.w / 2)) < 40 && Math.abs(t.y - (r.y + r.h / 2)) < 40) && !wetRect(r));
-    // Sewer vents in the pavement at the kerb, in town (E on one: a strange noise or smell, nothing more).
+    // Sewer vents in the road by the kerb, in town (E on one: a strange noise or smell, nothing more).
     this.vents = generateVents(this.roads, this.city, (r) =>
       !this.buildings.some((b) => r.x < b.x + b.w + 6 && b.x < r.x + r.w + 6 && r.y < b.y + b.h + 6 && b.y < r.y + r.h + 6) &&
       ![...this.lots, ...this.bays, ...this.pads, ...railStrip, ...fixtures, ...this.dumpsters].some((o) => r.x < o.x + o.w + 6 && o.x < r.x + r.w + 6 && r.y < o.y + o.h + 6 && o.y < r.y + r.h + 6) &&
@@ -1017,6 +1017,10 @@ export class World {
     this.prison.step(dt);
     for (const { victim, killer } of deaths) this.bodies.setKiller(victim.id, killer);
     this.bodies.step(dt);
+    if ((this.restockIn = (this.restockIn ?? config.furnishing.loot.restockSec) - dt) <= 0) { // empty cabinets nobody owns: something in them again, maybe
+      this.restockIn = config.furnishing.loot.restockSec;
+      this.furnishings.restock();
+    }
     doorChanges.push(...this.pendingDoors.splice(0));
 
     for (let i = this.vehicleRespawns.length - 1; i >= 0; i--) {
@@ -1462,6 +1466,7 @@ export class World {
       if (stats.melee) {
         if (!p.input.fire || p.shotCooldown > 0) continue;
         p.shotCooldown = stats.cooldownSec;
+        p.swings = (p.swings ?? 0) + 1; // (everyone nearby sees the swing)
         this.#stab(p, stats);
         continue;
       }
@@ -1501,7 +1506,8 @@ export class World {
     this.hires.noteAttack(attacker, person); // your goons join in
     this.police.crime(attacker, died ? 'murder' : 'assault');
     if (died) {
-      this.bodies.add({ x: person.x, y: person.y, angle: person.angle ?? 0, kind: 'npc', look: [person.id * 7, person.id * 3, person.id * 5, person.id * 11], cash: person.wallet ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
+      const food = Math.random() < config.pocketFood.bodyChance ? [{ food: pick(config.pocketFood.odds), qty: 1 }] : []; // something to eat in their pocket, sometimes
+      this.bodies.add({ x: person.x, y: person.y, angle: person.angle ?? 0, kind: 'npc', look: [person.id * 7, person.id * 3, person.id * 5, person.id * 11], items: food, cash: person.wallet ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     } else this.townsfolk.provoke(person, attacker);
   }
 
@@ -1510,9 +1516,9 @@ export class World {
    * officer on foot. Each stab takes a share of their max health (three stabs kill).
    */
   #stab(p, base) {
-    // A bat hits harder the bigger you are.
+    // A bat hits harder, and reaches further (it's drawn bigger), the bigger you are.
     const size = base.sizeScale ? clamp(p.radius / massToRadius(this.playerOpts.startMass), ...base.sizeRange) : 1;
-    const stats = { ...base, share: base.share * size };
+    const stats = { ...base, share: base.share * size, reach: base.reach * size };
     const aim = p.input.aim ?? 0;
     const inFront = (x, y, r) => {
       const dx = x - p.x, dy = y - p.y;

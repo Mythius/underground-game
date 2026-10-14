@@ -231,3 +231,61 @@ test('goons go for whoever you attack or rob', () => {
   }
   assert.ok(fired, 'the goon opened fire on the person you robbed');
 });
+
+test('the clipboard: put goons and guards away for $10 a day, bring them out, give orders, fire them; saved with you', () => {
+  const world = town();
+  const acc = account(1, 100000);
+  const p = atBar(world, acc);
+  const home = world.homes.homeOf(acc);
+  const saves = [];
+  world.hires.onCrewChange = (a) => saves.push(world.hires.crewSave(a));
+  assert.equal(world.hires.hire(p, 'goon'), null);
+  assert.equal(world.hires.hire(p, 'guard', { post: home.id }), null);
+  const crewOf = () => world.hires.roster(acc);
+  const [goon, guard] = crewOf();
+  assert.deepEqual([goon[1], goon[2], goon[3], guard[1], guard[4]], ['goon', 1, 'follow', 'guard', home.id]);
+  assert.ok(saves.length >= 2, 'saved as they change');
+  // A goon told to wait holds his spot while you walk off.
+  assert.equal(world.hires.crew(p, { action: 'mode', id: goon[0], mode: 'wait' }), null);
+  const g = world.hires.list.find((h) => h.id === goon[0]);
+  const spot = { x: g.x, y: g.y };
+  Object.assign(p, { x: p.x + 900 });
+  run(world, 3);
+  assert.ok(Math.hypot(g.x - spot.x, g.y - spot.y) < 30, 'he stayed');
+  // Put away: off the map, $10 a dawn instead of a wage; it still counts toward the limit.
+  assert.equal(world.hires.crew(p, { action: 'away', id: guard[0] }), null);
+  assert.ok(!world.hires.list.some((h) => h.role === 'guard'));
+  const away = crewOf().find((c) => c[1] === 'guard');
+  assert.equal(away[2], 0);
+  Object.assign(p, { x: p.x - 900 }); // (back at the bar)
+  assert.equal(world.hires.hire(p, 'guard', { post: home.id }), null);
+  assert.equal(world.hires.hire(p, 'guard', { post: home.id }), null);
+  assert.equal(world.hires.hire(p, 'guard', { post: home.id }), 'hire_limit', 'three, counting the one put away');
+  for (const h of world.hires.list.filter((x) => x.role === 'guard')) world.hires.crew(p, { action: 'fire', id: h.id });
+  const before = acc.bank;
+  world.dayNumber = 1;
+  world.hires.step(0);
+  world.dayNumber = 2;
+  world.hires.step(0);
+  assert.equal(before - acc.bank, config.hires.awayPerDay, 'one put away: $10 at dawn');
+  // Back out: at his post.
+  assert.equal(world.hires.crew(p, { action: 'out', id: away[0] }), null);
+  const back = world.hires.list.find((h) => h.role === 'guard');
+  assert.equal(back.post, home);
+  // Logging off puts them all away and hands back what to save; logging in brings out who was out.
+  const saved = world.hires.unload(acc);
+  assert.equal(world.hires.list.filter((h) => h.employer === acc).length, 0);
+  assert.deepEqual(saved.map((s) => [s.role, s.out]).sort(), [['goon', 1], ['guard', 1]]);
+  assert.equal(world.hires.roster(acc).length, 0, 'off the books while logged off (nothing to pay)');
+  world.hires.restore(p, saved);
+  assert.deepEqual(world.hires.roster(acc).map((c) => [c[1], c[2]]).sort(), [['goon', 1], ['guard', 1]]);
+  // Dying puts goons away; guards stay on duty.
+  world.hires.online = (a) => a === acc; // (still connected)
+  p.alive = false;
+  world.players.delete(p.id);
+  run(world, 0.2);
+  assert.deepEqual(world.hires.roster(acc).map((c) => [c[1], c[2]]).sort(), [['goon', 0], ['guard', 1]]);
+  // Fired: gone for good.
+  for (const [id] of world.hires.roster(acc)) world.hires.crew(p, { action: 'fire', id });
+  assert.equal(world.hires.roster(acc).length, 0);
+});

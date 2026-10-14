@@ -106,6 +106,29 @@
       color: #eee; font: 600 .9rem system-ui, sans-serif; cursor: pointer; padding: 0 .7rem; white-space: nowrap;
     }
     #team-btn:hover, #team-btn[aria-expanded="true"] { border-color: #2ecc71; }
+    #crew-btn {
+      height: 2.4rem; border-radius: .5rem; border: 1px solid #444; background: rgba(0, 0, 0, .55);
+      color: #eee; font: 600 .95rem system-ui, sans-serif; cursor: pointer; padding: 0 .6rem;
+    }
+    #crew-btn:hover, #crew-btn[aria-expanded="true"] { border-color: #f4c430; }
+    #crew {
+      width: 17rem; max-height: calc(100vh - 8rem); overflow-y: auto; padding: .6rem .8rem; border-radius: .5rem; background: rgba(0, 0, 0, .75); border: 1px solid #7a6420;
+      text-align: left; font-size: .85rem;
+    }
+    #crew h2 { margin: 0 0 .3rem; font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: #f4c430; }
+    #crew .cost { color: #aaa; font-size: .75rem; margin-bottom: .4rem; }
+    #crew .hire { background: #1d1d1d; border-radius: .4rem; padding: .35rem .45rem; margin-bottom: .4rem; }
+    #crew .hire .top { display: flex; justify-content: space-between; gap: .4rem; }
+    #crew .hire .top span { color: #999; font-size: .75rem; }
+    #crew .hire.away { opacity: .75; }
+    #crew .row { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .3rem; }
+    #crew .row select { flex: 1; min-width: 0; }
+    #crew button, #crew select {
+      font: inherit; font-size: .78rem; border: 1px solid #444; background: #262626; color: #eee; border-radius: .35rem; padding: .2rem .45rem; cursor: pointer;
+    }
+    #crew button.on { border-color: #f4c430; background: rgba(244, 196, 48, .18); }
+    #crew button.danger { border-color: #a33; }
+    #crew .note { color: #888; font-size: .75rem; margin: .2rem 0; }
     #team-btn.ping { border-color: #2ecc71; animation: teamping 1s ease-in-out infinite; }
     @keyframes teamping { 50% { background: rgba(46, 204, 113, .35); } }
     #team {
@@ -216,6 +239,7 @@
     #homepanel .note { color: #999; font-size: .75rem; margin-top: .3rem; }
     #homepanel .room { display: flex; align-items: center; justify-content: space-between; gap: .4rem; margin: .25rem 0; }
     #homepanel .room button { flex: none; }
+    #homepanel .buyrow { display: flex; gap: .4rem; } #homepanel .buyrow button { flex: 1; min-width: 0; }
     #wh .sub { color: #aaa; margin-bottom: .5rem; }
     #wh .sec { background: #262626; border-radius: .5rem; padding: .45rem .6rem; margin-bottom: .5rem; color: #ccc; line-height: 1.5; }
     #wh .note { color: #999; font-size: .75rem; margin-top: .3rem; }
@@ -594,6 +618,8 @@
     <span><b>M</b> map</span>
   </div>
   <div id="top-right">
+    <button id="crew-btn" type="button" title="Your goons and guards" aria-expanded="false" aria-controls="crew" hidden>📋</button>
+    <aside id="crew" hidden></aside>
     <button id="team-btn" type="button" title="Team (T)" aria-expanded="false" aria-controls="team" hidden>👥 Team</button>
     <aside id="team" hidden></aside>
     <button id="touch-menu-btn" type="button" title="Menu">☰</button>
@@ -806,7 +832,7 @@
     }
     let storedFactories = []; // sizes of my saved factories waiting to be loaded into a free warehouse (after a restart)
     let storedHomes = { own: [], rent: [] }; // types of my homes (and rented rooms' things) waiting from before a restart
-    let homeCfg = { prices: {}, rent: {}, sellBack: 0.5, npcRent: 0, buyReach: 260 };
+    let homeCfg = { prices: {}, rent: {}, sellBack: 0.5, npcRent: {}, buyReach: 260 };
     const homeProps = new Map(); // building id -> [id, owner name | null, starter (1/0), [tenant name | null per room] | null]
     let fireplaces = []; // every fireplace on the map (walls with fireplace: true), for their glow
     let storedReminded = false;
@@ -995,6 +1021,7 @@
           staminaBar.hidden = false;
           coinsEl.hidden = false;
           teamBtn.hidden = false;
+          crewBtn.hidden = false;
           selectedSlot = 0;
           inv = [['knife', 0, 0], null, null, null, null];
           reloadEnds = [];
@@ -1080,7 +1107,7 @@
           if (msg.kind === 'cop_arrested' && msg.prison) { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — off to the prison camp: dig ${msg.quota} coal or pay ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`, 6000); }
           else if (msg.kind === 'cop_arrested') { sfx('busted'); toast(`🚔 Officer ${msg.by} arrested you — ${msg.jail}s in jail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`); }
           if (msg.kind === 'cop_fired') { sfx('error'); toast('🚔 You broke the law — you\'ve been thrown out of the Militsiya. Badge and uniform gone.'); }
-          if (msg.kind === 'newcomer_fined') { sfx('error'); toast(`🚔 ${CRIME_NAMES[msg.crime] ?? 'A crime'} — the Militsiya let a newcomer off with a ${money(msg.amount)} fine. ${msg.left ? `${msg.left} more warning${msg.left === 1 ? '' : 's'}, then it's stars, chases and prison.` : 'That was your last warning — next time it\'s stars, chases and prison.'}`); }
+          if (msg.kind === 'newcomer_fined') { sfx('busted'); toast(`🚔 ${msg.by ? `Officer ${msg.by} caught you` : 'The Militsiya caught you'} — fined ${money(msg.amount)}`); }
           if (msg.kind === 'cop_fined') { sfx('error'); toast(`🚔 Officer ${msg.by} fined you ${money(msg.amount)}`); }
           if (msg.kind === 'illegal_gun_seen') toast('🚨 A cop saw the unregistered gun in your hand!');
           if (msg.kind === 'holdup') { sfx('alarm'); toast(`🔫 A gangster's got you at gunpoint — stand still for ${msg.sec}s and he takes half your cash. You've ${msg.grace ?? 8}s to stop moving; shoot and he opens fire.`); }
@@ -1124,7 +1151,7 @@
           if (msg.kind === 'picked_car') toast('🔓 Car unlocked — E to get in');
           if (msg.kind === 'rob_stopped') toast('Robbery abandoned — you have to keep holding F');
           if (msg.kind === 'robbed') { sfx('coin'); toast(`💰 Got away with ${money(msg.amount)}`); }
-          if (msg.kind === 'stole') { sfx('pickpocket'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : '👛 Their pockets were empty') + (msg.unnoticed ? ' — they never noticed' : '')); }
+          if (msg.kind === 'stole') { sfx('pickpocket'); toast((msg.amount ? `👛 Lifted ${money(msg.amount)}` : msg.food ? '👛 No cash' : '👛 Their pockets were empty') + (msg.food ? ` · and a ${(shop.menu[msg.food]?.name ?? 'snack').toLowerCase()}` : '') + (msg.unnoticed ? ' — they never noticed' : '')); }
           if (msg.kind === 'pickpocketed') toast(`👛 Someone picked your pocket: −${money(msg.amount)}`);
           if (msg.kind === 'crime') sfx('alarm');
           if (msg.kind === 'crime') toast(`🚨 Someone saw that — ${CRIME_NAMES[msg.crime] ?? 'a crime'} reported. The Militsiya will come looking.`);
@@ -1132,6 +1159,7 @@
           if (msg.kind === 'found_you') toast('👮 They found you!');
           if (msg.kind === 'hire_died') toast(`💀 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} was killed`);
           if (msg.kind === 'hire_busted') toast(`🚔 The Militsiya arrested your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}`);
+          if (msg.kind === 'hire_no_post') toast(`📦 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} has nothing to guard there any more — he's put away (📋 clipboard)`);
           if (msg.kind === 'hire_quit') toast(`👋 Your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'} walked off — no pay, no work`);
           if (msg.kind === 'traced') { sfx('alarm'); toast(`🚨 A witness tied your ${HIRE_NAMES[msg.role]?.slice(3).toLowerCase() ?? 'hire'}'s crime to you — the Militsiya want you too`); }
           if (msg.kind === 'inspector_coming') { sfx('alarm'); toast(`🧾 The tax inspector has noticed all those delivery jobs you dropped today — he\'s on his way to check one of your factories (${money(msg.fine)} fine if he finds anything illegal)`, 6000); }
@@ -1237,7 +1265,8 @@
           if (msg.what === 'cop_apply') { copAnswers.length = 0; toast('🚔 Welcome to the Militsiya! You\'re in uniform now — no making or selling anything illegal.'); }
           if (msg.what === 'cop_resign') toast('🚔 You hand in your badge and uniform');
           if (msg.what === 'bail') toast(msg.self ? `🔓 Bail paid: ${money(msg.bail)}` : `🔓 You paid ${money(msg.bail)} bail for ${msg.name}`);
-          if (msg.what === 'cop_arrest' && msg.prison) toast(`🚔 You arrested ${msg.name} — off to the prison camp${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
+          if (msg.what === 'cop_arrest' && msg.fined != null) toast(`🚔 ${msg.name} is new in town — let off with a ${money(msg.fined)} fine`);
+          else if (msg.what === 'cop_arrest' && msg.prison) toast(`🚔 You arrested ${msg.name} — off to the prison camp${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
           else if (msg.what === 'cop_arrest') toast(`🚔 You arrested ${msg.name} — ${msg.jail}s in the cells${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
           if (msg.what === 'cop_fine') toast(`🚔 You fined ${msg.name} ${money(msg.amount)}`);
           if (msg.what.startsWith('hire_') && msg.bank !== undefined) bankBalance = msg.bank;
@@ -1329,6 +1358,9 @@
       teamBtn.hidden = true;
       teamEl.hidden = true;
       teamBtn.setAttribute('aria-expanded', 'false');
+      crewBtn.hidden = true;
+      crewEl.hidden = true;
+      crewBtn.setAttribute('aria-expanded', 'false');
       closeShop();
       closeBank();
       closePlace();
@@ -1927,6 +1959,7 @@
       not_laundry_owner: '🧺 The machine belongs to whoever owns this panelka — buy the block to use it',
       no_vodka: '🕴️ "Got any vodka? No? Then get lost." (He pays three times the price for vodka and the mixes.)',
       gangster_hostile: '🕴️ He isn\'t in a talking mood',
+      vodka_cooldown: '🕴️ "Not so fast. I just bought from you — come back in a minute." (Another gangster might buy now.)',
       atm_broken: '🏧 This ATM is smashed — it works again in a few minutes (try another, or a bank teller)',
       one_per_size: 'You already own a warehouse this size — one of each size each',
       load_saved_instead: 'You have a saved factory this size — load it here instead of buying (📦 button)',
@@ -1989,7 +2022,11 @@
       cant_drop_starter: "You can't drop your knife",
       robbed_atm: "You just robbed this ATM — they'd notice. Use another ATM or a bank teller.",
       in_vehicle: 'Get out of the vehicle first',
-      hire_limit: 'You already have as many of those as you can',
+      hire_limit: 'You already have as many of those as you can (put-away ones count — see your 📋 clipboard)',
+      no_post: "That guard's post isn't on the map — load the property, or pick another post on the clipboard",
+      already_away: "He's already put away",
+      already_out: "He's already out",
+      not_now: "You can't do that right now",
       not_your_building: 'You can only post guards in your own home or warehouses',
       no_target: "That player isn't here any more",
       no_prison: 'There is no prison on this map',
@@ -3276,8 +3313,7 @@
           if (season.main === 'winter') continue; // nothing in the fields in winter
           const w = n.r * 2.7, h = n.r * 1.7;
           const ripe = snowAmount > 0.5 ? '#c9bf9c' : season.main === 'spring' ? '#7aa04a' : '#d4b24a';
-          ctx.fillStyle = done ? 'rgba(160, 130, 80, .35)' : ripe;
-          ctx.fillRect(n.x - w / 2, n.y - h / 2, w, h);
+          if (!done) { ctx.fillStyle = ripe; ctx.fillRect(n.x - w / 2, n.y - h / 2, w, h); } // (cut: just the stubble left on the ground)
           ctx.strokeStyle = done ? 'rgba(190, 160, 100, .7)' : 'rgba(120, 90, 30, .4)';
           ctx.lineWidth = done ? 1.5 : 2;
           ctx.beginPath();
@@ -3438,6 +3474,7 @@
         return div;
       };
       const note = (parent, text) => parent.append(Object.assign(document.createElement('div'), { className: 'note', textContent: text }));
+      const income = () => `💰 Earns ${money(homeCfg.npcRent[b.type] ?? 0)} a day, paid at dawn while you're online: player tenants pay ${money(homeCfg.rent[b.type])} each for their ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}, and NPC tenants pay the rest.`;
       if (myStarter) {
         sub.textContent = '★ Your starter home — free. You come back here, and the car pad outside is your garage.';
       } else if (starter) {
@@ -3445,9 +3482,11 @@
       } else if (mine) {
         sub.textContent = `★ Yours · sells back for ${money(Math.floor(price * homeCfg.sellBack))}`;
         const s = section();
-        s.append('Furnish it how you like: select a cabinet, bed, sofa, table or chair in your hotbar inside and press E to set it down; E on one of yours picks it back up to move it.');
+        s.append(b.rooms
+          ? `Its tenants decide the furniture in their ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}s — you can't change it.`
+          : 'Furnish it how you like: select a cabinet, bed, sofa, table or chair in your hotbar inside and press E to set it down; E on one of yours picks it back up to move it.');
         if (b.carSpot) note(s, '🚗 E at the bay inside brings out any of your cars, parked there.');
-        if (rooms) note(s, `Tenants pay you ${money(homeCfg.rent[b.type])} a day each, and NPC tenants about ${money(homeCfg.npcRent)} a day for the ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}s no player rents.`);
+        if (b.rooms) note(s, income());
         homeEl.append(button(`Sell for ${money(Math.floor(price * homeCfg.sellBack))}`, () => { if (confirm('Sell it? Furniture you leave in it stays with it, and any tenants have to move out.')) homeSend('sell'); }));
       } else if (owner) {
         sub.textContent = `🔒 Owned by ${owner}`;
@@ -3457,11 +3496,13 @@
         s.append(b.carSpot
           ? 'Comes with two cabinets, and a bay for your car: E there brings out any car you\'ve bought, just like at home. Locked to everyone else. You can own one of each kind of home, on top of your starter home.'
           : 'Comes furnished, with a fire going. Place and move furniture in it as you like; it is locked to everyone else. You can own one of each kind of home, on top of your starter home.');
-        if (saved) {
-          note(section(), `📦 You have a saved ${HOME_NAMES[b.type].toLowerCase()} from before the restart — load its furniture in here, cabinets and all, free.`);
-          homeEl.append(button(`📦 Load my saved ${HOME_NAMES[b.type].toLowerCase()} here`, () => homeSend('bring'), { cls: 'big go' }));
-        }
-        homeEl.append(button(haveType ? 'You already have one of these' : `Buy for ${money(price)}`, () => homeSend('buy'), { disabled: haveType || saved || bankBalance < price, cls: 'big go' }));
+        if (b.rooms) note(s, income());
+        if (b.rooms) note(s, `Its tenants decide the furniture in their ${ROOM_NAMES[b.type]?.toLowerCase() ?? 'room'}s, not the owner.`);
+        if (saved) note(section(), `📦 You already own a ${HOME_NAMES[b.type].toLowerCase()}, put away since you were last on — load it in here, free (cabinets and all), instead of buying another.`);
+        const buyRow = Object.assign(document.createElement('div'), { className: 'buyrow' }); // Buy, and beside it Load if you've one put away
+        buyRow.append(button(haveType ? 'You already have one of these' : `Buy for ${money(price)}`, () => homeSend('buy'), { disabled: haveType || saved || bankBalance < price, cls: 'big go' }));
+        if (saved) buyRow.append(button(`📦 Load mine here`, () => homeSend('bring'), { cls: 'big go' }));
+        homeEl.append(buyRow);
       }
       if (b.rooms && !starter) {
         const s = section(`${ROOM_NAMES[b.type]}s to rent · ${money(homeCfg.rent[b.type])} a day`);
@@ -3491,6 +3532,7 @@
     const FURN_WORDS = { cabinet: 'cabinet', bed: 'bed', furniture: 'sofa', table: 'table', chair: 'chair' };
     const FURN_ERRORS = {
       not_your_place: 'Furniture goes in your own home or warehouse',
+      tenants_furnish: '🏢 The tenants decide the furniture here — rent a room and you can furnish it',
       too_many_here: 'There are already as many of those here as will fit',
       no_space: 'No room for it there — try facing another way, or somewhere else',
       empty_it_first: 'Empty the cabinet first',
@@ -3544,7 +3586,7 @@
           slots.forEach((st, i) => grid.append(cell(st, () => send({ t: 'furnish', action: 'take', id: f[0], slot: i }), `Take ${slotName(st)}`)));
           furnEl.append(grid);
           furnEl.append(act('⬇ Put in what I’m holding', () => send({ t: 'furnish', action: 'put', id: f[0], slot: selectedSlot })));
-          if (mineFurn(f) && !slots.some(Boolean)) furnEl.append(act('🫳 Pick up the cabinet', () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
+          if (mayMoveFurn(f) && !slots.some(Boolean)) furnEl.append(act('🫳 Pick up the cabinet', () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
           furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Click a slot to take it; drag from your hotbar (or select it and press the button) to put it in. Anything goes: goods, food, guns, your rod. E or Esc to close.' }));
         }
       } else {
@@ -3553,8 +3595,10 @@
           furnEl.append(act(isNight ? '💤 Sleep' : '💤 Sleep (only at night)', () => { send({ t: 'furnish', action: 'sleep', id: f[0] }); closeFurnish(); }));
           furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'When everyone on the server is asleep — in a bed, or in a dumpster — the night skips to morning. Move or press E to get up.' }));
         }
-        furnEl.append(act(`🫳 Pick up the ${FURN_WORDS[f[1]] ?? 'furniture'}`, () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
-        furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Back into your hotbar, to put down somewhere else. E or Esc to close.' }));
+        if (mayMoveFurn(f)) {
+          furnEl.append(act(`🫳 Pick up the ${FURN_WORDS[f[1]] ?? 'furniture'}`, () => { send({ t: 'furnish', action: 'pickup', id: f[0] }); closeFurnish(); }));
+          furnEl.append(Object.assign(document.createElement('div'), { className: 'note', textContent: 'Back into your hotbar, to put down somewhere else. E or Esc to close.' }));
+        }
       }
     }
     dropTarget(furnEl, (from, i) => { if (from === 'hot' && furnOpen?.[1] === 'cabinet') send({ t: 'furnish', action: 'put', id: furnOpen[0], slot: i }); });
@@ -3579,27 +3623,37 @@
       return !(owner && owner === wh.account);
     }
 
-    /** Is the selected slot a cabinet, bed or sofa I could put down, and am I in my own home or warehouse? */
+    /** The room (flat or garage box) of building b that (x, y) is in, or -1. */
+    const roomAtXY = (b, x, y) => (b.rooms ?? []).findIndex((r) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h);
+    /** Do I rent the room of b that (x, y) is in? */
+    const myRoomAt = (b, x, y) => { const i = roomAtXY(b, x, y); return i >= 0 && homeProps.get(b.id)?.[3]?.[i] === wh.account; };
+    /** The building I'm standing in. */
+    const buildingHere = () => me && buildings.find((x) => me.x > x.x && me.x < x.x + x.w && me.y > x.y && me.y < x.y + x.h);
+    /** Furniture in a block of flats or a row of garages is its tenants' to move: may I pick this one up? */
+    const mayMoveFurn = (f) => { const b = buildings[f[7] - 1]; return mineFurn(f) && (!b?.rooms || myRoomAt(b, f[2] + f[4] / 2, f[3] + f[5] / 2)); };
+    /** Is the selected slot a cabinet, bed or sofa I could put down, and am I in my own home or warehouse (or the room I rent: area)? */
     function placeableHere() {
       const w = inv[selectedSlot];
       if (!me || me.car || riding || !isGoods(w) || !furn.kinds[w[1]]) return null;
-      const b = buildings.find((x) => me.x > x.x && me.x < x.x + x.w && me.y > x.y && me.y < x.y + x.h);
+      const b = buildingHere();
       if (!b) return null;
+      if (b.rooms) return myRoomAt(b, me.x, me.y) ? { kind: w[1], b, area: b.rooms[roomAtXY(b, me.x, me.y)] } : null; // (flats and boxes: their tenants furnish them)
       const prop = homeProps.get(b.id);
       const mine = (myHome && myHome[0] === b.id) || (prop && !prop[2] && prop[1] === wh.account) || (econ.owners.get(b.id) ?? wh.layouts.get(b.id)?.owner) === wh.account;
       return mine ? { kind: w[1], b } : null;
     }
-    /** Roughly the server's check (it has the final say): in reach, inside the walls, clear of furniture and doorways. */
-    function furnSpotLooksFree(b, r) {
+    /** Roughly the server's check (it has the final say): in reach, inside the walls (and the room, renting), clear of furniture and doorways. */
+    function furnSpotLooksFree(b, r, area = null) {
       const hit = (a, o, pad) => a.x < o.x + o.w + pad && a.x + a.w > o.x - pad && a.y < o.y + o.h + pad && a.y + a.h > o.y - pad;
       if (spotTooFar(r)) return false;
+      if (area && (r.x < area.x || r.y < area.y || r.x + r.w > area.x + area.w || r.y + r.h > area.y + area.h)) return false;
       if (r.x < b.x + 6 || r.y < b.y + 6 || r.x + r.w > b.x + b.w - 6 || r.y + r.h > b.y + b.h - 6) return false;
       if (b.walls?.some((w) => hit(r, w, 2)) || b.doors?.some((d) => hit(r, d, 34))) return false;
       return !furn.list.some(([, , x, y, w, h]) => hit(r, { x, y, w, h }, 2));
     }
     /** Where the server will really put it: the clear spot nearest `r`, or null. */
-    function nudgedSpot(b, kind, r) {
-      if (furnSpotLooksFree(b, r)) return r;
+    function nudgedSpot(b, kind, r, area = null) {
+      if (furnSpotLooksFree(b, r, area)) return r;
       const max = furn.nudge ?? 80, cx = r.x + r.w / 2, cy = r.y + r.h / 2;
       let best = null, bestD = Infinity;
       for (let dy = -max; dy <= max; dy += 4) {
@@ -3607,7 +3661,7 @@
           const d = Math.hypot(dx, dy);
           if (d >= bestD || d > max) continue;
           const t = { ...r, x: Math.round(cx + dx - r.w / 2), y: Math.round(cy + dy - r.h / 2) };
-          if (furnSpotLooksFree(b, t)) [best, bestD] = [t, d];
+          if (furnSpotLooksFree(b, t, area)) [best, bestD] = [t, d];
         }
       }
       return best;
@@ -3889,6 +3943,34 @@
       if (i === lastVentLine) i = (i + 1) % VENT_LINES.length; // (not the same twice running)
       lastVentLine = i;
       toast(`🕳 ${VENT_LINES[i]}`, 3200);
+    }
+
+    // The locked trapdoor in a bunker's floor (E). It never opens… as far as anyone knows.
+    const TRAPDOOR_LINES = [
+      'Locked. A heavy padlock, rusted shut.',
+      'You rattle the padlock. Somewhere below, something rattles back.',
+      'Locked tight. Cold air seeps up round the edges.',
+      'Locked. Stencilled on the iron: «ПОСТОРОННИМ ВХОД ВОСПРЕЩЁН» — no entry.',
+      'You knock. The echo goes down a long, long way.',
+      'Locked. The padlock looks newer than the bunker.',
+    ];
+    function rattleTrapdoor() {
+      sfx('error');
+      toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]}`, 3200);
+    }
+
+    function nearestTrapdoor() {
+      if (!me) return null;
+      let best = null, bd = Infinity;
+      for (const b of buildings) {
+        if (b.type !== 'bunker' || Math.hypot(b.x + b.w / 2 - me.x, b.y + b.h / 2 - me.y) > 300) continue;
+        for (const t of b.decor) {
+          if (!t.trapdoor) continue;
+          const d = Math.hypot(t.x + t.w / 2 - me.x, t.y + t.h / 2 - me.y);
+          if (d < 40 + radiusOf(me.mass) && d < bd) [best, bd] = [t, d];
+        }
+      }
+      return best;
     }
 
     function nearestVent() {
@@ -7159,6 +7241,60 @@
       nothing_to_eat: 'Select some food first',
     };
 
+    // ---- the clipboard: my goons and guards --------------------------------------------------
+    const crewBtn = document.getElementById('crew-btn');
+    const crewEl = document.getElementById('crew');
+    let crew = null, crewKey = '0'; // [roster: [id, role, out, mode, post, health, max], posts: [[id, label]], [goon, guard, put away] a day]
+    let crewFiring = 0; // the hire whose Fire button wants a second press
+    function toggleCrew(open = crewEl.hidden) {
+      crewEl.hidden = !open;
+      crewBtn.setAttribute('aria-expanded', String(open));
+      crewFiring = 0;
+      if (open) renderCrew();
+    }
+    crewBtn.onclick = () => toggleCrew();
+    crewEl.addEventListener('click', (e) => { if (e.target.tagName === 'BUTTON') e.target.blur(); }); // so Space/Enter stay game keys
+    function renderCrew() {
+      if (crewEl.hidden) return;
+      const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+      const btn = (label, fn, cls = '') => el('button', { type: 'button', className: cls, textContent: label, onclick: fn });
+      const order = (id, action, extra = {}) => send({ t: 'crew', action, id, ...extra });
+      const parts = [el('h2', { textContent: '📋 Your crew' })];
+      const [roster, posts, cost] = crew ?? [[], [], [0, 0, 0]];
+      if (!roster.length) {
+        parts.push(el('p', { className: 'note', textContent: 'No goons or guards yet. Hire them from the barman at the БАР.' }));
+        return crewEl.replaceChildren(...parts);
+      }
+      const day = roster.reduce((sum, [, role, out]) => sum + (out ? (role === 'goon' ? cost[0] : cost[1]) : cost[2]), 0);
+      parts.push(el('div', { className: 'cost', textContent: `Costs you ${money(day)} a game day — out: goon ${money(cost[0])}, guard ${money(cost[1])}; put away: ${money(cost[2])} each. Nothing while you're logged off.` }));
+      const count = { goon: 0, guard: 0 };
+      for (const [id, role, out, mode, post, hp, max] of roster) {
+        const n = ++count[role];
+        const status = out ? `${hp}/${max} HP` : 'put away';
+        const card = el('div', { className: `hire${out ? '' : ' away'}` }, el('div', { className: 'top' }, el('b', { textContent: `${HIRE_NAMES[role]} ${n}` }), el('span', { textContent: status })));
+        if (role === 'goon') {
+          if (out) card.append(el('div', { className: 'row' },
+            btn('🚶 Follow me', () => order(id, 'mode', { mode: 'follow' }), mode === 'follow' ? 'on' : ''),
+            btn('✋ Wait here', () => order(id, 'mode', { mode: 'wait' }), mode === 'wait' ? 'on' : '')));
+          else card.append(el('div', { className: 'note', textContent: 'Brought out, he turns up beside you and follows you.' }));
+        } else {
+          const sel = el('select', { title: 'Where he stands guard' });
+          if (!post) sel.append(el('option', { value: '0', textContent: out ? '—' : 'Pick a post…' }));
+          for (const [bid, label] of posts) sel.append(el('option', { value: String(bid), textContent: label, selected: bid === post }));
+          sel.onchange = () => { const v = Number(sel.value); if (v) order(id, 'post', { post: v }); };
+          card.append(el('div', { className: 'row' }, el('span', { className: 'note', textContent: 'Post:' }), sel));
+          if (!out && !post) card.append(el('div', { className: 'note', textContent: 'His post isn\'t on the map (load that property first), or pick another.' }));
+        }
+        const fire = crewFiring === id
+          ? btn('Sure? Fire him', () => { crewFiring = 0; order(id, 'fire'); }, 'danger')
+          : btn('🗑️ Fire', () => { crewFiring = id; renderCrew(); }, 'danger');
+        card.append(el('div', { className: 'row' }, out ? btn('📦 Put away', () => order(id, 'away')) : btn('▶ Bring out', () => order(id, 'out'), 'on'), fire));
+        parts.push(card);
+      }
+      parts.push(el('p', { className: 'note', textContent: `Put away, they wait off the map for ${money(cost[2])} a day instead of their wage. Logging off puts them all away; dying puts your goons away (guards stay on duty).` }));
+      crewEl.replaceChildren(...parts);
+    }
+
     function toggleTeam(open = teamEl.hidden) {
       teamEl.hidden = !open;
       teamBtn.setAttribute('aria-expanded', String(open));
@@ -7501,11 +7637,12 @@
           else if (t?.kind === 'body') openBody(t.target);
           else if (t?.kind === 'garage') openGarage();
           else if (t?.kind === 'furnish') openFurnish(t.target);
-          else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him all of it
+          else if (t?.kind === 'gangster') send({ t: 'gangster', id: t.target, action: 'sell' }); // "Got vodka?" — sell him some (up to 30 bottles)
           else if (t?.kind === 'cat') send({ t: 'cat', action: t.feed ? 'feed' : 'pickup', id: t.target }); // a fish for it, or up into my arms
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
           else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
+          else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked
           else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
@@ -7536,12 +7673,25 @@
 
     const mouse = { x: 0, y: 0 };
     let stabAt = -1e9; // when my last knife stab started (for the jab animation)
+    const swingsSeen = new Map(); // player id → { n: swings so far, at: when their last one started } (other people's knife/bat swings)
+    /** Start my knife/bat swing animation, if the server would let me swing again yet (its cooldown), so each one shown is a real hit. */
+    function startSwing(now = performance.now()) {
+      const w = inv[selectedSlot]?.[0];
+      if (w !== 'knife' && w !== 'bat') return;
+      if (now - stabAt < (weapons[w]?.cooldownSec ?? 0.55) * 1000) return;
+      stabAt = now;
+      if (w === 'bat' && playing) sfx('bat');
+    }
     let firing = false;
     addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
     /** Put the cabinet, bed or sofa in hand down where its see-through one is. */
     function placeFurniture() {
       const toPlace = placeableHere();
-      if (!toPlace) return false;
+      if (!toPlace) {
+        const b = buildingHere(), w = inv[selectedSlot];
+        if (b?.rooms && isGoods(w) && furn.kinds[w[1]] && !me.car) { toast(FURN_ERRORS.tenants_furnish); return true; } // (furniture in hand in someone's block of flats or garages)
+        return false;
+      }
       const spot = placeSpot(toPlace.kind);
       if (!touchMode && spotTooFar(spot)) { toast('Too far — put it down nearer to you'); return true; }
       send({ t: 'furnish', action: 'place', angle: aimAngle(), ...(spot.at && { at: spot.at }) });
@@ -7553,8 +7703,7 @@
       if (e.button === 0 && playing && placeFurniture()) return; // furniture in hand: click puts it down
       if (e.button === 0 && playing && holdingRod() && !me?.car && !riding) return fishClick();
       if (e.button === 0) firing = true;
-      if (e.button === 0 && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat')) stabAt = performance.now();
-      if (e.button === 0 && inv[selectedSlot]?.[0] === 'bat' && playing) sfx('bat');
+      if (e.button === 0) startSwing();
     });
     canvas.addEventListener('contextmenu', (e) => { if (whBuildMode()) e.preventDefault(); });
     addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; });
@@ -7652,11 +7801,7 @@
 
     function aimFiring() {
       firing = Boolean(sticks.aim && sticks.aim.mag > 0.35 && stickAttacks() && playing);
-      const w = inv[selectedSlot];
-      if (firing && (w?.[0] === 'knife' || w?.[0] === 'bat') && performance.now() - stabAt > 450) { // the jab, again and again while held
-        stabAt = performance.now();
-        if (w[0] === 'bat') sfx('bat');
-      }
+      if (firing) startSwing(); // the jab, again and again while held
     }
 
     let triedFullscreen = false;
@@ -8041,7 +8186,12 @@
       if (late < 1000) jitterMs = late > jitterMs ? late : jitterMs + (late - jitterMs) * 0.005; // (a backgrounded tab's backlog isn't jitter)
 
       const players = new Map();
-      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held] of msg.players) players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held });
+      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held, swings] of msg.players) {
+        players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held });
+        const seen = swingsSeen.get(id);
+        if (!seen) swingsSeen.set(id, { n: swings, at: -1e9 }); // (first sight: no swing to show)
+        else if (seen.n !== swings) Object.assign(seen, { n: swings, at: performance.now() + interpDelay }); // they swung: animate it (when their interpolated body gets there)
+      }
       const bullets = new Map();
       for (const [id, x, y] of msg.bullets ?? []) bullets.set(id, { x, y });
       const vehicles = new Map();
@@ -8126,6 +8276,7 @@
       myGarages = you.garages ?? [];
       storedFactories = you.stored ?? [];
       storedHomes = you.storedHomes ?? storedHomes;
+      if (JSON.stringify(you.crew ?? 0) !== crewKey) { crewKey = JSON.stringify(you.crew ?? 0); crew = you.crew || null; renderCrew(); }
       if (storedFactories.length && !storedReminded) {
         storedReminded = true;
         const names = [...new Set(storedFactories)].map((sz) => wh.cfg?.sizes?.[sz]?.name ?? sz).join(', ');
@@ -9282,6 +9433,35 @@
 
     /** A decor rect; concrete ones (pump pads) get the texture and a worn, darker edge. */
     function drawDecor(d) {
+      if (d.prop) return drawProp(d); // a fitting drawn in detail (a rug, a shelf, a heap…)
+      if (d.trapdoor) { // an iron trapdoor in the bunker floor: riveted, a padlocked hasp
+        ctx.fillStyle = '#2a2826'; ctx.fillRect(d.x - 2, d.y - 2, d.w + 4, d.h + 4); // the frame
+        ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.strokeStyle = '#3b3631'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x + d.w, d.y + d.h); ctx.moveTo(d.x + d.w, d.y); ctx.lineTo(d.x, d.y + d.h); ctx.stroke(); // cross bracing
+        for (const [rx, ry] of [[3, 3], [d.w - 3, 3], [3, d.h - 3], [d.w - 3, d.h - 3]]) circle(d.x + rx, d.y + ry, 1.6, '#8a7f72'); // rivets
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+        ctx.fillStyle = '#6b4a2b'; ctx.fillRect(cx - 7, cy - 2, 14, 4); // rusty hasp
+        ctx.fillStyle = '#b08d2a'; ctx.fillRect(cx - 4, cy - 1, 8, 8); // the padlock
+        ctx.strokeStyle = '#b08d2a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(cx, cy - 1, 3, Math.PI, 0); ctx.stroke();
+        return;
+      }
+      if (d.glass) { // a broken vodka bottle: green shards, the neck, a puddle long since dried
+        const rnd = seeded(Math.round(d.x * 7 + d.y * 3));
+        ctx.fillStyle = 'rgba(40, 35, 25, .25)';
+        ctx.beginPath(); ctx.ellipse(d.x + d.w / 2, d.y + d.h / 2, d.w / 2, d.h / 2, 0, 0, Math.PI * 2); ctx.fill(); // the stain
+        const neck = rnd() * Math.PI * 2, nx = d.x + d.w * (0.3 + rnd() * 0.4), ny = d.y + d.h * (0.3 + rnd() * 0.4);
+        ctx.save(); ctx.translate(nx, ny); ctx.rotate(neck);
+        ctx.fillStyle = d.c; ctx.fillRect(-2, -6, 4, 9); // the neck
+        ctx.fillStyle = '#c9c1a8'; ctx.fillRect(-2.5, -8, 5, 2.5); // the cap
+        ctx.restore();
+        for (let i = 0; i < 7; i++) { // shards
+          const sx = d.x + rnd() * d.w, sy = d.y + rnd() * d.h, a = rnd() * Math.PI * 2, r = 1.5 + rnd() * 3;
+          ctx.fillStyle = i % 3 ? d.c : 'rgba(220, 240, 230, .7)';
+          ctx.beginPath(); ctx.moveTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r); ctx.lineTo(sx + Math.cos(a + 2.2) * r * 0.7, sy + Math.sin(a + 2.2) * r * 0.7); ctx.lineTo(sx + Math.cos(a + 4) * r * 0.9, sy + Math.sin(a + 4) * r * 0.9); ctx.fill();
+        }
+        return;
+      }
       if (d.rake) { // the death strip: raked sand, so footprints show
         ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
         ctx.strokeStyle = 'rgba(90, 75, 50, .22)'; ctx.lineWidth = 2;
@@ -9453,7 +9633,7 @@
         ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fillStyle = fill; ctx.fill();
         if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
       };
-      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(L + 3, T + 4, W, D); // shadow
+      if (!FLAT_FITTINGS.has(wall.prop) && !ROUND_FITTINGS.has(wall.prop)) { ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(L + 3, T + 4, W, D); } // shadow
       const rnd = seeded(Math.round(wall.x * 31 + wall.y * 17) % 2147483646 + 1);
       if (wall.prop === 'desk') { // a mahogany desk: green leather top, papers, an inkwell and a brass lamp
         const g = ctx.createLinearGradient(0, T, 0, T + D);
@@ -9493,8 +9673,670 @@
           x += bw + 0.6;
         }
         ctx.fillStyle = '#5a3a20'; ctx.fillRect(L, T + D - 3, W, 3); // the front edge
-      }
+      } else drawFitting(wall.prop, L, T, W, D, wall.c?.length === 7 ? wall.c : '#888888', rnd, rr);
       ctx.restore();
+    }
+
+    // Fittings that lie flat on the floor (no drop shadow), and round ones (a round shadow of their own).
+    const FLAT_FITTINGS = new Set(['carpet', 'runner', 'straw', 'stripe', 'stain', 'island', 'terrace', 'coalheap', 'heap', 'ladder']);
+    const ROUND_FITTINGS = new Set(['tank', 'millstone', 'tyre']);
+
+    /**
+     * A building's fittings (counters, shelves, rugs, machines, heaps…) in detail. Called by drawProp
+     * already turned so the front is +y: the box is (L, T) to (L + W, T + D). c is the colour it was planned in.
+     */
+    function drawFitting(kind, L, T, W, D, c, rnd, rr) {
+      const R = L + W, B = T + D, cx = L + W / 2, cy = T + D / 2;
+      const wood = (x, y, w, h, base, grain = 7) => { // planks with a grain
+        ctx.fillStyle = base; ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(0, 0, 0, .18)'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let k = y + grain; k < y + h - 1; k += grain) { ctx.moveTo(x, k); ctx.lineTo(x + w, k + (rnd() - 0.5) * 2); }
+        ctx.stroke();
+      };
+      const glassBottle = (x, y, r = 3) => { // a bottle seen from above: glass, a lighter neck, the cap
+        const g = ['#3f6b4a', '#6b4a22', '#d8e4e8', '#2e4a6b', '#7a2a2a'][Math.floor(rnd() * 5)];
+        circle(x, y, r, g); circle(x - r * 0.25, y - r * 0.25, r * 0.45, 'rgba(255, 255, 255, .35)'); circle(x, y, r * 0.35, '#c9c1a8');
+      };
+      const glass = (x, y) => { circle(x, y, 3.2, 'rgba(220, 235, 240, .55)'); circle(x, y, 2, 'rgba(200, 150, 60, .7)'); }; // a glass of something
+      const ashtray = (x, y) => { circle(x, y, 4, '#8a8f96'); circle(x, y, 2.6, '#3a3a3a'); ctx.fillStyle = '#e8e2d0'; ctx.fillRect(x - 1, y - 4, 5, 1.4); };
+      const paper = (x, y, a = 0, w = 12, h = 15) => {
+        ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+        ctx.fillStyle = '#f2ecd8'; ctx.fillRect(-w / 2, -h / 2, w, h);
+        ctx.fillStyle = '#9a9384'; for (let k = 0; k < 4; k++) ctx.fillRect(-w / 2 + 2, -h / 2 + 3 + k * 3, w - 4 - (k === 3 ? 4 : 0), 0.8);
+        ctx.restore();
+      };
+      const crate = (x, y, w, h, base) => {
+        ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(x + 2, y + 3, w, h);
+        ctx.fillStyle = base; ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = shade(base, 0.6); ctx.lineWidth = 1.5; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+        ctx.beginPath(); ctx.moveTo(x + 2, y + 2); ctx.lineTo(x + w - 2, y + h - 2); ctx.stroke(); // the brace
+        ctx.strokeStyle = 'rgba(0, 0, 0, .15)'; ctx.lineWidth = 1; ctx.beginPath();
+        for (let k = y + 6; k < y + h - 2; k += 6) { ctx.moveTo(x + 2, k); ctx.lineTo(x + w - 2, k); }
+        ctx.stroke();
+        if (w > 18) { ctx.fillStyle = 'rgba(20, 20, 20, .55)'; ctx.font = 'bold 5px sans-serif'; ctx.fillText('СССР', x + 4, y + h / 2 + 2); }
+      };
+      const lump = (x, y, r, col) => { // a rough lump (coal, ore, gravel)
+        ctx.fillStyle = col; ctx.beginPath();
+        for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2, q = r * (0.7 + rnd() * 0.35); ctx.lineTo(x + Math.cos(a) * q, y + Math.sin(a) * q); }
+        ctx.fill();
+      };
+      const panel = (x, y, w, h) => { // a control panel: buttons and a dial
+        rr(x, y, w, h, 2, '#2c3136', '#15181b');
+        circle(x + 5, y + h / 2, 2.2, '#c0392b'); circle(x + 11, y + h / 2, 2.2, '#27ae60');
+        if (w > 22) { circle(x + w - 7, y + h / 2, 4, '#e8e2d0'); ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + w - 7, y + h / 2); ctx.lineTo(x + w - 5, y + h / 2 - 3); ctx.stroke(); }
+      };
+      const hazard = (x, y, w, h) => { // yellow-and-black warning stripes
+        ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+        ctx.fillStyle = '#e1b12c'; ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#1d1d1d';
+        for (let k = -h; k < w; k += 10) { ctx.beginPath(); ctx.moveTo(x + k, y + h); ctx.lineTo(x + k + 5, y + h); ctx.lineTo(x + k + 5 + h, y); ctx.lineTo(x + k + h, y); ctx.fill(); }
+        ctx.restore();
+      };
+      const steel = (x, y, w, h, base, r = 3) => {
+        const g = ctx.createLinearGradient(x, y, x, y + h);
+        g.addColorStop(0, shade(base, 1.25)); g.addColorStop(0.5, base); g.addColorStop(1, shade(base, 0.7));
+        rr(x, y, w, h, r, g, shade(base, 0.5), 1.2);
+      };
+      const now = performance.now() / 1000;
+
+      switch (kind) {
+        case 'counter': { // a wooden counter: worn top, a lip along the front, the till and a few papers
+          wood(L, T, W, D, shade(c, 1.15), 5);
+          ctx.fillStyle = shade(c, 0.7); ctx.fillRect(L, B - 3, W, 3);
+          ctx.strokeStyle = shade(c, 0.5); ctx.lineWidth = 1.5; ctx.strokeRect(L + 0.5, T + 0.5, W - 1, D - 1);
+          const tx = L + W * 0.72; // the till: a grey box, keys, a paper roll
+          rr(tx, T + 1, Math.min(22, D * 1.4), D - 2, 2, '#6b7078', '#3a3d42');
+          for (let k = 0; k < 3; k++) for (let j = 0; j < 2; j++) ctx.fillRect(tx + 3 + k * 5, T + 3 + j * ((D - 6) / 2), 3, 2);
+          ctx.fillStyle = '#f2ecd8'; ctx.fillRect(tx + 17, T + 2, 3, D - 4);
+          if (W > 100) paper(L + W * 0.3, cy, 0.2, 10, Math.min(13, D - 3));
+          if (W > 140) { circle(L + 14, cy, Math.min(4, D / 3), '#2a2a2a'); circle(L + 14, cy, 1.5, '#888'); } // the phone
+          break;
+        }
+        case 'bar': { // the bar: dark polished wood, a brass rail along the front, beer taps, glasses and an ashtray
+          const g = ctx.createLinearGradient(0, T, 0, B);
+          g.addColorStop(0, shade(c, 1.4)); g.addColorStop(1, shade(c, 0.9));
+          rr(L, T, W, D, 3, g, shade(c, 0.5), 1.5);
+          ctx.fillStyle = 'rgba(255, 255, 255, .08)'; ctx.fillRect(L + 2, T + 2, W - 4, 3); // the shine
+          ctx.fillStyle = '#c9a24a'; ctx.fillRect(L + 2, B - 2.5, W - 4, 2); // the brass rail
+          for (let k = 0; k < 3; k++) { const x = L + 22 + k * 10; circle(x, T + 5, 3, '#b8923a'); circle(x, T + 5, 1.4, '#3a2a1a'); } // the taps
+          for (let x = L + 60; x < R - 16; x += 22 + rnd() * 18) glass(x, cy + (rnd() - 0.5) * 4);
+          ashtray(R - 10, cy);
+          break;
+        }
+        case 'shelf': { // a shelf stacked with bottles (vodka, mostly) and packets
+          wood(L, T, W, D, shade(c, 0.85), 99);
+          ctx.strokeStyle = shade(c, 0.5); ctx.lineWidth = 1.5; ctx.strokeRect(L + 0.5, T + 0.5, W - 1, D - 1);
+          const rows = D > 22 ? 2 : 1;
+          for (let row = 0; row < rows; row++) {
+            const y = T + (row + 0.5) * (D / rows);
+            for (let x = L + 5; x < R - 4;) {
+              if (rnd() < 0.25 && D > 22) { // a packet of crisps or a cigarette carton
+                const pw = 7 + rnd() * 5;
+                ctx.fillStyle = ['#d8a23a', '#c0392b', '#2e86de', '#f2f2f2'][Math.floor(rnd() * 4)]; ctx.fillRect(x, y - 4, pw, 8);
+                ctx.fillStyle = 'rgba(0, 0, 0, .2)'; ctx.fillRect(x, y + 2, pw, 2);
+                x += pw + 2;
+              } else { glassBottle(x + 3, y, Math.min(3.2, D / rows / 2 - 1)); x += 7.5; }
+            }
+          }
+          ctx.fillStyle = shade(c, 1.3); ctx.fillRect(L, B - 2, W, 2); // the front edge
+          break;
+        }
+        case 'table': { // a little bar table: glasses, a bottle, an ashtray, a beer mat
+          rr(L, T, W, D, 4, shade(c, 1.1), shade(c, 0.5), 1.5);
+          ctx.strokeStyle = 'rgba(0, 0, 0, .15)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(cx, T + 2); ctx.lineTo(cx, B - 2); ctx.stroke();
+          ctx.fillStyle = '#e8dcc0'; ctx.fillRect(L + 5, T + 5, 8, 8); // a beer mat
+          glass(L + 9, T + 9); glass(R - 9, B - 10);
+          glassBottle(cx + 2, cy - 2, 3.4);
+          ashtray(L + 9, B - 9);
+          break;
+        }
+        case 'cardtable': { // green baize, a wooden rim: cards dealt, piles of chips, a bottle
+          rr(L, T, W, D, 6, shade(c, 0.6));
+          rr(L + 4, T + 4, W - 8, D - 8, 4, c);
+          for (let i = 0; i < 4; i++) { // the hands, dealt round the table
+            const a = (i / 4) * Math.PI * 2 + 0.4, x = cx + Math.cos(a) * W * 0.28, y = cy + Math.sin(a) * D * 0.28;
+            for (let k = 0; k < 3; k++) { ctx.save(); ctx.translate(x + k * 2, y); ctx.rotate(a + k * 0.25); ctx.fillStyle = '#f6f2e6'; ctx.fillRect(-3, -4, 6, 8); ctx.fillStyle = k % 2 ? '#b8323a' : '#222'; ctx.fillRect(-1, -1, 2, 2); ctx.restore(); }
+          }
+          for (let k = 0; k < 4; k++) circle(cx - 4 + k * 3, cy + 1 - k, 2.6, ['#c0392b', '#2e86de', '#f2f2f2', '#1d1d1d'][k]); // chips in the pot
+          glassBottle(R - 8, T + 8, 3.4);
+          ashtray(L + 9, T + 9);
+          break;
+        }
+        case 'carpet': case 'runner': { // a Soviet wall-rug style carpet: border, a pattern inside, a medallion, fringe at the ends
+          const dark = shade(c, 0.65), light = shade(c, 1.5);
+          ctx.fillStyle = c; ctx.fillRect(L, T, W, D);
+          const b = Math.max(3, Math.min(W, D) * 0.12);
+          ctx.strokeStyle = dark; ctx.lineWidth = b; ctx.strokeRect(L + b / 2, T + b / 2, W - b, D - b);
+          ctx.strokeStyle = '#c9a24a'; ctx.lineWidth = 1; ctx.strokeRect(L + b + 1, T + b + 1, W - 2 * b - 2, D - 2 * b - 2);
+          ctx.fillStyle = light; // little diamonds round the border
+          for (let x = L + b * 1.5; x < R - b; x += b * 2.2) for (const y of [T + b / 2, B - b / 2]) { ctx.beginPath(); ctx.moveTo(x, y - b * 0.3); ctx.lineTo(x + b * 0.3, y); ctx.lineTo(x, y + b * 0.3); ctx.lineTo(x - b * 0.3, y); ctx.fill(); }
+          if (W > 2 * b + 10 && D > 2 * b + 10) { // the medallion (one per stretch along a runner)
+            const n = kind === 'runner' ? Math.max(1, Math.round(Math.max(W, D) / Math.min(W, D) / 2)) : 1;
+            for (let i = 0; i < n; i++) {
+              const [mx, my] = W >= D ? [L + (i + 0.5) * (W / n), cy] : [cx, T + (i + 0.5) * (D / n)];
+              const r = Math.min(W, D) / 2 - b - 2;
+              ctx.fillStyle = dark; ctx.beginPath(); ctx.moveTo(mx, my - r); ctx.lineTo(mx + r, my); ctx.lineTo(mx, my + r); ctx.lineTo(mx - r, my); ctx.fill();
+              ctx.fillStyle = '#c9a24a'; ctx.beginPath(); ctx.moveTo(mx, my - r * 0.5); ctx.lineTo(mx + r * 0.5, my); ctx.lineTo(mx, my + r * 0.5); ctx.lineTo(mx - r * 0.5, my); ctx.fill();
+              circle(mx, my, r * 0.18, light);
+            }
+          }
+          ctx.strokeStyle = '#e8dcc0'; ctx.lineWidth = 1; ctx.beginPath(); // the fringe on the short ends
+          if (W >= D) for (let y = T + 1; y < B; y += 2.5) { ctx.moveTo(L, y); ctx.lineTo(L - 3, y); ctx.moveTo(R, y); ctx.lineTo(R + 3, y); }
+          else for (let x = L + 1; x < R; x += 2.5) { ctx.moveTo(x, T); ctx.lineTo(x, T - 3); ctx.moveTo(x, B); ctx.lineTo(x, B + 3); }
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(0, 0, 0, .12)'; for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.ellipse(L + rnd() * W, T + rnd() * D, 3 + rnd() * 5, 2 + rnd() * 3, rnd() * 3, 0, Math.PI * 2); ctx.fill(); } // worn and stained
+          break;
+        }
+        case 'teller': { // the bank's counter: marble top, a glass screen with speaking holes, a window for each teller
+          const g = ctx.createLinearGradient(L, 0, R, 0);
+          g.addColorStop(0, '#e8e2d6'); g.addColorStop(0.5, '#f6f2ea'); g.addColorStop(1, '#ddd6c8');
+          rr(L, T, W, D, 2, g, '#8a6d3b', 2);
+          ctx.strokeStyle = 'rgba(120, 110, 100, .3)'; ctx.lineWidth = 1; ctx.beginPath(); // the marble's veins
+          for (let i = 0; i < 6; i++) { const x = L + rnd() * W; ctx.moveTo(x, T + 2); ctx.quadraticCurveTo(x + 8, cy, x + 3, B - 2); }
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(170, 215, 235, .55)'; ctx.fillRect(L, T + 2, W, 4); // the glass screen
+          ctx.fillStyle = '#c9a24a'; ctx.fillRect(L, T + 1, W, 1.5);
+          for (let k = 1; k < 4; k++) { const x = L + (k / 4) * W; ctx.fillStyle = '#8a6d3b'; ctx.fillRect(x - 1, T, 2, 7); paper(x + 14, cy + 2, rnd() - 0.5, 9, 7); } // posts between the windows, forms to fill in
+          break;
+        }
+        case 'vault': { // a steel vault: riveted, a round door with its locking wheel and dial
+          steel(L, T, W, D, c, 3);
+          for (let x = L + 4; x < R - 2; x += 8) { circle(x, T + 4, 1.2, '#4a4f57'); circle(x, B - 4, 1.2, '#4a4f57'); }
+          const r = Math.min(W, D) * 0.36;
+          circle(cx, cy, r + 3, '#3a3f45'); circle(cx, cy, r, '#8a9097'); circle(cx, cy, r * 0.8, '#a9afb5');
+          ctx.strokeStyle = '#3a3f45'; ctx.lineWidth = 2.5; ctx.beginPath();
+          for (let i = 0; i < 3; i++) { const a = (i / 3) * Math.PI; ctx.moveTo(cx + Math.cos(a) * r * 0.7, cy + Math.sin(a) * r * 0.7); ctx.lineTo(cx - Math.cos(a) * r * 0.7, cy - Math.sin(a) * r * 0.7); }
+          ctx.stroke();
+          circle(cx, cy, r * 0.22, '#c9a24a');
+          circle(R - 9, cy, 4, '#1d1f22'); circle(R - 9, cy, 2.5, '#d8d2c0'); // the dial
+          break;
+        }
+        case 'bars': { // cell bars: a top rail and steel bars
+          const along = W >= D;
+          ctx.fillStyle = shade(c, 0.6); ctx.fillRect(L, cy - 1.5, W, 3);
+          if (!along) ctx.fillRect(cx - 1.5, T, 3, D);
+          const len = along ? W : D;
+          for (let k = 3; k < len - 1; k += 6) {
+            const [x, y] = along ? [L + k, cy] : [cx, T + k];
+            circle(x, y, 2.2, '#2a2d31'); circle(x - 0.6, y - 0.6, 1, '#9aa3ad');
+          }
+          break;
+        }
+        case 'bench': case 'benches': { // wooden slatted benches (rows of them in a waiting room) on iron legs
+          const rows = kind === 'benches' ? Math.max(1, Math.floor(D / 26)) : 1, bh = kind === 'benches' ? 18 : D;
+          for (let r = 0; r < rows; r++) {
+            const y = T + r * (D / rows) + (D / rows - bh) / 2;
+            ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(L + 2, y + 3, W, bh);
+            for (let k = 0; k < 4; k++) { ctx.fillStyle = shade(c, k % 2 ? 1.05 : 1.25); ctx.fillRect(L, y + k * (bh / 4), W, bh / 4 - 1); }
+            ctx.fillStyle = '#2a2a2a'; for (let x = L + 3; x < R; x += Math.max(24, W / 4)) ctx.fillRect(x, y - 1, 3, bh + 2);
+            if (kind === 'benches' && rnd() < 0.7) { const x = L + 10 + rnd() * (W - 30); rr(x, y + 2, 14, 10, 2, ['#5a3a22', '#2c3e50', '#6b2a2a'][Math.floor(rnd() * 3)]); } // somebody's suitcase
+          }
+          break;
+        }
+        case 'cashtable': { // a rickety table heaped with bundles of banknotes, rubber bands round them
+          wood(L, T, W, D, '#6b5238', 6);
+          for (let i = 0; i < 6; i++) {
+            const x = L + 4 + (i % 3) * ((W - 8) / 3), y = T + 4 + Math.floor(i / 3) * ((D - 8) / 2);
+            const bw = (W - 8) / 3 - 2, bh = (D - 8) / 2 - 2;
+            ctx.fillStyle = i % 2 ? '#6b8a5a' : '#8a7a4a'; ctx.fillRect(x, y, bw, bh);
+            ctx.fillStyle = 'rgba(255, 255, 255, .25)'; ctx.fillRect(x, y, bw, 1.5);
+            ctx.fillStyle = '#c0392b'; ctx.fillRect(x + bw / 2 - 0.8, y, 1.6, bh);
+          }
+          break;
+        }
+        case 'tyre': { // an old tyre: treads round it, the dark hole in the middle
+          circle(cx + 2, cy + 3, W / 2, 'rgba(0, 0, 0, .3)');
+          circle(cx, cy, W / 2, c);
+          ctx.strokeStyle = '#4a4a4a'; ctx.lineWidth = 2; ctx.beginPath();
+          for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; ctx.moveTo(cx + Math.cos(a) * W * 0.36, cy + Math.sin(a) * W * 0.36); ctx.lineTo(cx + Math.cos(a) * W * 0.49, cy + Math.sin(a) * W * 0.49); }
+          ctx.stroke();
+          circle(cx, cy, W * 0.24, '#141414'); circle(cx - 2, cy - 2, W * 0.1, 'rgba(120, 140, 160, .25)'); // a puddle in it
+          break;
+        }
+        case 'pump': { // a Soviet fuel pump: red body, the price window, a hose and nozzle on its hook
+          steel(L, T, W, D, c, 3);
+          rr(L + 4, T + 4, W - 8, D * 0.38, 1, '#1d2226');
+          ctx.fillStyle = '#ffb347'; ctx.font = 'bold 6px monospace'; ctx.fillText('А-76', L + 6, T + 4 + D * 0.3);
+          ctx.fillStyle = '#f2f2f2'; ctx.fillRect(L + 2, B - 8, W - 4, 3);
+          ctx.strokeStyle = '#1d1d1d'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(R - 4, B - 4); ctx.quadraticCurveTo(R + 6, B + 4, R + 2, cy); ctx.stroke(); // the hose
+          ctx.fillStyle = '#3a3a3a'; ctx.fillRect(R, cy - 5, 4, 8); // the nozzle
+          break;
+        }
+        case 'island': { // the pump island: a raised kerb, painted stripes on the ends
+          rr(L, T, W, D, 6, '#9a9d9f', '#6b6e72', 2);
+          hazard(L + 2, T + 2, 10, D - 4); hazard(R - 12, T + 2, 10, D - 4);
+          break;
+        }
+        case 'stain': { // oil spilled on the forecourt
+          ctx.fillStyle = 'rgba(20, 20, 24, .35)';
+          for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.ellipse(cx + (rnd() - 0.5) * W * 0.5, cy + (rnd() - 0.5) * D * 0.4, W * (0.2 + rnd() * 0.25), D * (0.2 + rnd() * 0.25), rnd() * 3, 0, Math.PI * 2); ctx.fill(); }
+          ctx.fillStyle = 'rgba(120, 90, 160, .12)'; ctx.beginPath(); ctx.ellipse(cx, cy, W * 0.2, D * 0.15, 0.4, 0, Math.PI * 2); ctx.fill(); // the rainbow sheen
+          break;
+        }
+        case 'officedesk': { // a Soviet office desk: a typewriter, the telephone, papers, an ashtray, a chair pushed in
+          wood(L, T, W, D, shade(c, 1.1), 8);
+          ctx.strokeStyle = shade(c, 0.5); ctx.lineWidth = 1.5; ctx.strokeRect(L + 0.5, T + 0.5, W - 1, D - 1);
+          rr(cx - 12, T + 3, 24, Math.min(16, D - 8), 2, '#4a5560', '#2a3038'); // the typewriter
+          ctx.fillStyle = '#d8d2c0'; for (let k = 0; k < 4; k++) for (let j = 0; j < 2; j++) ctx.fillRect(cx - 9 + k * 5, T + 8 + j * 4, 3, 2.5);
+          ctx.fillStyle = '#f2ecd8'; ctx.fillRect(cx - 7, T + 1, 14, 4); // a sheet in it
+          circle(L + 9, T + 9, 5, '#1d1d1d'); circle(L + 9, T + 9, 2, '#8a8f96'); // the telephone and its dial
+          paper(R - 12, cy, 0.3); paper(R - 10, cy - 2, -0.1);
+          ashtray(L + 9, B - 8);
+          rr(cx - 8, B - 1, 16, 9, 3, '#3a3d42'); // the chair
+          break;
+        }
+        case 'meeting': { // the long meeting table: chairs round it, folders, ashtrays and a carafe of water
+          for (let x = L + 20; x < R - 10; x += 34) { rr(x, T - 9, 14, 8, 2, '#3a3d42'); rr(x, B + 1, 14, 8, 2, '#3a3d42'); }
+          rr(L - 9, cy - 7, 8, 14, 2, '#3a3d42'); rr(R + 1, cy - 7, 8, 14, 2, '#3a3d42');
+          const g = ctx.createLinearGradient(0, T, 0, B); g.addColorStop(0, shade(c, 1.3)); g.addColorStop(1, shade(c, 0.95));
+          rr(L, T, W, D, 4, g, shade(c, 0.5), 1.5);
+          ctx.fillStyle = '#2f5a3c'; ctx.fillRect(L + 6, cy - 4, W - 12, 8); // the green baize down the middle
+          for (let x = L + 20; x < R - 10; x += 34) { paper(x + 7, T + 10, rnd() - 0.5, 10, 12); paper(x + 7, B - 10, rnd() - 0.5, 10, 12); }
+          circle(cx, cy, 5, 'rgba(200, 225, 235, .7)'); circle(cx, cy, 2.5, '#eef6f8'); // the carafe
+          ashtray(L + W * 0.25, cy); ashtray(L + W * 0.75, cy);
+          break;
+        }
+        case 'iconostasis': { // the gilded icon screen: carved gold, the royal doors in the middle
+          const g = ctx.createLinearGradient(0, T, 0, B); g.addColorStop(0, '#f1d27a'); g.addColorStop(0.5, '#c9a227'); g.addColorStop(1, '#8a6a1a');
+          ctx.fillStyle = g; ctx.fillRect(L, T, W, D);
+          ctx.strokeStyle = '#6b4f12'; ctx.lineWidth = 1; ctx.beginPath();
+          for (let x = L + 6; x < R; x += 12) { ctx.moveTo(x, B); ctx.arc(x + 3, cy, 3, Math.PI, 0); }
+          ctx.stroke();
+          ctx.fillStyle = '#7a1e2e'; ctx.fillRect(cx - 12, T + 1, 24, D - 2); // the royal doors
+          ctx.fillStyle = '#f1d27a'; ctx.fillRect(cx - 0.5, T + 1, 1, D - 2);
+          break;
+        }
+        case 'icon': { // an icon: gold frame, a saint with a halo, dark robes
+          rr(L, T, W, D, 1, '#c9a227', '#6b4f12', 1);
+          ctx.fillStyle = '#3a2a1a'; ctx.fillRect(L + 2, T + 2, W - 4, D - 4);
+          circle(cx, T + D * 0.4, D * 0.28, '#e8c55a'); circle(cx, T + D * 0.4, D * 0.15, '#c99a6a');
+          ctx.fillStyle = '#5a1e2e'; ctx.fillRect(cx - D * 0.22, T + D * 0.58, D * 0.44, D * 0.35);
+          break;
+        }
+        case 'altar': { // the altar: white cloth with gold trim, the Gospel, a cross, candles
+          rr(L, T, W, D, 2, '#f4efe2', '#c9a227', 2);
+          ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 1; ctx.strokeRect(L + 4, T + 4, W - 8, D - 8);
+          rr(cx - 9, cy - 7, 18, 14, 1, '#8a1e2a', '#c9a227', 1.5); // the Gospel book
+          ctx.fillStyle = '#c9a227'; ctx.fillRect(cx - 1, cy - 5, 2, 10); ctx.fillRect(cx - 4, cy - 2, 8, 2);
+          for (const x of [L + 8, R - 8]) { circle(x, cy, 3, '#f2ecd8'); circle(x, cy, 1.4, `rgba(255, 190, 80, ${0.7 + Math.sin(now * 9 + x) * 0.3})`); }
+          break;
+        }
+        case 'candles': { // a brass candle stand, thin church candles flickering on it
+          circle(cx, cy, W / 2, '#8a6a1a'); circle(cx, cy, W / 2 - 2, '#c9a227');
+          for (let i = 0; i < 7; i++) {
+            const a = (i / 7) * Math.PI * 2, x = cx + Math.cos(a) * W * 0.3, y = cy + Math.sin(a) * W * 0.3;
+            circle(x, y, 1.6, '#f2e6c0');
+            const f = 0.6 + Math.sin(now * 11 + i * 2.3) * 0.25;
+            const glow = ctx.createRadialGradient(x, y, 0, x, y, 6); glow.addColorStop(0, `rgba(255, 200, 90, ${f})`); glow.addColorStop(1, 'rgba(255, 200, 90, 0)');
+            ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+          }
+          break;
+        }
+        case 'board': { // the departures board: black slats, yellow times and towns flicking over, a clock
+          rr(L, T, W, D, 2, '#1d2226', '#3a4048', 2);
+          ctx.fillStyle = '#e1b12c'; ctx.font = 'bold 6px monospace';
+          const towns = ['МОСКВА', 'ТУЛА', 'ОРЁЛ', 'КУРСК', 'ПЕРМЬ', 'ОМСК', 'УФА'];
+          const rows = Math.floor((D - 6) / 9), tick = Math.floor(now / 6);
+          for (let r = 0; r < rows; r++) {
+            const y = T + 9 + r * 9;
+            ctx.fillText(`${String((r * 3 + tick + 6) % 24).padStart(2, '0')}:${['05', '20', '40', '55'][(r + tick) % 4]}`, L + 5, y);
+            ctx.fillText(towns[(r + tick) % towns.length], L + 38, y);
+            ctx.fillStyle = 'rgba(255, 255, 255, .06)'; ctx.fillRect(L + 3, y + 1, W - 6, 1); ctx.fillStyle = '#e1b12c';
+          }
+          break;
+        }
+        case 'crates': { // wooden crates stacked to go out, one or two prised open
+          const n = Math.max(1, Math.round(W / 34)), cw = W / n;
+          for (let i = 0; i < n; i++) crate(L + i * cw + 1, T + 1 + (rnd() < 0.3 ? 2 : 0), cw - 3, D - 4, shade(c, 0.9 + rnd() * 0.3));
+          break;
+        }
+        case 'hay': { // a hay bale: golden straw, two strings round it
+          rr(L, T, W, D, 4, c, shade(c, 0.7), 1);
+          ctx.strokeStyle = shade(c, 0.75); ctx.lineWidth = 1; ctx.beginPath();
+          for (let i = 0; i < W * D / 40; i++) { const x = L + 2 + rnd() * (W - 4), y = T + 2 + rnd() * (D - 4); ctx.moveTo(x, y); ctx.lineTo(x + (rnd() - 0.5) * 7, y + (rnd() - 0.5) * 2); }
+          ctx.stroke();
+          ctx.fillStyle = '#6b4a2b'; ctx.fillRect(L + W * 0.28, T, 1.5, D); ctx.fillRect(L + W * 0.7, T, 1.5, D);
+          if (snowAmount > 0.3) { ctx.fillStyle = `rgba(240, 244, 248, ${0.4 * snowAmount})`; ctx.fillRect(L + 2, T + 2, W - 4, D * 0.4); }
+          break;
+        }
+        case 'straw': { // loose straw strewn over the floor
+          ctx.strokeStyle = shade(c, 1.2); ctx.lineWidth = 1.2; ctx.beginPath();
+          for (let i = 0; i < Math.min(600, W * D / 40); i++) {
+            const x = L + rnd() * W, y = T + rnd() * D, a = rnd() * Math.PI, len = 4 + rnd() * 6;
+            ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len);
+          }
+          ctx.stroke();
+          break;
+        }
+        case 'stall': { // a stall: plank sides, straw bedding, a water trough
+          ctx.fillStyle = shade(c, 0.9); ctx.fillRect(L, T, W, D);
+          drawFitting('straw', L + 4, T + 4, W - 8, D - 8, '#a88c4e', rnd, rr);
+          wood(L, T, W, 5, shade(c, 1.3), 99); wood(L, T, 5, D, shade(c, 1.3), 99); wood(R - 5, T, 5, D, shade(c, 1.3), 99);
+          rr(L + 8, T + 8, W * 0.4, 9, 2, '#6b7078', '#3a3d42'); ctx.fillStyle = '#4f7fa0'; ctx.fillRect(L + 10, T + 10, W * 0.4 - 4, 5);
+          break;
+        }
+        case 'ladder': { // a wooden ladder up to the lookout
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(L + W * 0.25 + 3, T + 3, W * 0.5, D);
+          ctx.fillStyle = shade(c, 1.2); ctx.fillRect(L + W * 0.25, T, 4, D); ctx.fillRect(R - W * 0.25 - 4, T, 4, D);
+          for (let y = T + 4; y < B - 2; y += 7) ctx.fillRect(L + W * 0.25, y, W * 0.5, 3);
+          ctx.fillStyle = 'rgba(0, 0, 0, .55)'; ctx.fillRect(L + W * 0.2, T - 2, W * 0.6, 4); // the hatch above
+          break;
+        }
+        case 'cot': { // an army cot: a metal frame, green canvas, a grey blanket folded at the foot, a flat pillow
+          rr(L, T, W, D, 2, '#5a5f65');
+          rr(L + 2, T + 2, W - 4, D - 4, 2, c);
+          ctx.strokeStyle = shade(c, 0.8); ctx.lineWidth = 1; ctx.beginPath(); for (let y = T + 8; y < B - 4; y += 9) { ctx.moveTo(L + 3, y); ctx.lineTo(R - 3, y); } ctx.stroke();
+          rr(L + 5, T + 4, W - 10, 11, 3, '#c9c4b2'); // the pillow
+          rr(L + 3, B - 22, W - 6, 18, 2, '#6b6e72'); ctx.fillStyle = '#4a4d52'; ctx.fillRect(L + 3, B - 14, W - 6, 2); // the blanket
+          break;
+        }
+        case 'stripe': hazard(L, T, W, D); break; // painted lines on a factory floor
+        case 'machine': case 'lathe': { // a machine tool: grey body, guards, a control panel, warning stripes round its base
+          hazard(L - 2, T - 2, W + 4, D + 4);
+          steel(L + 2, T + 2, W - 4, D - 4, c, 3);
+          if (kind === 'lathe') { // the bed and chuck, a part spinning in it
+            ctx.fillStyle = '#3a3f45'; ctx.fillRect(L + 6, cy - 4, W - 12, 8);
+            circle(L + 11, cy, 7, '#8a9097'); ctx.save(); ctx.translate(L + 11, cy); ctx.rotate(now * 6); ctx.fillStyle = '#3a3f45'; for (let i = 0; i < 3; i++) { ctx.rotate(Math.PI * 2 / 3); ctx.fillRect(2, -1, 5, 2); } ctx.restore();
+            ctx.fillStyle = '#c9cdd2'; ctx.fillRect(L + 16, cy - 2, W * 0.4, 4);
+          } else { // a press: the ram and its guide pillars
+            rr(cx - W * 0.25, cy - D * 0.25, W * 0.5, D * 0.4, 2, shade(c, 0.7), '#222');
+            for (const x of [cx - W * 0.25 - 3, cx + W * 0.25 - 1]) ctx.fillRect(x, T + 6, 4, D - 12);
+          }
+          panel(L + 4, B - 12, Math.min(30, W - 8), 8);
+          break;
+        }
+        case 'sawline': { // the saw line: a roller bed, a big circular blade, a log feeding through, sawdust
+          steel(L, T + 6, W, D - 12, '#6b7078', 2);
+          ctx.fillStyle = '#3a3f45'; for (let x = L + 4; x < R - 4; x += 10) ctx.fillRect(x, T + 8, 5, D - 16); // the rollers
+          ctx.fillStyle = shade(c, 1.1); ctx.fillRect(L + 6, cy - 7, W * 0.45, 14); // the log
+          circle(L + 6, cy, 7, '#c9a06a'); ctx.strokeStyle = '#8a6236'; ctx.lineWidth = 1; for (const r of [2, 4.5]) { ctx.beginPath(); ctx.arc(L + 6, cy, r, 0, Math.PI * 2); ctx.stroke(); }
+          ctx.save(); ctx.translate(L + W * 0.55, cy); ctx.rotate(now * 12);
+          circle(0, 0, 13, '#c9cdd2'); ctx.fillStyle = '#8a9097'; for (let i = 0; i < 16; i++) { ctx.rotate(Math.PI / 8); ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(15, 2); ctx.lineTo(12, 3); ctx.fill(); }
+          circle(0, 0, 3, '#3a3f45'); ctx.restore();
+          ctx.fillStyle = '#d8b884'; for (let i = 0; i < 12; i++) circle(L + W * 0.6 + rnd() * 20, B - 3 - rnd() * 6, 1 + rnd(), '#d8b884');
+          panel(R - 26, T, 24, 7);
+          break;
+        }
+        case 'logs': { // logs stacked side by side, cut ends showing their rings
+          const n = Math.max(2, Math.floor(D / 11)), lh = D / n;
+          for (let i = 0; i < n; i++) {
+            const y = T + i * lh, inset = rnd() * 8;
+            ctx.fillStyle = shade(c, 0.85 + rnd() * 0.3); ctx.fillRect(L + inset, y + 0.5, W - inset - rnd() * 6, lh - 1);
+            ctx.strokeStyle = 'rgba(0, 0, 0, .2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(L + inset + 4, y + lh * 0.35); ctx.lineTo(R - 10, y + lh * 0.35 + (rnd() - 0.5) * 2); ctx.stroke(); // the bark
+            circle(L + inset, y + lh / 2, lh / 2 - 0.5, '#d8b884'); ctx.strokeStyle = '#a0703c'; ctx.beginPath(); ctx.arc(L + inset, y + lh / 2, lh / 4, 0, Math.PI * 2); ctx.stroke();
+          }
+          if (snowAmount > 0.3) { ctx.fillStyle = `rgba(240, 244, 248, ${0.5 * snowAmount})`; ctx.fillRect(L + 4, T, W - 10, D * 0.3); }
+          break;
+        }
+        case 'planks': { // sawn planks in a neat stack, spacer sticks across
+          for (let i = 0; i < 5; i++) { ctx.fillStyle = shade(c, 0.9 + (i % 2) * 0.12); ctx.fillRect(L, T + i * (D / 5), W, D / 5 - 1); }
+          ctx.fillStyle = '#6b4a2b'; for (const x of [L + 8, cx, R - 12]) ctx.fillRect(x, T - 1, 4, D + 2);
+          break;
+        }
+        case 'sofas': { // new sofas waiting to ship, wrapped in plastic
+          const n = Math.max(1, Math.round(W / 85)), sw = W / n;
+          for (let i = 0; i < n; i++) {
+            const x = L + i * sw + 3, w = sw - 6, base = i % 2 ? c : shade(c, 1.3);
+            rr(x, T + 2, w, D - 4, 6, shade(base, 0.6));
+            rr(x + 1, T + 3, w - 2, (D - 4) * 0.35, 5, base); rr(x + 1, T + 6, 9, D - 10, 4, shade(base, 1.2)); rr(x + w - 10, T + 6, 9, D - 10, 4, shade(base, 1.2));
+            for (let k = 0; k < 2; k++) rr(x + 11 + k * ((w - 22) / 2), T + 2 + (D - 4) * 0.35, (w - 22) / 2 - 1, (D - 4) * 0.6, 4, shade(base, 1.15));
+            ctx.fillStyle = 'rgba(230, 240, 250, .22)'; ctx.fillRect(x, T + 2, w, D - 4); // the plastic
+            ctx.strokeStyle = 'rgba(255, 255, 255, .5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 4, T + 6); ctx.lineTo(x + w * 0.4, B - 6); ctx.stroke();
+          }
+          break;
+        }
+        case 'millstone': { // a millstone: grooves cut in it, the eye in the middle, flour dusted round
+          circle(cx + 3, cy + 4, W / 2, 'rgba(0, 0, 0, .3)');
+          circle(cx, cy, W / 2 + 4, 'rgba(240, 236, 226, .5)');
+          circle(cx, cy, W / 2, c); circle(cx, cy, W / 2 - 3, shade(c, 1.08));
+          ctx.save(); ctx.translate(cx, cy); ctx.rotate(now * 0.6);
+          ctx.strokeStyle = shade(c, 0.75); ctx.lineWidth = 1.5; ctx.beginPath();
+          for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2; ctx.moveTo(Math.cos(a) * W * 0.12, Math.sin(a) * W * 0.12); ctx.lineTo(Math.cos(a + 0.3) * W * 0.46, Math.sin(a + 0.3) * W * 0.46); }
+          ctx.stroke(); ctx.restore();
+          circle(cx, cy, W * 0.1, '#3a3530'); circle(cx, cy, W * 0.05, '#6b6258');
+          break;
+        }
+        case 'sacks': { // flour sacks piled up, tied at the neck, stencilled
+          const cols = Math.max(1, Math.round(W / 30)), rows = Math.max(1, Math.round(D / 22));
+          for (let r = 0; r < rows; r++) for (let k = 0; k < cols; k++) {
+            const x = L + k * (W / cols) + 1, y = T + r * (D / rows) + 1, w = W / cols - 2, h = D / rows - 2;
+            rr(x + 1, y + 2, w, h, 6, 'rgba(0, 0, 0, .2)');
+            rr(x, y, w, h, 6, shade(c, 0.95 + rnd() * 0.1), shade(c, 0.7), 1);
+            ctx.fillStyle = '#8a7a5a'; ctx.fillRect(x + w / 2 - 3, y, 6, 3);
+            ctx.fillStyle = 'rgba(40, 60, 120, .5)'; ctx.font = 'bold 5px sans-serif'; ctx.fillText('МУКА', x + w / 2 - 7, y + h / 2 + 2);
+          }
+          break;
+        }
+        case 'ovens': { // a row of bread ovens: steel doors with glowing windows
+          const n = Math.max(1, Math.round(W / 36)), ow = W / n;
+          for (let i = 0; i < n; i++) {
+            const x = L + i * ow + 1;
+            steel(x, T, ow - 2, D, c, 2);
+            const f = 0.7 + Math.sin(now * 2 + i) * 0.15;
+            rr(x + 5, T + 6, ow - 12, D * 0.45, 2, `rgba(255, ${130 + i * 10}, 40, ${f})`, '#222', 1.5);
+            ctx.fillStyle = '#c9cdd2'; ctx.fillRect(x + 6, B - 8, ow - 14, 2.5); // the handle
+            circle(x + ow - 8, B - 14, 2, '#c0392b');
+          }
+          break;
+        }
+        case 'dough': { // steel tables: rows of dough and loaves fresh out, flour dusted over
+          steel(L, T, W, D, '#b8bec4', 2);
+          ctx.fillStyle = 'rgba(255, 255, 255, .35)'; for (let i = 0; i < 14; i++) circle(L + rnd() * W, T + rnd() * D, 2 + rnd() * 4, 'rgba(255, 255, 255, .3)');
+          for (let x = L + 8; x < R - 10; x += 16) for (const y of [T + D * 0.3, T + D * 0.7]) {
+            const baked = rnd() < 0.5;
+            ctx.fillStyle = baked ? '#b8742f' : c; ctx.beginPath(); ctx.ellipse(x + 4, y, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+            if (baked) { ctx.strokeStyle = '#e8b47a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + 1, y - 1); ctx.lineTo(x + 3, y + 1); ctx.moveTo(x + 5, y - 1); ctx.lineTo(x + 7, y + 1); ctx.stroke(); }
+          }
+          break;
+        }
+        case 'furnace': { // the furnace: firebrick walls, molten metal glowing in the crucible
+          ctx.fillStyle = '#6b2e1e'; ctx.fillRect(L, T, W, D);
+          ctx.strokeStyle = '#3a1a10'; ctx.lineWidth = 1; ctx.beginPath();
+          for (let y = T + 6; y < B; y += 6) { ctx.moveTo(L, y); ctx.lineTo(R, y); for (let x = L + ((y / 6) % 2 ? 6 : 0); x < R; x += 12) { ctx.moveTo(x, y - 6); ctx.lineTo(x, y); } }
+          ctx.stroke();
+          const r = Math.min(W, D) * 0.36, f = 0.85 + Math.sin(now * 3) * 0.1;
+          circle(cx, cy, r + 4, '#2a2a2a');
+          const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r); g.addColorStop(0, `rgba(255, 240, 160, ${f})`); g.addColorStop(0.6, '#f07a2a'); g.addColorStop(1, '#a0281a');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+          for (let i = 0; i < 5; i++) circle(cx + (rnd() - 0.5) * r, cy + (rnd() - 0.5) * r, 2 + rnd() * 3, 'rgba(60, 20, 10, .5)'); // slag floating on it
+          break;
+        }
+        case 'ingots': { // ingots stacked crosswise in layers
+          const rows = Math.max(2, Math.floor(D / 12));
+          for (let r = 0; r < rows; r++) {
+            const y = T + r * (D / rows), across = r % 2;
+            for (let x = L + 2; x < R - 6; x += across ? 9 : 22) {
+              const w = across ? 7 : 20;
+              ctx.fillStyle = shade(c, 0.75); ctx.fillRect(x, y + 1, w, D / rows - 2);
+              ctx.fillStyle = shade(c, 1.3); ctx.fillRect(x + 1.5, y + 2.5, w - 3, D / rows - 5);
+            }
+          }
+          break;
+        }
+        case 'racks': { // steel racks of parts: gears, boxes, a coil of cable
+          steel(L, T, W, D, c, 2);
+          ctx.fillStyle = '#3a3f45'; ctx.fillRect(L, cy - 1, W, 2);
+          for (let x = L + 6; x < R - 8; x += 14) for (const y of [T + D * 0.27, T + D * 0.73]) {
+            const k = rnd();
+            if (k < 0.4) { circle(x + 4, y, 5, '#8a9097'); circle(x + 4, y, 2, '#3a3f45'); ctx.strokeStyle = '#5a6068'; ctx.lineWidth = 2; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.arc(x + 4, y, 5.5, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]); }
+            else if (k < 0.8) crate(x, y - 5, 10, 10, '#8a6236');
+            else { circle(x + 4, y, 5, '#c0392b'); circle(x + 4, y, 2.5, '#5a1e1a'); }
+          }
+          break;
+        }
+        case 'tank': { // a storage tank: riveted seams, a ladder up the side, the hatch on top
+          circle(cx + 4, cy + 5, W / 2, 'rgba(0, 0, 0, .3)');
+          const g = ctx.createRadialGradient(cx - W * 0.15, cy - W * 0.15, 2, cx, cy, W / 2); g.addColorStop(0, shade(c, 1.2)); g.addColorStop(1, shade(c, 0.75));
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, W / 2, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = shade(c, 0.6); ctx.lineWidth = 1; for (const r of [0.32, 0.45]) { ctx.beginPath(); ctx.arc(cx, cy, W * r, 0, Math.PI * 2); ctx.stroke(); }
+          circle(cx, cy, 6, '#5a6068'); circle(cx, cy, 3, '#3a3f45');
+          ctx.fillStyle = '#3a3f45'; ctx.fillRect(R - 6, cy - 4, 8, 8); // the ladder's top
+          ctx.fillStyle = '#c0392b'; ctx.font = 'bold 6px sans-serif'; ctx.fillText('ОГНЕОПАСНО', cx - 17, cy + W * 0.38);
+          break;
+        }
+        case 'pipes': { // pipes along the floor: flanges, a valve wheel
+          const n = Math.max(1, Math.floor(D / 5));
+          for (let i = 0; i < n; i++) {
+            const y = T + (i + 0.5) * (D / n), r = D / n / 2 - 0.3, base = i % 2 ? c : '#8a9097';
+            const g = ctx.createLinearGradient(0, y - r, 0, y + r); g.addColorStop(0, shade(base, 1.3)); g.addColorStop(1, shade(base, 0.6));
+            ctx.fillStyle = g; ctx.fillRect(L, y - r, W, r * 2);
+            ctx.fillStyle = shade(base, 0.5); for (let x = L + 30; x < R; x += 50) ctx.fillRect(x, y - r - 1, 3, r * 2 + 2);
+          }
+          circle(cx, cy, D * 0.6, '#c0392b'); circle(cx, cy, D * 0.35, '#5a1e1a'); circle(cx, cy, 1.5, '#c0392b');
+          break;
+        }
+        case 'kiln': { // a glass kiln: firebrick, the glory hole glowing white-hot
+          drawFitting('furnace', L, T, W, D, c, rnd, rr);
+          ctx.fillStyle = '#2a2a2a'; ctx.fillRect(L, B - 8, W, 8);
+          ctx.strokeStyle = '#8a9097'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(R + 12, B + 6); ctx.stroke(); // a blowpipe in it
+          break;
+        }
+        case 'panes': { // sheets of glass standing in a rack: light catching their edges
+          ctx.fillStyle = '#5a6068'; ctx.fillRect(L, T, W, 3); ctx.fillRect(L, B - 3, W, 3);
+          for (let x = L + 4; x < R - 2; x += 6) {
+            ctx.fillStyle = `rgba(174, 233, 240, ${0.35 + rnd() * 0.25})`; ctx.fillRect(x, T + 3, 3, D - 6);
+            ctx.fillStyle = 'rgba(255, 255, 255, .7)'; ctx.fillRect(x, T + 3 + rnd() * (D - 20), 1, 10);
+          }
+          break;
+        }
+        case 'assembly': { // the assembly line: a moving belt between yellow rails
+          ctx.fillStyle = c; ctx.fillRect(L, T, W, D);
+          ctx.fillStyle = '#2a2a2a'; ctx.fillRect(L, T + 3, W, D - 6);
+          ctx.fillStyle = '#4a4a4a'; const off = (now * 20) % 12; for (let x = L - 12 + off; x < R; x += 12) if (x > L) ctx.fillRect(x, T + 3, 2, D - 6);
+          for (let x = L + 30; x < R - 20; x += 70) { ctx.fillStyle = '#8a9097'; ctx.fillRect(x, T - 4, 10, 4); circle(x + 5, T - 6, 4, '#e67e22'); } // robot arms
+          break;
+        }
+        case 'carbody': { // a car on the line: a shell with no wheels yet, the windscreen in, sparks from the welders
+          rr(L + 4, T + 2, W - 8, D - 4, 10, c, shade(c, 0.6), 1.5);
+          rr(L + 10, T + D * 0.24, W - 20, D * 0.16, 4, 'rgba(160, 200, 220, .8)'); // the windscreen
+          rr(L + 10, T + D * 0.42, W - 20, D * 0.32, 3, shade(c, 0.8)); // the roof
+          ctx.fillStyle = 'rgba(0, 0, 0, .5)'; for (const [x, y] of [[L + 2, T + D * 0.18], [R - 6, T + D * 0.18], [L + 2, T + D * 0.72], [R - 6, T + D * 0.72]]) ctx.fillRect(x, y, 4, D * 0.12); // the empty wheel arches
+          if (Math.floor(now * 8 + L) % 3 === 0) for (let i = 0; i < 5; i++) circle(L + 4 + rnd() * 4, cy + (rnd() - 0.5) * 10, 1, '#fff2a0');
+          break;
+        }
+        case 'rangewall': { // the test range: a sandbagged wall, paper targets pinned up, bullet holes
+          ctx.fillStyle = '#5a4f3a'; ctx.fillRect(L, T, W, D);
+          for (let y = T; y < B; y += 8) for (let x = L + ((y - T) / 8 % 2 ? 6 : 0); x < R; x += 12) rr(x, y + 0.5, 11, 7, 3, shade('#8a7a5a', 0.9 + rnd() * 0.2));
+          for (let x = L + 16; x < R - 10; x += 30) { circle(x, B - 4, 5, '#f2ecd8'); circle(x, B - 4, 3, '#c0392b'); circle(x, B - 4, 1.2, '#f2ecd8'); }
+          break;
+        }
+        case 'boilers': { // the boilers: big steel drums, pipes over them, pressure gauges
+          const n = Math.max(1, Math.round(W / 70)), bw = W / n;
+          for (let i = 0; i < n; i++) {
+            const x = L + i * bw + 3;
+            steel(x, T + 2, bw - 6, D - 4, c, (D - 4) / 2.5);
+            ctx.fillStyle = 'rgba(0, 0, 0, .3)'; for (let y = T + 12; y < B - 8; y += 14) ctx.fillRect(x + 2, y, bw - 10, 1.5);
+            circle(x + bw / 2 - 3, B - 10, 5, '#e8e2d0'); ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + bw / 2 - 3, B - 10); ctx.lineTo(x + bw / 2 + 0.5, B - 13); ctx.stroke();
+          }
+          ctx.fillStyle = '#8a9097'; ctx.fillRect(L, T + D * 0.3, W, 4); ctx.fillRect(L, T + D * 0.6, W, 4); // the steam pipes
+          break;
+        }
+        case 'turbine': { // a turbine and its generator: long ribbed casings, humming
+          steel(L, T + 4, W * 0.62, D - 8, c, (D - 8) / 2);
+          ctx.fillStyle = 'rgba(0, 0, 0, .25)'; for (let x = L + 8; x < L + W * 0.6; x += 7) ctx.fillRect(x, T + 6, 2, D - 12);
+          steel(L + W * 0.64, T + 8, W * 0.36, D - 16, '#2e6b46', 4);
+          ctx.fillStyle = '#c9a24a'; ctx.font = 'bold 6px sans-serif'; ctx.fillText('ЛМЗ', L + W * 0.72, cy + 2);
+          ctx.fillStyle = '#3a3f45'; ctx.fillRect(L + W * 0.6, cy - 3, W * 0.06, 6);
+          break;
+        }
+        case 'coalheap': { // a heap of coal waiting for the boilers
+          ctx.fillStyle = 'rgba(20, 20, 20, .5)'; ctx.beginPath(); ctx.ellipse(cx, cy, W / 2, D / 2, 0, 0, Math.PI * 2); ctx.fill();
+          for (let i = 0; i < W * D / 120; i++) {
+            const a = rnd() * Math.PI * 2, q = Math.sqrt(rnd());
+            lump(cx + Math.cos(a) * q * W * 0.46, cy + Math.sin(a) * q * D * 0.44, 3 + rnd() * 4, rnd() < 0.5 ? '#1d1c1b' : '#33302d');
+          }
+          circle(cx - W * 0.1, cy - D * 0.1, Math.min(W, D) * 0.2, 'rgba(160, 170, 185, .08)'); // the sheen
+          break;
+        }
+        case 'switchgear': { // switchgear cabinets: grey steel doors, dials, lamps, big levers, danger signs
+          const n = Math.max(1, Math.round(W / 36)), sw = W / n;
+          for (let i = 0; i < n; i++) {
+            const x = L + i * sw + 1;
+            steel(x, T, sw - 2, D * 0.4, c, 1);
+            circle(x + sw / 2 - 1, T + 9, 5, '#e8e2d0'); ctx.strokeStyle = '#222'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + sw / 2 - 1, T + 9); ctx.lineTo(x + sw / 2 + 2, T + 6); ctx.stroke();
+            circle(x + 6, T + 22, 2, Math.floor(now * 1.5 + i) % 4 ? '#27ae60' : '#c0392b');
+            ctx.fillStyle = '#1d1d1d'; ctx.fillRect(x + sw / 2 - 2, T + 18, 4, 14); // the lever
+            ctx.fillStyle = '#e1b12c'; ctx.beginPath(); ctx.moveTo(x + sw - 9, T + 32); ctx.lineTo(x + sw - 4, T + 23); ctx.lineTo(x + sw + 1, T + 32); ctx.fill(); // ⚡ sign
+          }
+          hazard(L, T + D * 0.4 + 6, W, 5); // keep back
+          ctx.fillStyle = 'rgba(40, 45, 50, .5)'; ctx.fillRect(L, T + D * 0.4 + 14, W, D * 0.6 - 14); // the rubber mat
+          break;
+        }
+        case 'terrace': { // a step of the open pit: a broken edge, loose stones on it
+          ctx.fillStyle = c; ctx.fillRect(L, T, W, D);
+          ctx.strokeStyle = shade(c, 0.7); ctx.lineWidth = 4; ctx.strokeRect(L + 2, T + 2, W - 4, D - 4);
+          ctx.strokeStyle = shade(c, 1.25); ctx.lineWidth = 1.5; ctx.strokeRect(L + 5, T + 5, W - 10, D - 10);
+          for (let i = 0; i < (W + D) / 9; i++) { // stones along the edges
+            const t = rnd() * 2 * (W + D), [x, y] = t < W ? [L + t, T + 4] : t < W + D ? [R - 4, T + t - W] : t < 2 * W + D ? [L + t - W - D, B - 4] : [L + 4, T + t - 2 * W - D];
+            lump(x + (rnd() - 0.5) * 6, y + (rnd() - 0.5) * 6, 2 + rnd() * 3, shade(c, 0.8 + rnd() * 0.5));
+          }
+          break;
+        }
+        case 'heap': { // a heap (sawdust, ore, sand): shaded like a mound, grains on it
+          const g = ctx.createRadialGradient(cx - W * 0.12, cy - D * 0.15, 2, cx, cy, Math.max(W, D) / 2);
+          g.addColorStop(0, shade(c, 1.35)); g.addColorStop(0.7, c); g.addColorStop(1, shade(c, 0.7));
+          ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.beginPath(); ctx.ellipse(cx + 4, cy + 5, W / 2, D / 2, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(cx, cy, W / 2, D / 2, 0, 0, Math.PI * 2); ctx.fill();
+          for (let i = 0; i < W * D / 90; i++) { const a = rnd() * Math.PI * 2, q = Math.sqrt(rnd()) * 0.9; circle(cx + Math.cos(a) * q * W / 2, cy + Math.sin(a) * q * D / 2, 1 + rnd() * 2, shade(c, 0.7 + rnd() * 0.6)); }
+          if (snowAmount > 0.3) { ctx.fillStyle = `rgba(240, 244, 248, ${0.6 * snowAmount})`; ctx.beginPath(); ctx.ellipse(cx - W * 0.08, cy - D * 0.1, W * 0.3, D * 0.25, 0, 0, Math.PI * 2); ctx.fill(); }
+          break;
+        }
+        case 'ramp': { // a timber loading ramp: planks across, iron edging
+          wood(L, T, W, D, shade(c, 1.2), 99);
+          ctx.strokeStyle = shade(c, 0.6); ctx.lineWidth = 1; ctx.beginPath(); for (let x = L + 7; x < R; x += 7) { ctx.moveTo(x, T); ctx.lineTo(x, B); } ctx.stroke();
+          ctx.fillStyle = '#3a3d42'; ctx.fillRect(L, T, W, 3); ctx.fillRect(L, B - 3, W, 3);
+          break;
+        }
+        case 'headframe': { // the mine's headframe base: steel girders round the shaft, the cage cable going down
+          ctx.fillStyle = '#1a1816'; ctx.fillRect(L + 12, T + 12, W - 24, D - 24); // the shaft
+          ctx.strokeStyle = '#6b4a3a'; ctx.lineWidth = 5; ctx.strokeRect(L + 4, T + 4, W - 8, D - 8);
+          ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(L + 4, T + 4); ctx.lineTo(R - 4, B - 4); ctx.moveTo(R - 4, T + 4); ctx.lineTo(L + 4, B - 4); ctx.stroke();
+          for (const [x, y] of [[L + 4, T + 4], [R - 4, T + 4], [L + 4, B - 4], [R - 4, B - 4]]) circle(x, y, 5, '#3a3d42');
+          circle(cx, cy, 4, '#8a9097');
+          break;
+        }
+        case 'scrap': { // a pile of scrap: rusty sheets, pipes, an old fridge, a wheel
+          for (let i = 0; i < 9; i++) {
+            ctx.save(); ctx.translate(L + 8 + rnd() * (W - 16), T + 8 + rnd() * (D - 16)); ctx.rotate(rnd() * Math.PI);
+            const k = rnd(), w = 10 + rnd() * 18, h = 6 + rnd() * 10;
+            if (k < 0.5) { ctx.fillStyle = shade(['#8a5a3a', '#6d6d6d', '#7a4a2a', '#5a6268'][Math.floor(rnd() * 4)], 0.9 + rnd() * 0.3); ctx.fillRect(-w / 2, -h / 2, w, h); ctx.fillStyle = 'rgba(160, 80, 40, .4)'; ctx.fillRect(-w / 4, -h / 4, w / 3, h / 3); }
+            else if (k < 0.8) { ctx.fillStyle = '#5a6268'; ctx.fillRect(-w / 2, -2, w, 4); ctx.fillStyle = '#3a3d42'; ctx.fillRect(-w / 2, -2, 2, 4); }
+            else { circle(0, 0, 6, '#2a2a2a'); circle(0, 0, 3, '#8a9097'); }
+            ctx.restore();
+          }
+          break;
+        }
+        case 'wreck': { // a car wreck: rust, no wheels, the windows smashed
+          rr(L + 2, T + 4, W - 4, D - 8, 8, c, shade(c, 0.5), 1.5);
+          rr(L + W * 0.3, T + 8, W * 0.4, D - 16, 3, shade(c, 0.75));
+          ctx.fillStyle = 'rgba(30, 40, 45, .8)'; ctx.fillRect(L + W * 0.22, T + 9, 5, D - 18); ctx.fillRect(L + W * 0.72, T + 9, 4, D - 18);
+          for (let i = 0; i < 6; i++) circle(L + rnd() * W, T + 4 + rnd() * (D - 8), 2 + rnd() * 4, 'rgba(150, 70, 30, .5)');
+          break;
+        }
+        case 'blocks': { // cut stone blocks stacked in the quarry
+          const cols = Math.max(1, Math.round(W / 20)), rows = Math.max(1, Math.round(D / 16));
+          for (let r = 0; r < rows; r++) for (let k = 0; k < cols; k++) {
+            const x = L + k * (W / cols) + 1, y = T + r * (D / rows) + 1, w = W / cols - 2, h = D / rows - 2;
+            ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.fillRect(x + 2, y + 2, w, h);
+            ctx.fillStyle = shade(c, 0.9 + rnd() * 0.25); ctx.fillRect(x, y, w, h);
+            ctx.fillStyle = 'rgba(255, 255, 255, .15)'; ctx.fillRect(x, y, w, 2);
+          }
+          break;
+        }
+        case 'tractor': { // a red Belarus tractor from above: big back wheels, little front ones, the cab, the bonnet
+          const wheel = (x, y, w, h) => { rr(x, y, w, h, 3, '#1d1d1d'); ctx.fillStyle = '#3a3a3a'; for (let k = y + 2; k < y + h - 1; k += 4) ctx.fillRect(x + 1, k, w - 2, 1.5); };
+          wheel(L, T - 4, W * 0.3, 10); wheel(L, B - 6, W * 0.3, 10); // the back wheels (it's drawn lengthways, along W)
+          wheel(R - W * 0.22, T, W * 0.16, 7); wheel(R - W * 0.22, B - 7, W * 0.16, 7);
+          rr(L + W * 0.32, T + D * 0.25, W * 0.66, D * 0.5, 4, c, shade(c, 0.6), 1.2); // the bonnet
+          ctx.fillStyle = shade(c, 0.7); for (let x = L + W * 0.55; x < R - 6; x += 5) ctx.fillRect(x, T + D * 0.3, 2, D * 0.4);
+          rr(L + 4, T + 6, W * 0.34, D - 12, 3, shade(c, 1.1), shade(c, 0.6), 1.5); // the cab
+          rr(L + 8, T + 10, W * 0.26, D - 20, 2, 'rgba(160, 200, 220, .55)');
+          ctx.fillStyle = '#2a2a2a'; ctx.fillRect(L + W * 0.45, T + D * 0.3, 3, 3); // the exhaust
+          break;
+        }
+        default:
+          ctx.fillStyle = c; ctx.fillRect(L, T, W, D);
+      }
     }
 
     function drawWalls(b) {
@@ -9905,6 +10747,8 @@
       if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
+      const trap = nearestTrapdoor();
+      if (trap) options.push({ kind: 'trapdoor', dist: d({ x: trap.x + trap.w / 2, y: trap.y + trap.h / 2 }) + 10, x: trap.x + trap.w / 2, y: trap.y - 18 });
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
@@ -10784,7 +11628,7 @@
           if (!hiddenSelf && !inBed) stepMove(me, angle, throttle, boost, dt); // in a dumpster (or in bed) you stay put
           me.x += me.cx * k; me.y += me.cy * k;
           me.cx -= me.cx * k; me.cy -= me.cy * k;
-          if (firing && (inv[selectedSlot]?.[0] === 'knife' || inv[selectedSlot]?.[0] === 'bat') && frameTime - stabAt > (inv[selectedSlot]?.[0] === 'bat' ? 700 : 550)) { stabAt = frameTime; if (inv[selectedSlot]?.[0] === 'bat') sfx('bat'); } // held: keep stabbing (swinging)
+          if (firing) startSwing(frameTime); // held: keep stabbing (swinging), as often as the server lets you
           const stabT = (frameTime - stabAt) / 180;
           shown.set(myId, { thrust: stabT >= 0 && stabT < 1 ? Math.sin(stabT * Math.PI) : 0, x: me.x, y: me.y, r: radiusOf(me.mass), hp: me.hp, maxHp: me.maxHp, aim: aimAngle(), weapon: isGoods(inv[selectedSlot]) || isFood(inv[selectedSlot]) ? null : isTool(inv[selectedSlot]) ? inv[selectedSlot][1] : inv[selectedSlot]?.[0] ?? null, held: isGoods(inv[selectedSlot]) ? inv[selectedSlot][1] : isFood(inv[selectedSlot]) ? `food:${inv[selectedSlot][1]}` : null, cop: prisonState ? 2 : amCop ? 1 : 0, sleeping: inBed ? 1 : 0 });
         }
@@ -10930,6 +11774,7 @@
           ctx.fillText('🚨', p.x, p.y - p.r - 18);
         }
         if (p.sleeping) { drawSleeper(p, lookOf(id), id, frameTime); continue; } // tucked up in bed
+        if (id !== myId) { const st = (frameTime - (swingsSeen.get(id)?.at ?? -1e9)) / 180; p.thrust = st >= 0 && st < 1 ? Math.sin(st * Math.PI) : 0; } // someone else's swing
         drawPerson(p, p.cop === 1 ? { ...POLICE_LOOK, skin: lookOf(id).skin, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' } : p.cop === 2 ? { ...PRISONER_LOOK, skin: lookOf(id).skin } : lookOf(id)); // Militsiya players wear the uniform; prisoners the camp's black
       }
       drawCats(view, shown, frameTime, true);
@@ -11102,8 +11947,8 @@
       const toPlace = playing && !eNow ? placeableHere() : null;
       if (toPlace) { // a cabinet, bed or sofa in hand at my place: a see-through one where it'd go
         const asked = placeSpot(toPlace.kind);
-        const spot = nudgedSpot(toPlace.b, toPlace.kind, asked) ?? asked;
-        const ok = spot !== asked || furnSpotLooksFree(toPlace.b, spot);
+        const spot = nudgedSpot(toPlace.b, toPlace.kind, asked, toPlace.area) ?? asked;
+        const ok = spot !== asked || furnSpotLooksFree(toPlace.b, spot, toPlace.area);
         drawFurnishing(toPlace.kind, spot, spot.rot, true);
         if (!ok) { ctx.fillStyle = 'rgba(230, 25, 75, .35)'; ctx.fillRect(spot.x, spot.y, spot.w, spot.h); }
         if (touchMode) drawKeyPrompt(spot.x + spot.w / 2, spot.y - 16);

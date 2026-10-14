@@ -93,9 +93,28 @@ export class Homes {
     return null;
   }
 
-  /** The cabinet in room `room` of building b, if there is one. */
+  /** The cabinet room `room` of building b comes with, if there is one (not one its tenant brought). */
   #cabinetIn(b, room) {
-    return this.world.furnishings.cabinetsIn(b).find((it) => this.roomAt(b, it.x + it.w / 2, it.y + it.h / 2) === room) ?? null;
+    const tenantId = this.rentals.get(`${b.id}:${room}`)?.tenantId;
+    return this.world.furnishings.cabinetsIn(b).find((it) => this.roomAt(b, it.x + it.w / 2, it.y + it.h / 2) === room && !(tenantId && it.ownerId === tenantId)) ?? null;
+  }
+
+  /** Something a tenant brought into the room they rent (theirs, saved with them, not with the building). */
+  tenantOwned(it) {
+    const t = this.tenantOf(it);
+    return Boolean(t) && it.ownerId === t.id;
+  }
+
+  /** The room p rents and is standing in: { b, room }, or null. */
+  rentedRoomAt(p) {
+    if (!p.account?.id) return null;
+    for (const [key, r] of this.rentals) {
+      if (r.tenantId !== p.account.id) continue;
+      const [id, room] = key.split(':').map(Number);
+      const b = this.world.buildings[id - 1];
+      if (b?.rooms?.[room] && within(b.rooms[room], p.x, p.y)) return { b, room };
+    }
+    return null;
   }
 
   /**
@@ -125,7 +144,7 @@ export class Homes {
           if (account.bank < price) return 'not_enough_bank';
           account.bank -= price;
           this.bought.set(b.id, { owner: account, ownerId: account.id, spent: price });
-          furn.handOver(b, account); // it comes furnished
+          furn.handOver(b, account, (it) => this.tenantOwned(it)); // it comes furnished (what tenants brought stays theirs)
           this.world.onBankChange?.(account);
           return null;
         }
@@ -144,7 +163,7 @@ export class Homes {
         rooms.forEach((_, i) => this.rentals.has(`${b.id}:${i}`) && this.#evict(`${b.id}:${i}`, 'sold'));
         account.bank += Math.floor(own.spent * c.sellBack);
         this.bought.delete(b.id);
-        furn.handOver(b, null); // the furniture stays with the house
+        furn.handOver(b, null, (it) => this.tenantOwned(it)); // the furniture stays with the house
         this.world.onBankChange?.(account);
         return null;
       }
@@ -166,13 +185,17 @@ export class Homes {
         account.bank -= rent; // the first day, up front
         if (own) own.owner.bank += rent;
         this.rentals.set(key, { tenant: account, tenantId: account.id });
-        // Anything kept from your last room of this kind goes in the cabinet.
+        // Anything kept from your last room of this kind goes in the cabinet, and your furniture comes too.
         const saved = this.stored.find((r) => r.kind === 'rent' && r.accountId === account.id && r.data.type === b.type);
-        const cab = this.#cabinetIn(b, room);
-        if (saved && cab && !cab.slots.some(Boolean)) {
-          this.stored.splice(this.stored.indexOf(saved), 1);
-          cab.slots = cab.slots.map((_, i) => saved.data.slots?.[i] ?? null);
-          furn.changed = true;
+        if (saved) {
+          const cab = this.#cabinetIn(b, room);
+          if (cab && !cab.slots.some(Boolean) && saved.data.slots?.some(Boolean)) {
+            cab.slots = cab.slots.map((_, i) => saved.data.slots?.[i] ?? null);
+            saved.data.slots = [];
+            furn.changed = true;
+          }
+          if (saved.data.furniture?.length) saved.data.furniture = furn.loadTenantFurniture(b, room, saved.data.furniture, account);
+          if (!saved.data.slots?.some(Boolean) && !saved.data.furniture?.length) this.stored.splice(this.stored.indexOf(saved), 1);
         }
         this.world.onBankChange?.(account);
         if (own) this.world.onBankChange?.(own.owner);
@@ -191,12 +214,15 @@ export class Homes {
     const [id, room] = key.split(':').map(Number);
     const b = this.world.buildings[id - 1];
     const cab = this.#cabinetIn(b, room);
-    if (cab?.slots.some(Boolean)) {
-      const kept = this.stored.find((r) => r.kind === 'rent' && r.accountId === rental.tenantId && r.data.type === b.type);
-      if (kept) { // (already keeping some: what fits goes with it)
-        for (const s of cab.slots) { const i = kept.data.slots.indexOf(null); if (s && i >= 0) kept.data.slots[i] = s; }
-      } else this.stored.push({ accountId: rental.tenantId, kind: 'rent', slot: null, data: { type: b.type, slots: cab.slots.map((s) => s && { ...s }) } });
-      cab.slots = cab.slots.map(() => null);
+    const furniture = this.world.furnishings.tenantFurniture(b, room, rental.tenantId, true); // what they brought goes with them
+    if (cab?.slots.some(Boolean) || furniture.length) {
+      let kept = this.stored.find((r) => r.kind === 'rent' && r.accountId === rental.tenantId && r.data.type === b.type);
+      if (!kept) this.stored.push((kept = { accountId: rental.tenantId, kind: 'rent', slot: null, data: { type: b.type, slots: Array.from({ length: config.furnishing.cabinetSlots }, () => null) } }));
+      kept.data.slots ??= [];
+      while (kept.data.slots.length < config.furnishing.cabinetSlots) kept.data.slots.push(null);
+      for (const s of cab?.slots ?? []) { const i = kept.data.slots.indexOf(null); if (s && i >= 0) kept.data.slots[i] = { ...s }; } // (already keeping some: what fits goes with it)
+      kept.data.furniture = [...(kept.data.furniture ?? []), ...furniture];
+      if (cab) cab.slots = cab.slots.map(() => null);
       this.world.furnishings.changed = true;
     }
     this.rentals.delete(key);
@@ -208,6 +234,7 @@ export class Homes {
   #payDay() {
     const c = config.homes;
     const touched = new Set();
+    const paid = new Map(); // building id → what player tenants paid its owner this dawn
     for (const [key, r] of [...this.rentals]) {
       const b = this.world.buildings[Number(key.split(':')[0]) - 1];
       const rent = c.rent[b.type] ?? 0;
@@ -220,6 +247,7 @@ export class Homes {
       const own = this.bought.get(b.id);
       if (own) {
         own.owner.bank += rent;
+        paid.set(b.id, (paid.get(b.id) ?? 0) + rent);
         touched.add(own.owner);
         this.events.push({ account: own.owner, kind: 'rent_in', amount: rent, from: r.tenant.name, type: b.type });
       }
@@ -227,10 +255,8 @@ export class Homes {
     }
     for (const [id, own] of this.bought) {
       const b = this.world.buildings[id - 1];
-      const rooms = b.rooms?.length ?? 0;
-      if (!rooms) continue;
-      const free = rooms - [...Array(rooms).keys()].filter((i) => this.rentals.has(`${id}:${i}`)).length;
-      const amount = Math.round((c.npcRent * free) / rooms);
+      if (!b.rooms?.length) continue;
+      const amount = (c.npcRent[b.type] ?? 0) - (paid.get(id) ?? 0); // (NPCs make the day's take up to npcRent)
       if (amount <= 0) continue;
       own.owner.bank += amount;
       touched.add(own.owner);
@@ -257,7 +283,7 @@ export class Homes {
     for (const b of this.boughtBy(account)) {
       const own = this.bought.get(b.id);
       const tenants = (it) => Boolean(this.tenantOf(it));
-      this.stored.push({ accountId: own.ownerId, kind: 'own', slot: null, data: { type: b.type, spent: own.spent, furnishings: furn.saveIn(b, (it) => !tenants(it)) } });
+      this.stored.push({ accountId: own.ownerId, kind: 'own', slot: null, data: { type: b.type, spent: own.spent, furnishings: furn.saveIn(b, (it) => !tenants(it), (it) => !this.tenantOwned(it)) } });
       this.bought.delete(b.id);
       furn.removeIn(b, tenants);
       furn.furnishDefaults(b); // (set out like any home nobody owns; a tenant's cabinet is left as it is)
@@ -292,14 +318,14 @@ export class Homes {
     const rows = [];
     for (const [id, own] of this.bought) {
       const b = this.world.buildings[id - 1];
-      const furnishings = furn.saveIn(b, (it) => !this.tenantOf(it)); // (a tenant's things are saved with the tenant)
+      const furnishings = furn.saveIn(b, (it) => !this.tenantOf(it), (it) => !this.tenantOwned(it)); // (a tenant's things are saved with the tenant)
       rows.push({ accountId: own.ownerId, kind: 'own', slot: null, data: { type: b.type, spent: own.spent, furnishings } });
     }
     for (const [key, r] of this.rentals) {
       const [id, room] = key.split(':').map(Number);
       const b = this.world.buildings[id - 1];
       const cab = this.#cabinetIn(b, room);
-      rows.push({ accountId: r.tenantId, kind: 'rent', slot: null, data: { type: b.type, slots: cab ? cab.slots.map((s) => s && { ...s }) : [] } });
+      rows.push({ accountId: r.tenantId, kind: 'rent', slot: null, data: { type: b.type, slots: cab ? cab.slots.map((s) => s && { ...s }) : [], furniture: furn.tenantFurniture(b, room, r.tenantId) } });
     }
     return [...rows, ...this.stored];
   }

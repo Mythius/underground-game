@@ -652,31 +652,31 @@ test('a guard stands inside the bank, goes for anyone robbing it, and walks back
   assert.ok(Math.hypot(o.x - post.x, o.y - post.y) < 10, `back in from outside (${Math.round(Math.hypot(o.x - post.x, o.y - post.y))} away)`);
 });
 
-test('a new player\'s first crimes get a $50 fine instead of stars; after that, the real thing', () => {
+test('the Militsiya chase a new player as usual but don\'t shoot; caught, it\'s a $20 fine, not an arrest', () => {
   const crimes = config.crime.newcomer.crimes;
   config.crime.newcomer.crimes = 7;
   try {
-    const { world, p, police } = town();
-    nobodyAround(world);
+    const { world, p, police } = town({ townsfolk: false });
+    const unit = police.units[0];
     p.account.fines = 0;
-    p.cash = 30;
+    p.cash = 10;
     p.account.bank = 500;
+    assert.equal(police.isNewcomer(p), true);
     for (let i = 0; i < 7; i++) {
-      assert.equal(police.crime(p, 'assault', true), true);
-      assert.equal(p.wanted, 0, `crime ${i + 1} is just a fine`);
-      // Whatever else they do straight after is the same incident: no second fine.
-      police.crime(p, 'fire', true);
+      police.crime(p, 'rob_bank', true);
+      assert.equal(p.wanted, config.crime.stars.rob_bank, 'stars as usual');
+      Object.assign(unit.officer, { onFoot: true, x: p.x + 30, y: p.y, fireCooldown: 0 });
+      unit.target = p;
+      for (let j = 0; j < (config.police.arrestSec + 0.5) * 30 && p.wanted; j++) world.step(1 / 30);
+      assert.equal(world.bullets.size, 0, 'not shot at');
+      assert.equal(p.wanted, 0, `caught ${i + 1}: just a fine`);
+      assert.equal(p.jailed, null, 'not jailed');
       assert.equal(p.account.fines, i + 1);
-      p.newcomerFinedAt -= config.crime.newcomer.coverSec; // (time passes)
     }
     assert.equal(p.cash, 0, 'cash first…');
-    assert.equal(p.account.bank, 500 - (7 * 50 - 30), '…then the bank');
-    const fines = police.events.filter((e) => e.kind === 'newcomer_fined');
-    assert.equal(fines.length, 7);
-    assert.equal(fines.at(-1).left, 0);
-    // The eighth: stars.
-    police.crime(p, 'assault', true);
-    assert.equal(p.wanted, config.crime.stars.assault);
+    assert.equal(p.account.bank, 500 - (7 * 20 - 10), '…then the bank');
+    assert.equal(police.events.filter((e) => e.kind === 'newcomer_fined').length, 7);
+    assert.equal(police.isNewcomer(p), false, 'the eighth time it\'s the real thing');
   } finally {
     config.crime.newcomer.crimes = crimes;
   }

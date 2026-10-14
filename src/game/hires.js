@@ -23,6 +23,8 @@ import { Vehicle, vehicleCircles, vehicleMotion } from './vehicles.js';
 const ROLES = ['goon', 'guard', 'hitman']; // the ones the barman hires out
 const STATE = ['governor', 'govguard', 'inspector']; // the governor's household (employer null, side 'state')
 const ALL_ROLES = [...ROLES, 'gangster', ...STATE]; // (gangsters work for nobody: employer null)
+const CREW = ['goon', 'guard']; // the hires that stay yours (saved with your account) until you fire them
+const POST_NAMES = { house: 'House', cabin: 'Cabin', mansion: 'Mansion', panelka: 'Panelka', garages: 'Lock-up garages', garage: 'Garage' };
 const inside = (b, x, y, m = 0) => x > b.x + m && x < b.x + b.w - m && y > b.y + m && y < b.y + b.h - m;
 
 export class Hires {
@@ -35,6 +37,11 @@ export class Hires {
     this.wageTimer = 0;
     this.events = []; // { player | account, kind, … } for the room to tell people
     this.gangsterTimers = []; // seconds until each missing gangster is replaced
+    this.away = []; // goons and guards put away: { id, role, employer, mode, postRef } (still on the books, at awayPerDay)
+    this.restored = new Set(); // account ids whose saved crew is already back (once a session)
+    this.online = null; // (account) => still connected (dead or alive), set by the room
+    this.lastDay = null;
+    this.vodkaSales = new Map(); // 'gangster id:account (or player) id' → when they last sold him vodka
     for (let i = 0; i < config.gangsters.count; i++) this.#spawnGangster();
     // The governor's household, at his residence (if the map has one).
     this.residence = world.buildings.find((b) => b.type === 'governor' && b.spots) ?? null;
@@ -105,13 +112,31 @@ export class Hires {
     return Boolean(n && !p.vehicle && Math.hypot(n.x - p.x, n.y - p.y) < config.hires.reach + p.radius);
   }
 
-  /** Buildings p can post a guard in: their home and their warehouses. */
-  posts(p) {
+  /**
+   * Buildings `account` can post a guard in: their home, the homes they've bought and their warehouses.
+   * `ref` names the post so it survives a restart (the map's new): the starter home, a bought home by
+   * type (one of each), a warehouse by size and which of theirs of that size.
+   */
+  posts(account) {
     const out = [];
-    const home = this.world.homes.homeOf(p.account);
-    if (home) out.push({ id: home.id, label: 'Your home' });
-    for (const w of this.world.warehouses.all.values()) if (w.owner && w.owner === p.account) out.push({ id: w.id, label: config.warehouses.sizes[w.size]?.name ?? 'Warehouse' });
+    if (!account) return out;
+    const homes = this.world.homes;
+    const home = homes.homeOf(account);
+    if (home) out.push({ id: home.id, label: 'Your home', ref: { kind: 'home' } });
+    for (const b of homes.boughtBy(account)) out.push({ id: b.id, label: POST_NAMES[b.type] ?? 'Home', ref: { kind: 'own', type: b.type } });
+    const n = {};
+    for (const w of [...this.world.warehouses.all.values()].sort((a, b) => a.id - b.id)) {
+      if (!w.owner || w.owner !== account) continue;
+      n[w.size] = (n[w.size] ?? 0) + 1;
+      out.push({ id: w.id, label: `${config.warehouses.sizes[w.size]?.name ?? 'Warehouse'}${n[w.size] > 1 ? ` ${n[w.size]}` : ''}`, ref: { kind: 'wh', size: w.size, n: n[w.size] } });
+    }
     return out;
+  }
+
+  /** The post `ref` names, among account's buildings now: { id, label, ref } or null. */
+  #resolvePost(account, ref) {
+    if (!ref) return null;
+    return this.posts(account).find((x) => x.ref.kind === ref.kind && x.ref.type === ref.type && x.ref.size === ref.size && x.ref.n === ref.n) ?? null;
   }
 
   /** Hire a goon, a guard (post: building id) or a hitman (target: player id). Returns an error code or null. */
@@ -120,15 +145,16 @@ export class Hires {
     if (!this.atBar(p)) return 'too_far';
     if (!p.account) return 'no_account';
     const rule = config.hires[role];
-    if (this.mine(p.account).filter((h) => h.role === role).length >= rule.max) return 'hire_limit';
+    if (this.mine(p.account).filter((h) => h.role === role).length + this.away.filter((a) => a.employer === p.account && a.role === role).length >= rule.max) return 'hire_limit'; // (put-away ones count)
     if (p.account.bank < rule.fee) return 'not_enough_bank';
     let at = null;
     let extra = {};
     if (role === 'guard') {
-      if (!this.posts(p).some((x) => x.id === post)) return 'not_your_building';
+      const spot = this.posts(p.account).find((x) => x.id === post);
+      if (!spot) return 'not_your_building';
       const b = this.world.buildings[post - 1];
       at = this.#spotInside(b);
-      extra = { post: b, home: at };
+      extra = { post: b, home: at, postRef: spot.ref };
     } else if (role === 'hitman') {
       const victim = this.world.players.get(target);
       if (!victim?.alive || victim === p) return 'no_target';
@@ -146,15 +172,23 @@ export class Hires {
     }
     p.account.bank -= rule.fee;
     this.world.onBankChange?.(p.account);
+    this.#add(role, p.account, at, CREW.includes(role) ? { mode: 'follow', ...extra } : extra);
+    if (CREW.includes(role)) this.onCrewChange?.(p.account);
+    return null;
+  }
+
+  #add(role, account, at, extra = {}) {
     const r = config.hires;
-    this.list.push({
-      kind: 'hire', role, id: this.nextId++, employer: p.account, name: role === 'hitman' ? 'a hitman' : `${p.name}'s ${rule.name.toLowerCase()}`,
+    const rule = r[role];
+    const h = {
+      kind: 'hire', role, id: this.nextId++, employer: account, name: role === 'hitman' ? 'a hitman' : `${account.name}'s ${rule.name.toLowerCase()}`,
       x: at.x, y: at.y, angle: 0, health: r.health, maxHealth: r.health, radius: r.radius,
       weapon: rule.weapon ?? r.weapon, fireCooldown: 0, ammo: config.weapons[rule.weapon ?? r.weapon].magazineSize, reload: 0,
       vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
       foes: new Map(), offline: 0, pick: null, ...extra,
-    });
-    return null;
+    };
+    this.list.push(h);
+    return h;
   }
 
   /** Let one of your hires go (no refund). */
@@ -163,6 +197,137 @@ export class Hires {
     if (!h) return 'unknown';
     this.#remove(h);
     return null;
+  }
+
+  // ---- the clipboard: your goons and guards ---------------------------------------------------
+
+  /** Off the map but still on the books (at awayPerDay): the clipboard, logging off, a goon whose boss died. */
+  #putAway(h) {
+    this.away.push({ id: this.nextId++, role: h.role, employer: h.employer, mode: h.mode ?? 'follow', postRef: h.postRef ?? null });
+    this.#remove(h); // (and saved: onCrewChange)
+  }
+
+  /** Back out of the way: a goon by you, a guard at his post. Returns the hire, or an error code. */
+  #bringOut(a, boss) {
+    let at, extra = { mode: a.role === 'goon' ? 'follow' : a.mode, postRef: a.postRef };
+    if (a.role === 'guard') {
+      const spot = this.#resolvePost(a.employer, a.postRef);
+      if (!spot) return 'no_post';
+      const b = this.world.buildings[spot.id - 1];
+      at = this.#spotInside(b);
+      Object.assign(extra, { post: b, home: at });
+    } else {
+      if (!boss) return 'not_now';
+      at = { x: boss.x, y: boss.y };
+    }
+    this.away.splice(this.away.indexOf(a), 1);
+    const h = this.#add(a.role, a.employer, at, extra);
+    if (a.role === 'goon') this.#catchUp(h, boss);
+    return h;
+  }
+
+  /**
+   * The clipboard: `action` on your goon or guard `id` — 'away' (put away), 'out' (bring back out),
+   * 'fire', 'mode' (a goon: 'follow' you, or 'wait' where he stands), 'post' (a guard: building `post`).
+   */
+  crew(p, { action, id, mode, post } = {}) {
+    const account = p.account;
+    if (!account) return 'no_account';
+    const h = this.list.find((x) => x.id === id && x.employer === account && CREW.includes(x.role));
+    const a = h ? null : this.away.find((x) => x.id === id && x.employer === account);
+    if (!h && !a) return 'unknown';
+    if (action === 'away') {
+      if (!h) return 'already_away';
+      this.#putAway(h);
+    } else if (action === 'out') {
+      if (!a) return 'already_out';
+      if (!p.alive) return 'not_now';
+      const out = this.#bringOut(a, p);
+      if (typeof out === 'string') return out;
+    } else if (action === 'fire') {
+      if (h) this.#remove(h);
+      else this.away.splice(this.away.indexOf(a), 1);
+    } else if (action === 'mode') {
+      const it = h ?? a;
+      if (it.role !== 'goon' || (mode !== 'follow' && mode !== 'wait')) return 'unknown';
+      it.mode = mode;
+      if (h && mode === 'wait') {
+        if (h.vehicle) this.#leaveCar(h);
+        h.waitAt = { x: h.x, y: h.y };
+      }
+    } else if (action === 'post') {
+      const it = h ?? a;
+      if (it.role !== 'guard') return 'unknown';
+      const spot = this.posts(account).find((x) => x.id === post);
+      if (!spot) return 'not_your_building';
+      it.postRef = spot.ref;
+      if (h) { // he goes straight over
+        h.post = this.world.buildings[spot.id - 1];
+        h.home = this.#spotInside(h.post);
+        Object.assign(h, { x: h.home.x, y: h.home.y });
+      }
+    } else return 'unknown';
+    this.onCrewChange?.(account);
+    return null;
+  }
+
+  /** The clipboard's list for account: [id, role, out (1/0), mode, post building id (0: none here now), health, max health]. */
+  roster(account) {
+    if (!account) return [];
+    return [
+      ...this.list.filter((h) => h.employer === account && CREW.includes(h.role)).map((h) => [h.id, h.role, 1, h.mode ?? 'follow', h.post?.id ?? 0, Math.ceil(h.health), h.maxHealth]),
+      ...this.away.filter((a) => a.employer === account).map((a) => [a.id, a.role, 0, a.mode, this.#resolvePost(account, a.postRef)?.id ?? 0, 0, 0]),
+    ];
+  }
+
+  /** Account's goons and guards, for saving: [{ role, mode, post, out }]. */
+  crewSave(account) {
+    return [
+      ...this.list.filter((h) => h.employer === account && CREW.includes(h.role)).map((h) => ({ role: h.role, mode: h.mode ?? 'follow', post: h.postRef ?? null, out: 1 })),
+      ...this.away.filter((a) => a.employer === account).map((a) => ({ role: a.role, mode: a.mode, post: a.postRef, out: 0 })),
+    ];
+  }
+
+  /** Logged in (once a session): their saved goons and guards — those out when they left come back out (a guard whose post isn't on the map yet waits, put away). */
+  restore(p, saved) {
+    const account = p.account;
+    if (!account?.id || this.restored.has(account.id)) return;
+    this.restored.add(account.id);
+    if (this.list.some((h) => h.employer === account && CREW.includes(h.role)) || this.away.some((a) => a.employer === account)) return; // (never lost them)
+    for (const s of Array.isArray(saved) ? saved : []) {
+      if (!CREW.includes(s?.role)) continue;
+      const a = { id: this.nextId++, role: s.role, employer: account, mode: s.mode === 'wait' ? 'wait' : 'follow', postRef: s.post ?? null };
+      this.away.push(a);
+      if (s.out) this.#bringOut(a, p);
+    }
+  }
+
+  /** Logged off: their goons and guards are put away; returns them for saving, and they're off the books here until they're back. */
+  unload(account) {
+    if (!account) return null;
+    const saved = this.crewSave(account); // (who's out now comes back out when they log in)
+    for (const h of this.list.filter((x) => x.employer === account && CREW.includes(x.role))) this.#putAway(h);
+    this.away = this.away.filter((a) => a.employer !== account);
+    if (account.id) this.restored.delete(account.id);
+    return saved;
+  }
+
+  /** Dawn: put-away goons and guards cost awayPerDay each (can't pay: they quit). */
+  #awayPay() {
+    const byEmployer = new Map();
+    for (const a of this.away) byEmployer.set(a.employer, [...(byEmployer.get(a.employer) ?? []), a]);
+    for (const [account, list] of byEmployer) {
+      const due = list.length * config.hires.awayPerDay;
+      if (account.bank >= due) {
+        account.bank -= due;
+        this.world.onBankChange?.(account);
+        continue;
+      }
+      this.away = this.away.filter((a) => a.employer !== account);
+      const boss = [...this.world.players.values()].find((o) => o.account === account);
+      if (boss) for (const a of list) this.events.push({ player: boss, kind: 'hire_quit', role: a.role });
+      this.onCrewChange?.(account);
+    }
   }
 
   /** What the bar panel shows p. */
@@ -194,7 +359,7 @@ export class Hires {
         left: h.until ? Math.max(0, Math.round(h.until - this.time)) : 0,
         riding: h.vehicle ? 1 : 0,
       })),
-      posts: this.posts(p),
+      posts: this.posts(p.account).map(({ id, label }) => ({ id, label })),
       targets: [...this.world.players.values()].filter((o) => o !== p && o.alive && !(o.account && o.account === p.account)).map((o) => ({ id: o.id, name: o.name })),
     };
   }
@@ -251,6 +416,7 @@ export class Hires {
     if (i === -1) return;
     this.list.splice(i, 1);
     h.alive = false;
+    if (CREW.includes(h.role) && h.employer) this.onCrewChange?.(h.employer); // (their clipboard is saved)
     if (h.side === 'state') {
       this.stateTimers.push([h.role, h.slot ?? 0, config.governor.respawnSec]); // someone new, in a while
       if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason, warehouse: h.task.spot?.warehouse }); // (his successor makes the visit)
@@ -279,6 +445,11 @@ export class Hires {
   step(dt) {
     this.time += dt;
     this.#wages(dt);
+    const day = this.world.dayNumber;
+    if (day !== undefined && day !== null) {
+      if (this.lastDay !== null && day !== this.lastDay) this.#awayPay();
+      this.lastDay = day;
+    }
     for (let i = this.gangsterTimers.length - 1; i >= 0; i--) if ((this.gangsterTimers[i] -= dt) <= 0 && this.#spawnGangster()) this.gangsterTimers.splice(i, 1);
     for (let i = this.stateTimers.length - 1; i >= 0; i--) if ((this.stateTimers[i][2] -= dt) <= 0) { this.#spawnState(this.stateTimers[i][0], this.stateTimers[i][1]); this.stateTimers.splice(i, 1); }
     for (const h of [...this.list]) {
@@ -322,12 +493,20 @@ export class Hires {
     const r = config.hires;
     const boss = this.bossOf(h);
     if (!boss) {
-      // The boss is gone (dead, or left): wait about, then go home.
+      // The boss died: his goons are put away (on the clipboard, to bring back out). Left: wait about, then the same.
       if (h.vehicle) this.#leaveCar(h);
-      if (!this.#bossOnline(h) && (h.offline += dt) > r.goonOfflineSec) this.#remove(h);
+      if ((this.online?.(h.employer) ?? this.#bossOnline(h)) || (h.offline += dt) > r.goonOfflineSec) this.#putAway(h); // (online: the room knows who's connected, dead or alive)
       return;
     }
     h.offline = 0;
+    if (h.mode === 'wait' && h.waitAt) { // told to wait: he holds that spot, and fights for you there
+      if (h.vehicle) this.#leaveCar(h);
+      const threat = this.#threat(h, boss, r.engageRange);
+      if (threat) return this.#fightThreat(h, threat, dt, 260);
+      if (Math.hypot(h.waitAt.x - h.x, h.waitAt.y - h.y) > 20) this.#walk(h, h.waitAt.x, h.waitAt.y, r.speed, dt);
+      else h.angle += dt * 0.3; // looking about
+      return;
+    }
     // Riding along: stay in the car until the boss gets out (or the car's gone).
     if (h.vehicle) {
       const v = h.vehicle;
@@ -369,10 +548,10 @@ export class Hires {
 
   #guard(h, dt) {
     const b = h.post;
-    // Lost the building (sold the warehouse)? Nothing to guard.
-    if (this.world.homes.homeOf(h.employer) !== b && this.world.warehouses.all.get(b.id)?.owner !== h.employer) {
-      this.#tell(h, 'hire_quit');
-      return this.#remove(h);
+    // Lost the building (sold it, or it was put away)? Nothing to guard here: he's put away, to post elsewhere.
+    if (!this.posts(h.employer).some((x) => x.id === b.id)) {
+      this.#tell(h, 'hire_no_post');
+      return this.#putAway(h);
     }
     const threat = this.#threat(h, null, config.hires.engageRange, b);
     if (threat) {
@@ -849,7 +1028,7 @@ export class Hires {
       x: at.x, y: at.y, angle: at.angle ?? Math.PI / 2, health: cfg.health, maxHealth: cfg.health, radius: cfg.radius,
       weapon: cfg.weapon, fireCooldown: 0, ammo: config.weapons[cfg.weapon].magazineSize, reload: 0,
       vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
-      foes: new Map(), offline: 0, pick: null, route: [], post: at, next: 0, task: null,
+      foes: new Map(), offline: 0, pick: null, route: [], post: at, next: 0, task: null, cash: cfg.cash ?? 0,
     };
     if (role === 'inspector') h.car = this.#officialCar();
     this.list.push(h);
@@ -1307,24 +1486,29 @@ export class Hires {
     return h;
   }
 
-  /** Sell a gangster all the vodka you've got on you (and in your car): vodkaPrice × base a bottle. */
+  /** Sell a gangster the vodka you've got on you (and in your car), up to vodkaPerSale bottles: vodkaPrice × base a bottle. */
   sellVodka(p, id) {
     const h = this.gangsterFor(p, id);
     if (!h) return 'too_far';
     if (this.#isFoe(h, p) || h.holdup) return 'gangster_hostile';
     if (isCop(p)) return 'cop_no_illegal';
+    const seller = `${h.id}:${p.account?.id ?? `p${p.id}`}`;
+    if (this.time < (this.vodkaSales.get(seller) ?? -Infinity) + config.gangsters.vodkaCooldownSec) return 'vodka_cooldown';
     const holder = this.world.economy.cargoOf(p);
     const sold = {};
     let total = 0;
+    let room = config.gangsters.vodkaPerSale;
     for (const good of Object.keys(config.economy.visions)) {
-      const qty = holder.count(good);
+      const qty = Math.min(holder.count(good), room);
       if (!qty) continue;
       holder.add(good, -qty);
+      room -= qty;
       sold[good] = qty;
       total += qty * Math.round(config.goods[good].base * config.gangsters.vodkaPrice);
     }
     if (!total) return 'no_vodka';
     p.cash += total;
+    this.vodkaSales.set(seller, this.time);
     return { sold, total };
   }
 

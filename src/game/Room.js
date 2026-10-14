@@ -315,6 +315,8 @@ export class Room {
     };
     w.onCarLost = (v) => this.#saveCar(v);
     w.onCopChange = (account) => !account.guest && this.#store('setCop', account.id, account.cop);
+    w.hires.online = (account) => [...this.clients].some((c) => c.account === account);
+    w.hires.onCrewChange = (account) => account.id && !account.guest && this.#store('setCrew', account.id, w.hires.crewSave(account));
     w.onFinesChange = (account) => account.id && !account.guest && this.#store('setFines', account.id, account.fines);
     w.prison.onChange = (account) => account.id && !account.guest && this.#store('setPrison', account.id, account.prison ?? null);
   }
@@ -527,7 +529,7 @@ export class Room {
         carrySpeed: config.bodies.carrySpeed, // walking with a body over your shoulder
       },
       weapons: Object.fromEntries(
-        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel, melee: w.melee ?? false }]),
+        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel, melee: w.melee ?? false, cooldownSec: w.cooldownSec }]),
       ),
     });
   }
@@ -570,6 +572,10 @@ export class Room {
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
     }
     this.#unload(client.account);
+    if (client.account && ![...this.clients].some((c) => c.account === client.account)) { // (a guest's crew isn't kept)
+      const crew = this.world.hires.unload(client.account);
+      if (crew && client.account.id && !client.account.guest) this.#store('setCrew', client.account.id, crew);
+    }
     client.player = null;
     client.room = null;
   }
@@ -594,6 +600,7 @@ export class Room {
     }
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
+    if (account?.id && !account.guest) this.world.hires.restore(player, account.crew); // my goons and guards, back from when I left (once a session)
     player.achStart = { x: player.x, y: player.y }; // (walking away from here is the first achievement)
     // Back with what they had on them when they last left.
     if (account?.id && !account.guest) {
@@ -758,7 +765,7 @@ export class Room {
     client.send({ t: ServerMsg.DONE, what: 'laundered', ...result, cash: p.cash, bank: p.account.bank });
   }
 
-  /** A gangster: sell him all your vodka. */
+  /** A gangster: sell him your vodka (up to vodkaPerSale bottles). */
   gangster(client, msg) {
     const p = client.player;
     if (!p?.alive) return;
@@ -840,6 +847,15 @@ export class Room {
     if (hires.bar) this.inspect(client, hires.bar.id);
   }
 
+  /** The clipboard: put away, bring out, fire, or give orders to one of your goons and guards. */
+  crewAction(client, msg) {
+    const p = client.player;
+    if (!p) return;
+    const error = this.world.hires.crew(p, msg);
+    if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+    client.send({ t: ServerMsg.DONE, what: `crew_${msg.action}` });
+  }
+
   /** Bodies: open (look in its pockets), loot a slot (−1: its cash), carry it, drop / get rid of the one you carry. */
   bodyAction(client, msg) {
     const p = client.player;
@@ -879,7 +895,7 @@ export class Room {
     }
     const result = this.world.pickpocket(p);
     if (typeof result === 'string') client.send({ t: ServerMsg.ERROR, code: result });
-    else if (result?.amount !== undefined) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: result.amount, unnoticed: result.unnoticed });
+    else if (result?.amount !== undefined) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: result.amount, unnoticed: result.unnoticed, food: result.food });
   }
 
   /** Q to drop, and trunk actions. */
@@ -970,6 +986,11 @@ export class Room {
       })(),
       slot: me.selected,
       stored: this.world.warehouses.storedFor(me.account), // sizes of my saved factories waiting to be loaded
+      crew: (() => { // the clipboard: my goons and guards, where guards can go, and what they cost a day — [roster, [[building id, label]], [goon, guard, put away]] (0: none)
+        const roster = this.world.hires.roster(me.account);
+        const perDay = (role) => Math.round((config.hires[role].wagePerMin * this.env.cycle) / 60);
+        return roster.length ? [roster, this.world.hires.posts(me.account).map((x) => [x.id, x.label]), [perDay('goon'), perDay('guard'), config.hires.awayPerDay]] : 0;
+      })(),
       storedHomes: this.world.homes.storedFor(me.account), // { own: [types], rent: [types] } my homes (and rented rooms' things) from before the restart
       home: (() => { // my home: [building id, garage spot x, y]
         const b = this.world.homes.homeOf(me.account);
@@ -1025,7 +1046,7 @@ export class Room {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
-          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0, e.sleeping ? 1 : 0, heldIcon(e)]); // (in Militsiya uniform; wanted — only officers are told; asleep in bed; goods or food in hand)
+          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0, e.sleeping ? 1 : 0, heldIcon(e), e.swings ?? 0]); // (in Militsiya uniform; wanted — only officers are told; asleep in bed; goods or food in hand; knife/bat swings so far, to animate them)
           if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.victim ? 2 : e.fishing.phase === 'bite' ? 1 : 0]); // 2: hooked onto a player
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];

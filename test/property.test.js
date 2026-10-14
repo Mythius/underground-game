@@ -7,6 +7,7 @@ import { hotbarOf } from '../src/game/cargo.js';
 
 config.gangsters.count = 0; // (no gangsters wandering in; they have their own tests)
 config.player.healthRegenPerSec = 0;
+config.furnishing.loot.chance = 0; // (cabinets nobody owns stay empty: no random food or rods turning up in the tests)
 
 // A house, a cabin, a panelka and a row of garages.
 function town() {
@@ -151,7 +152,7 @@ test('rent a flat: locked storage for you alone; rent at dawn goes to the owner,
   dawn(world); // (the first dawn just starts the clock)
   dawn(world);
   assert.equal(tenant.bank, 1e6 - 2 * config.homes.rent.panelka);
-  assert.equal(landlord.bank - before, config.homes.rent.panelka + Math.round((config.homes.npcRent * 2) / 3));
+  assert.equal(landlord.bank - before, config.homes.npcRent.panelka); // (the tenant's rent plus the NPCs' making it up)
 });
 
 test('can\'t pay the rent: out you go, and what you stored waits for your next flat', () => {
@@ -256,4 +257,48 @@ test('a single garage: locked, two cabinets; buy it and bring your cars out at t
   // One garage each.
   const other = world.buildings.filter((x) => x.type === 'garage')[1];
   if (other) assert.equal(world.homes.action(player(world, acc, other), { id: other.id, action: 'buy' }), 'one_per_type');
+});
+
+test('flats and garage boxes: their tenants decide the furniture, not the owner, and it moves out with them', () => {
+  const world = town();
+  const landlord = account(1);
+  const tenant = account(2);
+  const block = of(world, 'panelka');
+  const lp = player(world, landlord, block);
+  assert.equal(world.homes.action(lp, { id: block.id, action: 'buy' }), null);
+  const tp = player(world, tenant, block);
+  assert.equal(world.homes.action(tp, { id: block.id, action: 'rent', room: 1 }), null);
+  const room = block.rooms[1];
+  const holding = (p, kind) => {
+    hotbarOf(p).add(kind, 1);
+    p.selected = p.inventory.findIndex((s) => s?.good === kind);
+  };
+  // The owner can't put furniture down, nor pick up what the block came with.
+  Object.assign(lp, { x: block.rooms[0].x + block.rooms[0].w / 2, y: block.rooms[0].y + block.rooms[0].h / 2 });
+  holding(lp, 'bed');
+  assert.equal(world.furnishings.place(lp, 0), 'tenants_furnish');
+  const fixture = itemsIn(world, block).find((it) => it.owner === landlord && world.homes.roomAt(block, it.x + it.w / 2, it.y + it.h / 2) === 0);
+  Object.assign(lp, { x: fixture.x + fixture.w / 2, y: fixture.y + fixture.h + 20 });
+  assert.equal(world.furnishings.pickUp(lp, fixture.id), 'tenants_furnish');
+  // The tenant furnishes their own flat, inside its walls, and can pick it back up.
+  Object.assign(tp, { x: room.x + room.w / 2, y: room.y + room.h / 2 });
+  holding(tp, 'chair');
+  assert.equal(world.furnishings.place(tp, 0), null);
+  const chair = itemsIn(world, block).find((it) => it.kind === 'chair' && it.owner === tenant);
+  assert.ok(chair && chair.x >= room.x && chair.x + chair.w <= room.x + room.w && chair.y >= room.y && chair.y + chair.h <= room.y + room.h, 'in their flat');
+  Object.assign(tp, { x: chair.x + chair.w / 2, y: chair.y + chair.h + 20 });
+  assert.equal(world.furnishings.pickUp(tp, chair.id), null);
+  Object.assign(tp, { x: room.x + room.w / 2, y: room.y + room.h / 2 });
+  holding(tp, 'chair');
+  assert.equal(world.furnishings.place(tp, 0), null);
+  // It's saved with the tenant, not the owner.
+  const rows = world.homes.toSave();
+  assert.equal(rows.find((r) => r.kind === 'own').data.furnishings.filter((f) => f.kind === 'chair').length, 3, 'just the three the flats came with');
+  assert.deepEqual(rows.find((r) => r.kind === 'rent').data.furniture.map((f) => f.kind), ['chair']);
+  // Moving out, the chair goes too — and comes back in their next flat.
+  assert.equal(world.homes.action(tp, { id: block.id, action: 'leave', room: 1 }), null);
+  assert.ok(!itemsIn(world, block).some((it) => it.owner === tenant));
+  assert.equal(world.homes.action(tp, { id: block.id, action: 'rent', room: 2 }), null);
+  const moved = itemsIn(world, block).find((it) => it.kind === 'chair' && it.owner === tenant);
+  assert.equal(world.homes.roomAt(block, moved.x + moved.w / 2, moved.y + moved.h / 2), 2);
 });

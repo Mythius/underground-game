@@ -65,20 +65,27 @@ export class Furnishings {
     return this.world.buildings[id - 1] ?? null;
   }
 
-  /** The building p may furnish: the home (starter or bought) or owned warehouse they're standing in. */
+  /**
+   * Where p may furnish, as { b, area }: the home (starter or bought) or owned warehouse they're standing
+   * in, or the flat or garage box they rent (area: just that room). A block of flats or a row of garages
+   * is its tenants' to furnish, not its owner's: 'tenants' for its owner.
+   */
   #ownSpace(p) {
     const w = this.world;
     const home = w.homes.homeOf(p.account);
     const inside = (b) => b && p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h;
-    if (inside(home)) return home;
+    if (inside(home)) return { b: home };
+    const rented = w.homes.rentedRoomAt(p);
+    if (rented) return { b: rented.b, area: rented.b.rooms[rented.room] };
     const bought = w.homes.boughtBy(p.account).find(inside);
-    if (bought) return bought;
+    if (bought) return bought.rooms ? 'tenants' : { b: bought };
     const wh = w.warehouses.containing(p.x, p.y);
-    return wh && wh.owner && wh.owner === p.account ? wh.building : null;
+    return wh && wh.owner && wh.owner === p.account ? { b: wh.building } : null;
   }
 
   /** Is `r` (world) a clear spot inside building b: off its walls, out of doorways and machines, clear of other furniture? */
-  fits(b, r, except = null) {
+  fits(b, r, except = null, area = null) {
+    if (area && (r.x < area.x || r.y < area.y || r.x + r.w > area.x + area.w || r.y + r.h > area.y + area.h)) return false; // (a rented room's furniture stays in the room)
     if (r.x < b.x + 6 || r.y < b.y + 6 || r.x + r.w > b.x + b.w - 6 || r.y + r.h > b.y + b.h - 6) return false;
     if (b.walls.some((wall) => overlaps(r, wall, 2))) return false;
     if (b.doors.some((d) => overlaps(r, d, 34))) return false; // keep doorways free
@@ -123,15 +130,18 @@ export class Furnishings {
     const kind = slot?.good;
     if (!PLACEABLE[kind]) return 'nothing_to_place';
     if (p.vehicle || p.hidden || p.jailed) return 'busy';
-    const b = this.#ownSpace(p);
-    if (!b) return 'not_your_place';
-    const count = [...this.items.values()].filter((it) => it.building === b.id && it.kind === kind).length;
+    const space = this.#ownSpace(p);
+    if (space === 'tenants') return 'tenants_furnish';
+    if (!space) return 'not_your_place';
+    const { b, area } = space;
+    const inArea = (it) => !area || (it.x + it.w / 2 > area.x && it.x + it.w / 2 < area.x + area.w && it.y + it.h / 2 > area.y && it.y + it.h / 2 < area.y + area.h);
+    const count = [...this.items.values()].filter((it) => it.building === b.id && it.kind === kind && inArea(it)).length; // (a rented room: as many as a home)
     if (count >= PLACEABLE[kind].max) return 'too_many_here';
     if (at && Math.hypot(at.x - p.x, at.y - p.y) > config.furnishing.placeReach) return 'too_far';
     let spot = at ? this.#spotAt(kind, at.x, at.y, at.rot) : this.#spotFor(p, kind, Number.isFinite(angle) ? angle : 0);
     // Not quite clear: slide it to the nearest spot that is (in a small room, like a cabin, the exact
     // spot in front of you rarely fits). Set down in front of you (a phone), it may turn too.
-    if (!this.fits(b, spot)) spot = this.#nearestFit(b, kind, spot, !at);
+    if (!this.fits(b, spot, null, area)) spot = this.#nearestFit(b, kind, spot, !at, area);
     if (!spot) return 'no_space';
     hotbarOf(p).add(kind, -1);
     this.#add(b, kind, spot, p.account);
@@ -139,7 +149,7 @@ export class Furnishings {
   }
 
   /** The clear spot nearest `r` (within config.furnishing.nudge), turned as it is, or (`turn`) either way; null if none. */
-  #nearestFit(b, kind, r, turn) {
+  #nearestFit(b, kind, r, turn, area = null) {
     const cx = r.x + r.w / 2, cy = r.y + r.h / 2, max = config.furnishing.nudge;
     let best = null, bestD = Infinity;
     for (const rot of turn ? [r.rot, (r.rot + 1) % 4] : [r.rot]) {
@@ -148,7 +158,7 @@ export class Furnishings {
           const d = Math.hypot(dx, dy) + (rot === r.rot ? 0 : max); // (rather as it was turned)
           if (d >= bestD || Math.hypot(dx, dy) > max) continue;
           const t = this.#spotAt(kind, cx + dx, cy + dy, rot);
-          if (this.fits(b, t)) [best, bestD] = [t, d];
+          if (this.fits(b, t, null, area)) [best, bestD] = [t, d];
         }
       }
     }
@@ -217,7 +227,9 @@ export class Furnishings {
     if (!it || !this.near(p, it)) return 'too_far';
     if (it.owner !== p.account) return 'not_yours';
     if ([...this.world.players.values()].some((o) => o.sleeping?.bed === it.id)) return 'someone_asleep';
-    if (this.world.homes.tenantOf(it)) return 'rented_out'; // (the tenant's storage)
+    const tenant = this.world.homes.tenantOf(it);
+    if (tenant && tenant !== p.account) return 'rented_out'; // (the tenant's storage)
+    if (!tenant && this.#building(it.building)?.rooms) return 'tenants_furnish'; // (flats and garage boxes: their tenants furnish them)
     if (it.slots?.some(Boolean)) return 'empty_it_first';
     if (hotbarOf(p).room(it.kind) < 1) return 'no_room';
     hotbarOf(p).add(it.kind, 1);
@@ -308,9 +320,45 @@ export class Furnishings {
     return { kind: it.kind, x: local.x, y: local.y, w: local.w, h: local.h, rot, ...(it.slots ? { slots: withContents ? it.slots.map((s) => s && { ...s }) : [] } : {}) };
   }
 
-  /** Everything placed in building b, for saving (`contents(it)` false: a cabinet's saved empty). */
-  saveIn(b, contents = () => true) {
-    return [...this.items.values()].filter((it) => it.building === b.id).map((it) => this.#save(it, contents(it)));
+  /** Everything placed in building b, for saving (`contents(it)` false: a cabinet's saved empty; `include(it)` false: left out). */
+  saveIn(b, contents = () => true, include = () => true) {
+    return [...this.items.values()].filter((it) => it.building === b.id && include(it)).map((it) => this.#save(it, contents(it)));
+  }
+
+  /**
+   * The furniture a tenant has put in room `room` of b, for keeping with them (`take`: and out it comes —
+   * they're moving out). Positions are the room's own, so it goes back the same in their next one.
+   */
+  tenantFurniture(b, room, accountId, take = false) {
+    const local = toLocal(b, b.rooms[room]);
+    const out = [];
+    for (const it of [...this.items.values()]) {
+      if (it.building !== b.id || !accountId || it.ownerId !== accountId || this.world.homes.roomAt(b, it.x + it.w / 2, it.y + it.h / 2) !== room) continue;
+      const s = this.#save(it);
+      out.push({ ...s, x: s.x - local.x, y: s.y - local.y });
+      if (take) {
+        this.items.delete(it.id);
+        this.changed = true;
+      }
+    }
+    return out;
+  }
+
+  /** A tenant's kept furniture set out in their new room (as it was in their last one, or the nearest free spot); returns what didn't fit. */
+  loadTenantFurniture(b, room, saved, account) {
+    const area = b.rooms[room];
+    const local = toLocal(b, area);
+    const left = [];
+    for (const s of Array.isArray(saved) ? saved : []) {
+      if (!PLACEABLE[s?.kind]) continue;
+      const rot = (((s.rot ?? 0) % 4) + 4) % 4;
+      const [w, h] = dims(s.kind, rot);
+      let r = { ...toWorld(b, { x: s.x + local.x, y: s.y + local.y, w, h }), rot: (rot + (b.rot ?? 0)) % 4 };
+      if (!this.fits(b, r, null, area)) r = this.#nearestFit(b, s.kind, r, true, area) ?? this.#freeSpot(b, r, area);
+      if (r) this.#add(b, s.kind, r, account, s.kind === 'cabinet' ? cleanSlots(s.slots) : null);
+      else left.push(s);
+    }
+    return left;
   }
 
   /** Set saved furniture back out in building b (owned by `owner`). Anything that no longer fits goes to the nearest free spot; if none, it's returned as left over. */
@@ -336,11 +384,12 @@ export class Furnishings {
     return left;
   }
 
-  #freeSpot(b, r) {
-    for (let y = b.y + 10; y + r.h < b.y + b.h - 10; y += 10) {
-      for (let x = b.x + 10; x + r.w < b.x + b.w - 10; x += 10) {
+  #freeSpot(b, r, area = null) {
+    const box = area ?? { x: b.x + 10, y: b.y + 10, w: b.w - 20, h: b.h - 20 };
+    for (let y = box.y; y + r.h < box.y + box.h; y += 10) {
+      for (let x = box.x; x + r.w < box.x + box.w; x += 10) {
         const t = { ...r, x, y };
-        if (this.fits(b, t)) return t;
+        if (this.fits(b, t, null, area)) return t;
       }
     }
     return null;
@@ -376,6 +425,34 @@ export class Furnishings {
   /** The furniture a home comes with, set out owned by nobody (homes nobody lives in), or by `owner`. */
   furnishDefaults(b, owner = null) {
     this.loadIn(b, b.furnish ?? [], owner);
+    if (!owner) for (const it of this.cabinetsIn(b)) if (!it.owner) this.#stock(it);
+  }
+
+  /** Now and then: empty cabinets nobody owns may have something left in them again. */
+  restock() {
+    for (const it of this.items.values()) if (it.slots && !it.owner && !this.world.homes.tenantOf(it) && !it.slots.some(Boolean)) this.#stock(it);
+  }
+
+  /** Maybe a few things in a cabinet nobody owns: food, a fishing rod, a bat, an old pistol (config.furnishing.loot). */
+  #stock(it) {
+    const rule = config.furnishing.loot;
+    if (Math.random() >= rule.chance) return;
+    const n = 1 + Math.floor(Math.random() * rule.most);
+    for (let k = 0; k < n; k++) {
+      const free = it.slots.indexOf(null);
+      if (free < 0) break;
+      const what = pick(rule.odds);
+      if (config.economy.menu[what]) {
+        const stack = it.slots.find((s) => s?.food === what && s.qty < config.economy.foodStack);
+        if (stack) stack.qty++;
+        else it.slots[free] = { food: what, qty: 1 };
+      } else if (what === 'rod') it.slots[free] = { type: 'rod' };
+      else if (config.goods[what]) it.slots[free] = { good: what, qty: 1 }; // (the bat)
+      else if (config.weapons[what]) {
+        const [lo, hi] = rule.pistolAmmo;
+        it.slots[free] = { type: what, ammo: Math.min(config.weapons[what].magazineSize, lo + Math.floor(Math.random() * (hi - lo + 1))), illegal: true }; // (nobody's registered it)
+      }
+    }
   }
 
   /** Take away whatever nobody owns in building b (the furniture a home was set out with), except what `keep(it)`. */
@@ -413,10 +490,10 @@ export class Furnishings {
     return saved;
   }
 
-  /** Everything in building b changes hands: to `owner`, or to nobody (null). */
-  handOver(b, owner) {
+  /** Everything in building b changes hands: to `owner`, or to nobody (null), except what `keep(it)` (a tenant's own). */
+  handOver(b, owner, keep = () => false) {
     for (const it of this.items.values()) {
-      if (it.building !== b.id) continue;
+      if (it.building !== b.id || keep(it)) continue;
       Object.assign(it, { owner, ownerId: owner?.id ?? null });
       this.changed = true;
     }
@@ -431,6 +508,13 @@ export class Furnishings {
   anyIn(b) {
     return [...this.items.values()].some((it) => it.building === b.id);
   }
+}
+
+/** A random key of `odds` ({ key: relative odds }). */
+export function pick(odds) {
+  const list = Object.entries(odds);
+  let roll = Math.random() * list.reduce((t, [, n]) => t + n, 0);
+  return (list.find(([, n]) => (roll -= n) < 0) ?? list[0])[0];
 }
 
 /** What a starter home comes with (no table or chairs: there's no room). */

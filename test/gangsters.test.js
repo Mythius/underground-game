@@ -169,7 +169,7 @@ test('he steals a parked car whose owner is away, drives it off and dumps it; th
   }
 });
 
-test('they buy all your vodka, at three times what it is worth', () => {
+test('they buy your vodka, at three times what it is worth: up to 30 bottles, once a minute each', () => {
   const world = town();
   const g = oneGangster(world, 2000, 2000);
   const p = player(world, 1, 2060, 2000);
@@ -181,7 +181,21 @@ test('they buy all your vodka, at three times what it is worth', () => {
   assert.deepEqual(r.sold, { vodka: 2, firewater: 1 });
   assert.equal(p.cash, 2 * config.goods.vodka.base * 3 + config.goods.firewater.base * 3);
   assert.equal(hotbarOf(p).count('vodka'), 0);
-  assert.equal(world.hires.sellVodka(p, g.id), 'no_vodka');
+  // Back too soon: that gangster won't buy again for a minute.
+  hotbarOf(p).add('vodka', 10);
+  hotbarOf(p).add('firewater', 10);
+  assert.equal(world.hires.sellVodka(p, g.id), 'vodka_cooldown');
+  world.hires.time += config.gangsters.vodkaCooldownSec;
+  // Then he takes no more than vodkaPerSale bottles in all (lowered here: you can't carry 30 on foot).
+  const cap = config.gangsters.vodkaPerSale;
+  config.gangsters.vodkaPerSale = 15;
+  try {
+    const sold = world.hires.sellVodka(p, g.id).sold;
+    assert.equal(Object.values(sold).reduce((a, q) => a + q, 0), 15);
+    assert.equal(hotbarOf(p).count('vodka') + hotbarOf(p).count('firewater'), 5);
+  } finally {
+    config.gangsters.vodkaPerSale = cap;
+  }
 });
 
 test('they go about on their own, not in pairs', () => {

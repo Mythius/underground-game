@@ -4,6 +4,7 @@ import { Bullet } from './entities.js';
 import { hotbarOf, trunkOf } from './cargo.js';
 import { Vehicle, vehicleMotion } from './vehicles.js';
 import { nextWaypoint } from './pathfind.js';
+import { pick } from './furnishing.js';
 
 // Crime and the police.
 //
@@ -120,7 +121,7 @@ export class Police {
     } else car = station && this.world.parkNewVehicle('police', station.id, null);
     if (!car) return null;
     car.police = true;
-    car.lights = true;
+    car.lights = Boolean(this.world.night);
     car.fuel = 100;
     const unit = {
       station,
@@ -184,7 +185,6 @@ export class Police {
       if (kind !== 'near_body') this.#fire(p, kind); // any real crime, seen or not, costs an officer the badge
     }
     if (!alarm && !this.witnessed(p.x, p.y, p, except)) return false;
-    if (this.#newcomerFine(p, kind)) return true;
     const before = p.wanted;
     p.wanted = Math.min(5, Math.max(p.wanted, stars));
     // The search starts from here.
@@ -205,28 +205,29 @@ export class Police {
     return true;
   }
 
-  /**
-   * A new player's first few crimes: a fine on the spot instead of stars (cash first, then the bank,
-   * as much as they have). True if that's how it was dealt with.
-   */
-  #newcomerFine(p, kind) {
-    const rule = config.crime.newcomer;
-    if (p.kind !== 'player' || p.wanted || p.jailed || !p.account) return false;
-    if (this.time - (p.newcomerFinedAt ?? -Infinity) < rule.coverSec) return true; // same incident: already fined
-    const used = p.account.fines ?? 0;
-    if (used >= rule.crimes) return false;
-    p.account.fines = used + 1;
+  /** A new player still in their first few run-ins with the Militsiya: chased as usual, but never shot at, and caught means a fine. */
+  isNewcomer(p) {
+    return p?.kind === 'player' && Boolean(p.account) && (p.account.fines ?? 0) < config.crime.newcomer.crimes;
+  }
+
+  /** Caught a newcomer: an on-the-spot fine (cash first, then the bank, as much as they have) instead of an arrest. */
+  #newcomerFine(p, by = null) {
+    p.account.fines = (p.account.fines ?? 0) + 1;
     this.world.onFinesChange?.(p.account);
-    p.newcomerFinedAt = this.time;
-    const fromCash = Math.min(p.cash, rule.fine);
-    const fromBank = Math.max(0, Math.min(Math.floor(p.account.bank ?? 0), rule.fine - fromCash));
+    const fine = config.crime.newcomer.fine;
+    const fromCash = Math.min(p.cash, fine);
+    const fromBank = Math.max(0, Math.min(Math.floor(p.account.bank ?? 0), fine - fromCash));
     p.cash -= fromCash;
     if (fromBank) {
       p.account.bank -= fromBank;
       this.world.onBankChange?.(p.account);
     }
-    this.events.push({ player: p, kind: 'newcomer_fined', crime: kind, amount: fromCash + fromBank, left: rule.crimes - p.account.fines });
-    return true;
+    p.wanted = 0;
+    p.robbing = null;
+    p.arrest = 0;
+    p.lastKnown = null;
+    this.events.push({ player: p, kind: 'newcomer_fined', amount: fromCash + fromBank, by });
+    return fromCash + fromBank;
   }
 
   /** Everyone the Militsiya might be after: players and hired muscle. */
@@ -363,9 +364,14 @@ export class Police {
     let take = 0;
     let unnoticed = false;
     let victim = null;
+    let food = null;
     if (npc) {
       take = Math.min(Math.floor(npc.wallet), Math.round(rule.npcMin + Math.random() * (rule.npcMax - rule.npcMin)));
       npc.wallet -= take;
+      if (Math.random() < config.pocketFood.robChance) { // something to eat in their pocket too
+        const item = pick(config.pocketFood.odds);
+        if (this.world.addFood(p, item, 1) === 0) food = item;
+      }
       // From behind (you're outside the half circle they face), they never feel a thing.
       unnoticed = !npc.fight && (p.x - npc.x) * Math.cos(npc.angle ?? 0) + (p.y - npc.y) * Math.sin(npc.angle ?? 0) < 0;
       if (!unnoticed) {
@@ -383,7 +389,7 @@ export class Police {
     p.pickpocketReady = this.time + rule.cooldownSec;
     p.cash += take;
     this.crime(p, 'pickpocket', false, unnoticed ? npc : null); // (someone else may still see it)
-    return { amount: take, unnoticed };
+    return { amount: take, unnoticed, food };
   }
 
   // ---- being shot -------------------------------------------------------------------
@@ -491,6 +497,7 @@ export class Police {
   copArrest(cop, id) {
     const t = this.#collar(cop, id);
     if (typeof t === 'string') return t;
+    if (this.isNewcomer(t)) return { name: t.name, fined: this.#newcomerFine(t, cop.name) }; // new in town: a fine, not the cells
     const seized = this.#seize(t);
     if (this.world.prison?.jail(t, t.wanted)) {
       t.arrest = 0;
@@ -551,6 +558,7 @@ export class Police {
   #bust(p) {
     const w = this.world;
     if (p.kind === 'hire') return w.hires.busted(p); // hired muscle is taken away
+    if (this.isNewcomer(p)) return this.#newcomerFine(p); // new in town: let off with a fine
     if (p.vehicle) w.leaveSeat(p);
     const seized = this.#seize(p); // illegal goods are confiscated (from hands and the car with them)
     // Off to the prison (bail is paid to the warden there, by you or a friend).
@@ -618,6 +626,8 @@ export class Police {
       if ((w.in -= dt) > 0) this.waiting.push(w);
       else this.#replace(w.station, w.post);
     }
+    // Militsiya cars: headlights on after dark, off by day (unless a player officer's driving).
+    for (const u of this.units) if (u.car && !u.car.driver) u.car.lights = Boolean(this.world.night);
     this.#robberies(dt);
     this.#jail();
     // An officer who sees an unregistered gun in your hand reports it (now and then, not every tick).
@@ -865,7 +875,7 @@ export class Police {
     const d = Math.hypot(t.x - o.x, t.y - o.y);
     o.angle = Math.atan2(t.y - o.y, t.x - o.x);
     if (d > config.police.arrestRange * 0.7) this.#walk(o, t.x, t.y, dt);
-    const shoot = t.wanted >= config.police.shootFrom || t.shotPolice;
+    const shoot = t.shotPolice || (t.wanted >= config.police.shootFrom && !this.isNewcomer(t)); // (newcomers aren't shot at — unless they attack the police)
     if (shoot && d < config.police.shootRange && o.fireCooldown <= 0 && this.#clearShot(o.x, o.y, t.x, t.y)) {
       o.fireCooldown = config.police.fireEverySec;
       const angle = o.angle + (Math.random() - 0.5) * config.police.aimSpread;

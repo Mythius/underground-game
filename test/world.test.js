@@ -69,7 +69,7 @@ test('extra size from overeating shrinks back over time', () => {
   const world = smallWorld();
   const p = world.spawnPlayer('a');
   p.mass = config.player.startMass + 40;
-  for (let i = 0; i < 60; i++) world.step(1);
+  for (let i = 0; i < 120; i++) world.step(1); // (half of it gone in about two minutes)
   assert.ok(p.mass < config.player.startMass + 40 * 0.6, `mass ${p.mass}`);
   assert.ok(p.mass >= config.player.startMass);
 });

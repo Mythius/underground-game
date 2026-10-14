@@ -80,8 +80,10 @@ export class AccountStore {
     if (!has('accounts', 'prison')) this.db.exec('ALTER TABLE accounts ADD COLUMN prison TEXT'); // JSON: the sentence still to serve ({ quota, coal, bail })
     if (!has('accounts', 'fines')) this.db.exec('ALTER TABLE accounts ADD COLUMN fines INTEGER NOT NULL DEFAULT 0'); // newcomer fines used (a fine instead of stars for the first few crimes)
     if (!has('accounts', 'achievements')) this.db.exec('ALTER TABLE accounts ADD COLUMN achievements TEXT'); // JSON: ids of the achievements earned
+    if (!has('accounts', 'crew')) this.db.exec('ALTER TABLE accounts ADD COLUMN crew TEXT'); // JSON: their goons and guards ({ role, mode, post, out })
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison, fines, achievements FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison, fines, achievements, crew FROM accounts WHERE id = ?'),
+      setCrew: this.db.prepare('UPDATE accounts SET crew = ? WHERE id = ?'),
       setAchievements: this.db.prepare('UPDATE accounts SET achievements = ? WHERE id = ?'),
       setFines: this.db.prepare('UPDATE accounts SET fines = ? WHERE id = ?'),
       setPrison: this.db.prepare('UPDATE accounts SET prison = ? WHERE id = ?'),
@@ -197,7 +199,7 @@ export class AccountStore {
     const row = this.q.accountById.get(id);
     if (!row) return null;
     const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
-    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison), fines: row.fines, achievements: json(row.achievements) ?? [] };
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison), fines: row.fines, achievements: json(row.achievements) ?? [], crew: json(row.crew) ?? [] };
   }
 
   /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
@@ -212,6 +214,13 @@ export class AccountStore {
     this.q.setCop.run(cop ? 1 : 0, id);
     const live = this.liveAccounts.get(id);
     if (live) live.cop = Boolean(cop);
+  }
+
+  /** Their goons and guards ({ role, mode, post, out }), for bringing back when they next log in. */
+  setCrew(id, crew) {
+    this.q.setCrew.run(JSON.stringify(crew ?? []), id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.crew = crew;
   }
 
   /** The achievements they've earned (ids). */

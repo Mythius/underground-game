@@ -225,7 +225,7 @@ export class Labour {
     const w = this.world;
     const at = leg.from;
     const v = new Vehicle(w.nextEntityId++, 'truck', at.x, at.y, 0);
-    Object.assign(v, { color: '#3d5a3f', fuel: 100, labourTruck: leg, lights: true });
+    Object.assign(v, { color: '#3d5a3f', fuel: 100, labourTruck: leg, lights: Boolean(w.night) });
     w.vehicles.set(v.id, v);
     Object.assign(leg, { truck: v, state: 'loading', timer: config.labour.loadSec, waited: 0, route: [], stuck: 0, reverse: 0, noProgress: 0 });
   }
@@ -268,6 +268,7 @@ export class Labour {
       }
       const v = leg.truck;
       if (!w.vehicles.has(v.id) || v.driver) { this.#lose(leg); continue; } // wrecked, or someone's at the wheel
+      v.lights = Boolean(w.night); // headlights on after dark, off by day
       this.#run(leg, v, dt);
     }
   }

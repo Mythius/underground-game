@@ -458,6 +458,9 @@ function handleMessage(client, msg) {
     case ClientMsg.HIRE:
       client.room?.hireAction(client, msg);
       break;
+    case ClientMsg.CREW:
+      client.room?.crewAction(client, msg);
+      break;
     case ClientMsg.PRISON:
       client.room?.prisonAction(client, msg);
       break;

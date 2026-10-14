@@ -42,6 +42,7 @@ export const ClientMsg = Object.freeze({
   COP: 'cop', // { t, action: 'apply', answers: [option index per question] } | { t, action: 'resign' } at a Militsiya front desk | { t, action: 'arrest' | 'fine', id (player) } as an officer
   CAT: 'cat', // { t, action: 'feed' (a fish) | 'pickup' | 'drop' | 'pet', id? } a stray cat
   CROWS: 'crows', // { t } wheat in hand: toss a handful to the crows (uses one)
+  CREW: 'crew', // { t, action: 'away' | 'out' | 'fire' | 'mode' (mode: 'follow' | 'wait') | 'post' (post: building id), id } the clipboard: your goons and guards
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
 });
 
@@ -225,6 +226,11 @@ const validators = {
 
   [ClientMsg.HIRE]: (m) =>
     ['goon', 'guard', 'hitman', 'dismiss', 'vodka'].includes(m.action) && (m.action === 'goon' || m.action === 'vodka' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,
+
+  [ClientMsg.CREW]: (m) =>
+    ['away', 'out', 'fire', 'mode', 'post'].includes(m.action) && Number.isInteger(m.id) && (m.action !== 'mode' || m.mode === 'follow' || m.mode === 'wait') && (m.action !== 'post' || Number.isInteger(m.post))
+      ? { t: m.t, action: m.action, id: m.id, mode: m.mode ?? null, post: m.post ?? 0 }
+      : null,
 
   [ClientMsg.COP]: (m) =>
     m.action === 'resign' ? { t: m.t, action: 'resign' }
