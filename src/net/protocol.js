@@ -31,6 +31,7 @@ export const ClientMsg = Object.freeze({
   WORK: 'work', // { t, id, action: 'tool' | 'haul' | 'buy' | 'sell' } at a work site's foreman
   GARAGE: 'garage', // { t, action: 'list' | 'take', id? } your saved cars, at the spot inside your home
   BODY: 'body', // { t, action: 'open' | 'loot' | 'carry' | 'drop', id?, slot? } (drop: the body you carry — into a dumpster, water, under a tree, or down)
+  SWAP: 'swap', // { t, a, b } swap two hotbar slots (dragging one onto the other)
   TRUNK: 'trunk', // { t, id, action: 'open' | 'take' | 'put', slot } a vehicle's trunk
   RADIO: 'radio', // { t, action: 'toggle' | 'next' } the radio of the car you're in
   GANGSTER: 'gangster', // { t, id, action: 'sell' } sell a gangster all your vodka
@@ -183,6 +184,8 @@ const validators = {
     if (m.cash !== undefined) return Number.isInteger(m.cash) && m.cash > 0 && m.cash <= 1e9 ? { t: m.t, cash: m.cash } : null;
     return m.slot === undefined ? { t: m.t } : Number.isInteger(m.slot) && m.slot >= 0 && m.slot < 64 ? { t: m.t, slot: m.slot } : null;
   },
+
+  [ClientMsg.SWAP]: (m) => (Number.isInteger(m.a) && Number.isInteger(m.b) && m.a >= 0 && m.b >= 0 && m.a < 64 && m.b < 64 ? { t: m.t, a: m.a, b: m.b } : null),
 
   [ClientMsg.TEAM]: (m) =>
     ['invite', 'accept', 'decline', 'leave'].includes(m.action) && (m.action === 'leave' || Number.isInteger(m.id)) ? { t: m.t, action: m.action, id: m.id ?? 0 } : null,

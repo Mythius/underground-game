@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { config } from '../src/config.js';
 config.gangsters.count = 0;
+const HOMELESS = { sitters: config.homeless.sitters, wanderers: config.homeless.wanderers };
+Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); // (no knives in the other tests; theirs put them back)
 import { AccountStore } from '../src/accounts.js';
 import { RoomManager } from '../src/game/RoomManager.js';
 import { validateMap } from '../src/game/mapFile.js';
@@ -298,4 +300,90 @@ test("the admin's switch: over to the underground from the menu, and everyone el
   } finally {
     rooms.stopAll();
   }
+});
+
+test('gold sells at a town market (it starts with none, so it pays well)', () => {
+  const world = new World();
+  const depot = [...world.economy.markets.values()].find((m) => m.kind === 'depot');
+  assert.equal(depot.goods.gold.stock, 0, 'none for sale till someone sells some');
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  Object.assign(p, { x: depot.x, y: depot.y, cash: 0 });
+  world.economy.cargoOf(p).add('gold', 2);
+  const price = world.economy.sellPrice(depot, 'gold');
+  assert.ok(price > config.goods.gold.base, 'above its base price while the market has none');
+  assert.equal(world.economy.trade(p, depot.id, 'gold', 2, 'sell'), null);
+  assert.equal(p.cash, price * 2);
+  assert.equal(depot.goods.gold.stock, 2);
+  assert.equal(world.economy.cargoOf(p).count('gold'), 0);
+});
+
+test('dying underground: you come back in one of the bunkers, not just anywhere in the maze', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const { bunkers } = world.underground.layout;
+  for (let i = 0; i < 30; i++) {
+    const p = world.spawnPlayer(`p${i}`, null, null);
+    assert.ok(bunkers.some((b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h), `in a bunker (${p.x}, ${p.y})`);
+    assert.ok(!world.isBlocked(p.x, p.y, p.radius), 'and not in a wall');
+  }
+});
+
+test('the homeless underground: 10 sitters and 10 wanderers with knives; a sitter you pass may creep after you and stab you in the back, a wanderer who sees you may come straight at you', () => {
+  Object.assign(config.homeless, HOMELESS);
+  try {
+    const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+    const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+    const H = world.homeless;
+    assert.equal(H.list.filter((h) => h.kind === 'sit').length, config.homeless.sitters);
+    assert.equal(H.list.filter((h) => h.kind === 'roam').length, config.homeless.wanderers);
+    assert.ok(H.list.every((h) => !world.isBlocked(h.x, h.y, config.homeless.radius)), 'none stuck in a wall');
+
+    // A sitter: walk past him (he always follows, for the test) and keep going, facing away.
+    const was = config.homeless.followChance;
+    config.homeless.followChance = 1;
+    try {
+      const clearWay = (h) => [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([dx, dy]) => world.lineOfSight(h.x, h.y, h.x + dx * 520, h.y + dy * 520) && [100, 200, 300, 400, 520].every((k) => !world.isBlocked(h.x + dx * k, h.y + dy * k, 20)));
+      const s = H.list.find((h) => h.kind === 'sit' && clearWay(h));
+      assert.ok(s, 'a sitter with a clear way past him');
+      const dir = clearWay(s);
+      const p = world.spawnPlayer('p', null, null);
+      for (let i = 0; i < 24; i++) {
+        Object.assign(p, { x: s.home.x + dir[0] * (40 + i * 20), y: s.home.y + dir[1] * (40 + i * 20) });
+        p.input.aim = Math.atan2(dir[1], dir[0]);
+        world.step(0.05);
+      }
+      assert.notEqual(s.state, 'sit', 'he gets up after you');
+      const hp = p.health;
+      for (let i = 0; i < 80 && p.health === hp; i++) world.step(0.05);
+      assert.ok(p.health < hp, 'and stabs you from behind');
+    } finally { config.homeless.followChance = was; }
+
+    // Stab one back: three knife stabs and he's a body with his knife on him.
+    const r = H.list.find((h) => h.kind === 'roam');
+    const q = world.spawnPlayer('q', null, null);
+    const before = H.list.length;
+    for (let i = 0; i < 3; i++) H.damage(r, config.homeless.health / 3 + 0.01, q);
+    assert.equal(H.list.length, before - 1);
+    assert.ok([...world.bodies.list.values()].some((b) => b.items.some((it) => it.type === 'knife')), 'his knife on his body');
+  } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
+});
+
+test('a wanderer who sees you comes at you (80% of the time), and keeps on until you get away', () => {
+  Object.assign(config.homeless, HOMELESS);
+  try {
+    const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+    const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+    const was = config.homeless.attackChance;
+    config.homeless.attackChance = 1;
+    try {
+      const r = world.homeless.list.find((h) => h.kind === 'roam');
+      r.route = []; // (standing still)
+      const p = world.spawnPlayer('p', null, null);
+      Object.assign(p, { x: r.x + 50, y: r.y });
+      const hp = p.health;
+      for (let i = 0; i < 60; i++) world.step(0.05);
+      assert.equal(r.state, 'fight');
+      assert.ok(p.health < hp, 'stabbed');
+    } finally { config.homeless.attackChance = was; }
+  } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
 });

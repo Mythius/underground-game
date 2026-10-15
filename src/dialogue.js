@@ -45,6 +45,14 @@ export const DIALOGUE = [
       'THE WATER! THE WATER\'S COMING UP THE SHAFT!', 'SHUT THE BULKHEAD! SHUT IT! THEY\'RE STILL DOWN THERE!', 'IT\'S IN THE LOWER GALLERY! RUN! RUN!',
       'I HEARD THEM KNOCKING ON THE OTHER SIDE! FOR THREE DAYS!', 'THE PUMPS! WHO TURNED OFF THE PUMPS?!', 'DON\'T GO DOWN TO NINE! NINE IS UNDER WATER!',
     ] },
+    { id: 'homeless', name: 'Homeless — muttering (Russian only)', note: 'The homeless underground, as you walk by and now and then while you\'re near. They speak only Russian.', lines: [
+      'Эх, жизнь моя жестянка…', 'Мелочи не найдётся, браток?', 'Чего уставился?', 'Иди, иди своей дорогой.', 'Холодно тут… холодно…',
+      'Это моё место. Моё!', 'Водочки бы сейчас…', 'Ходят тут всякие…', 'Сигаретки не будет?', 'Раньше я инженером был. Инженером!',
+      'Крысы тоже люди. Почти.', 'Не смотри на меня так.',
+    ] },
+    { id: 'homelessFight', name: 'Homeless — attacking (Russian only)', note: 'A homeless man coming at you with his knife.', lines: [
+      'Стой, сука!', 'Зарежу!', 'Куда собрался?!', 'Иди сюда!', 'Кошелёк давай!', 'Убью, гад!', 'Не уйдёшь!', 'Моё! Всё моё!',
+    ] },
     { id: 'minerLend', name: 'Old miner — lending his pickaxe', note: 'When he hands you his pickaxe (E).', lines: ['Take it, take it. Bring it back. BRING IT BACK.', 'Hit the shiny bits. Not your foot. Hehe.', 'My pick. Mine. Yours a little while.', 'Gold sleeps in the walls. Wake it gently.'] },
   ] },
   { group: 'Militsiya', kinds: [

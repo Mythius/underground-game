@@ -25,6 +25,7 @@ import { Labour } from './labour.js';
 import { Cats } from './cats.js';
 import { Wolves } from './wolves.js';
 import { Bears } from './bear.js';
+import { Homeless } from './homeless.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
@@ -222,6 +223,7 @@ export class World {
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.underground = map?.underground ? new Underground(this, map.underground) : null; // (the underground world: its layout and loot)
+    this.homeless = map?.underground ? new Homeless(this, map.underground) : null; // (the knife-carrying homeless down there)
     this.rebuildGrid();
   }
 
@@ -766,12 +768,11 @@ export class World {
     return null;
   }
 
-  /** Q: drop the selected hotbar slot (goods or a found gun; the starting knife stays) at your feet. */
+  /** Q: drop the selected hotbar slot (goods, a gun, your knife) at your feet. (You get a knife again when you respawn.) */
   drop(p, index = p.selected) {
     if (p.vehicle) return 'in_vehicle';
     const slot = p.inventory[index];
     if (!slot) return 'nothing_to_drop';
-    if (slot.type === STARTER_WEAPON) return 'cant_drop_starter';
     if (slot.food) return 'cant_drop_food'; // eat it (E)
     if (slot.tool && slot.type !== 'rod') return 'cant_drop_tool'; // it's the foreman's (a fishing rod drops like a gun)
     p.inventory[index] = null;
@@ -782,6 +783,15 @@ export class World {
     pickup.noPickupUntil = this.tick + Math.round(config.cargo.dropPickupDelaySec * config.tickRate);
     this.pickups.set(pickup.id, pickup);
     this.grid.insert(pickup);
+    return null;
+  }
+
+  /** Dragging one hotbar slot onto another: the two swap places (onto an empty slot: it moves there). */
+  swapSlots(p, a, b) {
+    const inv = p.inventory;
+    if (a === b || a < 0 || b < 0 || a >= inv.length || b >= inv.length) return 'bad_slot';
+    if (!inv[a] && !inv[b]) return null;
+    [inv[a], inv[b]] = [inv[b], inv[a]];
     return null;
   }
 
@@ -876,10 +886,10 @@ export class World {
     return f;
   }
 
-  /** A new player: at home if `account` has one (see Homes), otherwise somewhere open. */
+  /** A new player: at home if `account` has one (see Homes), in a bunker underground, otherwise somewhere open. */
   spawnPlayer(name, look = null, account = null) {
     const home = this.homes.homeOf(account);
-    const { x, y } = home ? this.homes.spawnPoint(home) : this.#findSpawnPoint();
+    const { x, y } = home ? this.homes.spawnPoint(home) : this.underground?.spawnPoint(this.playerOpts.startMass ** 0.5 * 4 + 10) ?? this.#findSpawnPoint(); // (underground: in a bunker)
     const p = new Player(this.nextEntityId++, name, x, y, look);
     this.players.set(p.id, p);
     return p;
@@ -1018,6 +1028,12 @@ export class World {
       if (!this.players.has(p.id)) continue;
       this.removePlayer(p.id);
       deaths.push({ victim: p, killer: { name: 'the albino bear' } });
+    }
+    this.homeless?.step(dt);
+    for (const p of this.homeless?.kills.splice(0) ?? []) {
+      if (!this.players.has(p.id)) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'a homeless man' } });
     }
     this.wolves.step(dt);
     for (const p of this.wolves.kills.splice(0)) {
@@ -1606,6 +1622,7 @@ export class World {
     for (const h of this.hires.list) if (!h.vehicle && h.employer !== p.account) consider('hire', h, h.radius);
     for (const w of this.wolves.list) consider('wolf', w, config.wolves.radius);
     for (const b of this.bears.list) consider('bear', b, config.bear.radius);
+    for (const h of this.homeless?.list ?? []) consider('homeless', h, config.homeless.radius);
     if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
       const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
       if (atm) this.#smashAtm(p, atm);
@@ -1616,6 +1633,7 @@ export class World {
     if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
     if (best.kind === 'wolf') return this.wolves.damage(t, config.wolves.health * stats.share + 0.01, p);
+    if (best.kind === 'homeless') return void this.homeless.damage(t, config.homeless.health * stats.share + 0.01, p);
     if (best.kind === 'bear') return this.bears.damage(t, 60 * stats.share, p); // (a knife: 20 a stab. It hardly notices.)
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
@@ -1666,6 +1684,12 @@ export class World {
       if (bear) {
         this.bullets.delete(b.id);
         this.bears.damage(bear, b.damage, shooter);
+        continue;
+      }
+      const tramp = this.homeless?.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);
+      if (tramp) {
+        this.bullets.delete(b.id);
+        this.homeless.damage(tramp, b.damage, shooter);
         continue;
       }
       const wolf = this.wolves.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);

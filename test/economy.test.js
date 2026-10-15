@@ -213,7 +213,8 @@ test('Q drops the selected slot; someone else can pick it up, you only after a m
   assert.equal(carried(other).logs, 5);
 
   player.selected = 0;
-  assert.equal(world.drop(player), 'cant_drop_starter');
+  assert.equal(world.drop(player), null, 'your knife drops too (Q)');
+  assert.equal(player.inventory[0], null);
 });
 
 test('trunks: only from the driver seat, take a stack into your hotbar or put one in; C toggles the lights', () => {
@@ -253,7 +254,22 @@ test('dragging: drop any hotbar slot', () => {
   player.selected = 0;
   assert.equal(world.drop(player, slot), null);
   assert.equal(player.inventory[slot], null);
-  assert.equal(world.drop(player, 0), 'cant_drop_starter');
+  assert.equal(world.drop(player, 0), null);
+  assert.equal(player.inventory[0], null);
+});
+
+test('dragging one hotbar slot onto another swaps them (onto an empty one: it moves there)', () => {
+  const { world, player } = town();
+  carry(player, { logs: 5 });
+  const logs = player.inventory.findIndex((s) => s?.good);
+  const empty = player.inventory.indexOf(null);
+  assert.equal(world.swapSlots(player, 0, logs), null);
+  assert.equal(player.inventory[0].good, 'logs');
+  assert.equal(player.inventory[logs].type, 'knife');
+  assert.equal(world.swapSlots(player, logs, empty), null);
+  assert.equal(player.inventory[empty].type, 'knife');
+  assert.equal(player.inventory[logs], null);
+  assert.equal(world.swapSlots(player, 0, 99), 'bad_slot');
 });
 
 test('fuel in hand pours into the car beside you, 20% of a tank each', () => {

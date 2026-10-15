@@ -445,6 +445,7 @@ function handleMessage(client, msg) {
       client.room?.economyAction(client, msg);
       break;
     case ClientMsg.DROP:
+    case ClientMsg.SWAP:
     case ClientMsg.LIGHTS:
     case ClientMsg.SIREN:
     case ClientMsg.TRUNK:

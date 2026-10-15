@@ -170,6 +170,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.homeless?.events.splice(0) ?? []) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.wolves.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -996,7 +1000,7 @@ export class Room {
       else client.send({ t: ServerMsg.DONE, what: 'drop_cash', amount: result });
       return;
     }
-    const error = msg.t === 'drop' ? this.world.drop(p, msg.slot) : msg.t === 'lights' ? this.world.toggleLights(p) : msg.t === 'siren' ? this.world.toggleSiren(p) : this.world.trunk(p, msg.id, msg.action, msg.slot);
+    const error = msg.t === 'drop' ? this.world.drop(p, msg.slot) : msg.t === 'swap' ? this.world.swapSlots(p, msg.a, msg.b) : msg.t === 'lights' ? this.world.toggleLights(p) : msg.t === 'siren' ? this.world.toggleSiren(p) : this.world.trunk(p, msg.id, msg.action, msg.slot);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
   }
 
@@ -1162,6 +1166,7 @@ export class Room {
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
           wolves: this.world.wolves.visible(cx, cy, config.world.viewDistance),
           bears: this.world.bears.visible(cx, cy, config.world.viewDistance),
+          homeless: this.world.homeless?.visible(cx, cy, config.world.viewDistance) ?? [],
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),
           // Teammates wherever they are, for the map: [player id, x, y, driving].

@@ -840,6 +840,17 @@ export class Underground {
     return this.layout.ladders.find((l) => Math.hypot(l.x - p.x, l.y - p.y) < reach + p.radius) ?? null;
   }
 
+  /** Where someone (re)spawns down here: somewhere clear in one of the bunkers, picked at random. */
+  spawnPoint(r) {
+    const bunkers = this.layout.bunkers ?? [];
+    for (let i = 0; i < 60 && bunkers.length; i++) {
+      const b = bunkers[Math.floor(Math.random() * bunkers.length)];
+      const x = b.x + 40 + Math.random() * Math.max(0, b.w - 80), y = b.y + 40 + Math.random() * Math.max(0, b.h - 80);
+      if (!this.world.isBlocked(x, y, r) && !this.world.isSwimming(x, y)) return { x, y };
+    }
+    return null;
+  }
+
   /** Where someone climbing down a trapdoor at (x, y) in town comes out: at the foot of the nearest ladder. */
   arrival(x, y) {
     const k = config.underground.scale;

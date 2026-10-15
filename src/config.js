@@ -740,6 +740,35 @@ export const config = Object.freeze({
   // creeping; standing still is silent). A noise within chargeWithin and it charges at it; further off, it
   // lumbers over to listen. A swipe takes swipeShare of your max health. It won't go past `leash` from its
   // cave. Killed, it drops `cash`, and another moves in respawnSec later.
+  // The homeless underground (src/game/homeless.js): `sitters` keep to a spot, `wanderers` walk the shafts and
+  // tunnels; all carry knives and speak only Russian. Walk past a sitter and followChance he creeps after you
+  // (stalkSpeed), lunging when he's within lungeRange behind you; a wanderer who sees you (within sight)
+  // attacks attackChance of the time. Each decides about a given player at most once per rejudgeSec. A stab
+  // takes stabShare of your max health. They give up after giveUpSec out of sight or past `leash` from home.
+  homeless: {
+    sitters: 10,
+    wanderers: 10,
+    health: 90,
+    radius: 17,
+    reach: 14,
+    stabShare: 0.14,
+    stabCooldownSec: 0.85,
+    walkSpeed: 60,
+    stalkSpeed: 230,
+    runSpeed: 270,
+    lungeRange: 130,
+    sight: 650,
+    passRange: 170,
+    followChance: 0.4,
+    attackChance: 0.8,
+    rejudgeSec: 90,
+    giveUpSec: 12,
+    leash: 2600,
+    roamRange: 2200,
+    spawnClear: 1000,
+    respawnSec: 300,
+    cash: [3, 30],
+  },
   bear: {
     health: 6000,
     radius: 42,
