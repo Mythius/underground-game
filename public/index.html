@@ -384,7 +384,10 @@
       transition: opacity .3s; opacity: 0;
     }
     #toast.show { opacity: 1; }
-    .editor-buttons { display: flex; gap: .5rem; justify-content: center; }
+    .editor-buttons { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: center; }
+    #world-pick { margin-top: 1rem; font: inherit; font-size: .85rem; padding: .45rem .6rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; display: flex; align-items: center; gap: .4rem; }
+    #world-pick:hover { border-color: #f4c430; }
+    #world-switch { font: inherit; background: #1a1a1a; color: #ddd; border: 1px solid #444; border-radius: .3rem; padding: .1rem .3rem; }
     .editor-buttons[hidden] { display: none; }
     #open-admin { margin-top: 1rem; font: inherit; font-size: .85rem; padding: .45rem .9rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #ddd; cursor: pointer; }
     #open-admin:hover { border-color: #f4c430; }
@@ -585,7 +588,7 @@
     </div>
     <button type="button" id="open-admin">🔐 Admin</button>
     <div class="editor-buttons" id="admin-panel" hidden>
-      <button type="button" id="open-editor">🛠 Map editor</button><button type="button" id="world-switch" title="Which world you play (and respawn) in">🕳 Go underground</button>
+      <button type="button" id="open-editor">🛠 Map editor</button><label id="world-pick" title="Which world you play (and respawn) in">Spawn in <select id="world-switch"><option value="town">🏙 Town</option><option value="underground">🕳 Underground</option></select></label>
       <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button><button type="button" id="open-reports">📋 Reports</button>
     </div>
     <small id="credits">🎵 Music by Steve Oxen</small>
@@ -961,7 +964,6 @@
       rainGrip = msg.rainGrip ?? rainGrip;
       gravelGrip = msg.gravelGrip ?? gravelGrip;
       lamps = terrain.lamps ?? [];
-      worldBtn.textContent = under ? '🏙 Go to town' : '🕳 Go underground';
       buildMinimap();
       doorById.clear();
       for (const b of buildings) for (const d of b.doors) { d.anim = d.open ? 1 : 0; doorById.set(d.id, d); }
@@ -1252,7 +1254,7 @@
           if (msg.what === 'refuel') toast('⛽ Tank filled');
           if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
-          if (msg.what === 'world') { worldBtn.textContent = msg.to === 'underground' ? '🏙 Go to town' : '🕳 Go underground'; toast(msg.to === 'underground' ? '🕳 You\'ll play in the underground (and respawn there) until you switch back' : '🏙 Back to playing in town'); }
+          if (msg.what === 'world') { toast(worldPref === 'underground' ? '🕳 You\'ll play in the underground (and respawn there) until you switch back' : '🏙 Back to playing in town'); }
           if (msg.what === 'trapdoor_open') { sfx('furnish'); toast('🗝️ The key turns. The padlock drops away and the hatch swings up — an iron ladder goes down into the dark. (The key stays in the lock.)', 4500); }
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
@@ -1389,10 +1391,11 @@
     const worldBtn = document.getElementById('world-switch');
     let worldPref = 'town';
     try { worldPref = localStorage.getItem('ug-world') === 'underground' ? 'underground' : 'town'; } catch {}
-    worldBtn.onclick = () => {
+    worldBtn.value = worldPref;
+    worldBtn.onchange = () => {
       const token = adminPassword();
-      if (!token) return;
-      worldPref = (world?.kind ?? 'town') === 'underground' ? 'town' : 'underground';
+      if (!token) return void (worldBtn.value = worldPref);
+      worldPref = worldBtn.value;
       try { localStorage.setItem('ug-world', worldPref); } catch {}
       send({ t: 'world', to: worldPref, token });
     };
