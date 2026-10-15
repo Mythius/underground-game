@@ -13516,13 +13516,22 @@
     let flashHinted = false; // told about it (once a visit to the page)
     let lastShown = new Map(); // the players as drawn this frame: their beams
     const UG_DARK = 0.97; // how much of the view the dark hides, away from any light
-    const BEAM = { range: 640, half: 0.44, core: 0.22, rays: 36 };
+    const BEAM = { range: 640, half: 0.44, core: 0.22, rays: 64 };
 
-    /** How far a ray from (x, y) at angle a gets before the rock (a little way into it, so the wall's face is lit). */
+    /** How far a ray from (x, y) at angle a gets before it meets the rock: exactly to the wall's face (cell by cell along the ray). */
     function rayToRock(x, y, a, range) {
-      const C = under.cell, step = C / 4, dx = Math.cos(a), dy = Math.sin(a);
-      for (let d = step; d < range; d += step) if (ugCell(Math.floor((x + dx * d) / C), Math.floor((y + dy * d) / C)) === UGC.ROCK) return d + step;
-      return range;
+      const C = under.cell, dx = Math.cos(a), dy = Math.sin(a);
+      let cx = Math.floor(x / C), cy = Math.floor(y / C);
+      const sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+      const stepX = dx ? Math.abs(C / dx) : Infinity, stepY = dy ? Math.abs(C / dy) : Infinity;
+      let tx = dx ? (dx > 0 ? (cx + 1) * C - x : x - cx * C) / Math.abs(dx) : Infinity; // distance to the next column / row line
+      let ty = dy ? (dy > 0 ? (cy + 1) * C - y : y - cy * C) / Math.abs(dy) : Infinity;
+      for (;;) {
+        let t;
+        if (tx < ty) { t = tx; tx += stepX; cx += sx; } else { t = ty; ty += stepY; cy += sy; }
+        if (t >= range) return range;
+        if (ugCell(cx, cy) === UGC.ROCK) return t;
+      }
     }
 
     /** A flashlight's beam punched out of the dark: a fan of rays from (x, y) toward `aim`, brightest close to. */
@@ -13581,6 +13590,17 @@
         const age = (now - f.born) / 70;
         if (age < 1 && seen(f.x, f.y, 300)) lightHole(f.x, f.y, 0, 280, 0.9 * (1 - age));
       }
+      // Past the walls it's always dark: no light gets into (or through) the rock.
+      const C = under.cell;
+      skx.beginPath();
+      for (let cy = Math.floor(viewBox.t / C); cy <= Math.floor(viewBox.b / C); cy++) {
+        for (let cx = Math.floor(viewBox.l / C); cx <= Math.floor(viewBox.r / C); cx++) if (ugCell(cx, cy) === UGC.ROCK) skx.rect(cx * C, cy * C, C, C);
+      }
+      skx.fillStyle = '#000';
+      skx.fill(); // (cleared…)
+      skx.globalCompositeOperation = 'source-over';
+      skx.fillStyle = `rgba(0, 0, 0, ${UG_DARK})`;
+      skx.fill(); // (…then exactly as dark as anywhere unlit)
       ctx.save();
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       ctx.drawImage(skyCanvas, 0, 0, w, h);
