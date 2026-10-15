@@ -14,6 +14,9 @@ export const SOUND_SLOTS = [
     { id: 'rain', name: 'Rain', loop: true, note: 'Louder the harder it rains (spring–autumn).' },
     { id: 'wind', name: 'Winter wind', loop: true, note: 'Plays in winter, louder while it snows. No default.' },
     { id: 'night', name: 'Night ambience', loop: true, note: 'Crickets / night noises after dark. No default.' },
+    { id: 'caveDrip', name: 'Cave drips (underground)', loop: true, note: 'Faint dripping water while you are in the caves. Built-in default: random drips.' },
+    { id: 'fluoro', name: 'Fluorescent hum (oil hall)', loop: true, note: 'The buzz of the strip lights, in and near the oil hall underground. Built-in default: a mains hum.' },
+    { id: 'ugWind', name: 'Underground wind', loop: true, note: 'A faint draught through the tunnels, shafts and bunkers; it comes in gusts and now and then dies away to nothing.' },
   ] },
   { group: 'Guns', slots: [
     { id: 'pistol', name: 'Pistol shot' },

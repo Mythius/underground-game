@@ -6,7 +6,7 @@ import { AccountStore } from '../src/accounts.js';
 import { RoomManager } from '../src/game/RoomManager.js';
 import { validateMap } from '../src/game/mapFile.js';
 import { makeWeapon } from '../src/game/entities.js';
-import { CELL, UG, generateUnderground, rockRects } from '../src/game/underground.js';
+import { CELL, SHAFT, UG, generateUnderground, rockRects, shaftRects } from '../src/game/underground.js';
 
 test('the underground is dug the same every time, and every bit of it can be walked to from the first ladder', () => {
   const anchors = [{ x: 1500, y: 1500 }, { x: 6000, y: 2000 }, { x: 3000, y: 6000 }];
@@ -43,6 +43,29 @@ test('caves wind through the rock, one round a lake with a shore all the way rou
     for (let a = 0; a < Math.PI * 2; a += 0.1) for (const d of [0, l.r / 2, l.r + 60]) assert.equal(cellAt(l.x + Math.cos(a) * d, l.y + Math.sin(a) * d), String(UG.CAVE), 'water (and its shore) is all cave floor');
   }
   for (const s of u.loot) assert.ok(!u.lakes.some((l) => Math.hypot(s.x - l.x, s.y - l.y) < l.r), 'loot on dry ground');
+});
+
+test('mine shafts are narrow (rock either side), and an oil hall with pits and cells lies against the edge of the map', () => {
+  const u = generateUnderground({ width: 13500, height: 13500, anchors: [{ x: 3000, y: 3000 }, { x: 10000, y: 9000 }] });
+  const rects = shaftRects(u);
+  const inRock = (x, y) => rects.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
+  const code = (x, y) => u.grid[y * u.cols + x];
+  let shafts = 0;
+  for (let y = 1; y < u.rows - 1; y++) for (let x = 1; x < u.cols - 1; x++) {
+    if (code(x, y) !== String(UG.MINE) || code(x, y - 1) !== '0' || code(x, y + 1) !== '0') continue; // (an east–west shaft)
+    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+    assert.ok(!inRock(cx, cy) && !inRock(cx, cy - SHAFT / 2 + 1) && !inRock(cx, cy + SHAFT / 2 - 1), 'open down the middle');
+    assert.ok(inRock(cx, cy - SHAFT / 2 - 1) && inRock(cx, cy + SHAFT / 2 + 1), 'rock either side');
+    shafts++;
+  }
+  assert.ok(shafts > 50);
+  assert.equal(u.halls.length, 1, 'an oil hall');
+  const hall = u.halls[0];
+  assert.ok(hall.x <= CELL || hall.y <= CELL || hall.x + hall.w >= (u.cols - 1) * CELL || hall.y + hall.h >= (u.rows - 1) * CELL, 'against an edge');
+  const inHall = (d) => d.x >= hall.x && d.y >= hall.y && d.x + d.w <= hall.x + hall.w && d.y + d.h <= hall.y + hall.h;
+  assert.equal(u.decor.filter((d) => d.k === 'oilpit' && inHall(d)).length, 3, 'three oil pits');
+  assert.ok(u.decor.filter((d) => d.k === 'bars' && inHall(d)).length >= 3, 'a row of cells');
+  assert.ok(u.decor.some((d) => d.k === 'tube' && inHall(d)), 'strip lights');
 });
 
 // A town with two bunkers (trapdoors in their floors) along a road.

@@ -6,7 +6,9 @@ import { Pickup, makeWeapon } from './entities.js';
 // The same seed (and the same town bunkers) always digs out the same maze.
 
 export const CELL = 160;
-export const UG = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6 };
+export const UG = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6, HALL: 7 };
+/** Mine shafts are this wide (narrower than a cell: rock either side, and in the corners where they meet). */
+export const SHAFT = 120;
 
 const STATIONS = ['Площадь Ильича', 'Заводская', 'Партизанская', 'Октябрьская', 'Пролетарская', 'Шахтёрская', 'Комсомольская', 'Красный Октябрь', 'Спутник', 'Гагаринская', 'Дружба народов', 'Победа'];
 const BUNKER_NAMES = ['ОБЪЕКТ 17', 'ОБЪЕКТ 42', 'ГО-3', 'ОБЪЕКТ 9', 'УЗЕЛ СВЯЗИ', 'ОБЪЕКТ 101', 'ГО-11', 'СКЛАД №6', 'ОБЪЕКТ 23', 'ГО-7', 'ПУНКТ УПРАВЛЕНИЯ', 'ОБЪЕКТ 55', 'ГО-15', 'ОБЪЕКТ 8', 'СКЛАД №2', 'ОБЪЕКТ 31'];
@@ -28,7 +30,7 @@ function seeded(seed) {
  * bunkers go, one per bunker trapdoor in town. Returns a plain object the World and the client share:
  *   { cell, cols, rows, grid (string of cell codes), lines (metro track centre lines), stations,
  *     bunkers, decor: [{ k, x, y, w, h, solid?, … }], loot: [{ x, y }], ladders: [{ x, y, entrance }],
- *     caves: [{ x, y, r }], lakes: [{ x, y, r }] (water circles, as in town) }
+ *     caves: [{ x, y, r }], lakes: [{ x, y, r }] (water circles, as in town), halls: [{ x, y, w, h, side }] }
  */
 export function generateUnderground({ width, height, anchors = [], seed = 1937, caves: caveCount = 3, deadZones = 5 }) {
   const rnd = seeded(seed);
@@ -50,7 +52,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     for (let y = y0 - m; y < y0 + h + m; y++) for (let x = x0 - m; x < x0 + w + m; x++) if (!inside(x, y) || keep[at(x, y)] || g[at(x, y)]) return false;
     return true;
   };
-  const decor = [], loot = [], ladders = [], stations = [], bunkers = [], lines = [];
+  const decor = [], loot = [], ladders = [], stations = [], bunkers = [], lines = [], halls = [];
   const exits = []; // { x, y, dx, dy, z }: the cell just inside a feature's way out, and which way is out
 
   // ---- the metro: two lines east–west, two north–south, each with a jog or two -------------------
@@ -180,6 +182,83 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
   // Placed before the stations' passages and the maze, so they get first pick of the rock.
   const entranceBunkers = anchors.map((a, i) => placeBunker(Math.round(a.x / CELL), Math.round(a.y / CELL), i)).filter(Boolean);
   if (!entranceBunkers.length) entranceBunkers.push(placeBunker(cols >> 1, rows >> 1, 0)); // (always one way in and out)
+
+  // ---- the oil hall: a great concrete hall against the edge of the map, with pits of crude oil in the floor
+  // and a row of cells along the back wall (later: guards, and prisoners made to work the pumps).
+  function placeHall(L, D) {
+    const spots = [];
+    for (const side of ['n', 's', 'w', 'e']) {
+      const W = side === 'n' || side === 's' ? L : D, H = side === 'n' || side === 's' ? D : L;
+      const fits = (x0, y0) => {
+        for (let y = y0 - 1; y <= y0 + H; y++) for (let x = x0 - 1; x <= x0 + W; x++) {
+          if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
+          if (keep[at(x, y)] || g[at(x, y)]) return false;
+        }
+        return inside(x0, y0) && inside(x0 + W - 1, y0 + H - 1);
+      };
+      if (side === 'n' || side === 's') { const y0 = side === 'n' ? 1 : rows - 1 - H; for (let x0 = 2; x0 + W < cols - 1; x0++) if (fits(x0, y0)) spots.push({ side, x0, y0, W, H }); }
+      else { const x0 = side === 'w' ? 1 : cols - 1 - W; for (let y0 = 2; y0 + H < rows - 1; y0++) if (fits(x0, y0)) spots.push({ side, x0, y0, W, H }); }
+    }
+    if (!spots.length) return null;
+    const { side, x0, y0, W, H } = spots[Math.floor(rnd() * spots.length)];
+    const z = 300 + halls.length;
+    fill(x0, y0, W, H, UG.HALL, z);
+    keepOut(x0, y0, W, H, 1);
+    const X0 = x0 * CELL, Y0 = y0 * CELL, X1 = (x0 + W) * CELL, Y1 = (y0 + H) * CELL;
+    const hall = { x: X0, y: Y0, w: X1 - X0, h: Y1 - Y0, side };
+    halls.push(hall);
+    // Local: u along the back wall (the map's edge), v out from it into the hall, in world units.
+    const pt = (u, v) => (side === 'n' ? [X0 + u, Y0 + v] : side === 's' ? [X0 + u, Y1 - v] : side === 'w' ? [X0 + v, Y0 + u] : [X1 - v, Y0 + u]);
+    const P = (u, v, w, hh, extra) => {
+      const [ax, ay] = pt(u, v), [bx, by] = pt(u + w, v + hh);
+      return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay), side, ...extra };
+    };
+    const LU = L * CELL, DV = D * CELL;
+    // The way in: two doors in the front wall, one at each end.
+    const [ox, oy, ax, ay, ix, iy] = { n: [x0, y0, 1, 0, 0, 1], s: [x0, y0 + H - 1, 1, 0, 0, -1], w: [x0, y0, 0, 1, 1, 0], e: [x0 + W - 1, y0, 0, 1, -1, 0] }[side];
+    const cellOf = (cu, cv) => [ox + ax * cu + ix * cv, oy + ay * cu + iy * cv];
+    const doorSide = (dx, dy) => (dy < 0 ? 'n' : dy > 0 ? 's' : dx < 0 ? 'w' : 'e');
+    for (const [cu, cv, dx, dy] of [[Math.round(L * 0.3) | 1, D - 1, ix, iy], [Math.round(L * 0.7) | 1, D - 1, ix, iy], [0, Math.round(D * 0.6), -ax, -ay], [L - 1, Math.round(D * 0.6), ax, ay]]) {
+      const [x, y] = cellOf(cu, cv);
+      exits.push({ x, y, dx, dy, z });
+      decor.push({ k: 'blastdoor', x: x * CELL, y: y * CELL, w: CELL, h: CELL, side: doorSide(dx, dy) });
+    }
+    // Cells along the back wall: concrete partitions, barred fronts with the door hanging open.
+    const cellD = CELL * 2.2, n = Math.max(3, Math.floor((LU - 2 * CELL) / 320)), cw = (LU - 2 * CELL) / n, u0 = CELL;
+    for (let k = 0; k <= n; k++) decor.push({ k: 'cellwall', ...P(u0 + k * cw - 10, 0, 20, cellD), solid: true });
+    for (let k = 0; k < n; k++) {
+      const cu = u0 + k * cw, door = 84;
+      decor.push({ k: 'bars', ...P(cu + 10, cellD - 12, cw - 20 - door, 12), solid: true });
+      decor.push({ k: 'celldoor', ...P(cu + cw - 10 - door, cellD - 12 - door, 12, door) });
+      decor.push({ k: 'cot', ...P(cu + 26, 18, 70, 130), solid: true });
+      decor.push({ k: 'shackles', ...P(cu + cw * 0.55, 0, 60, 70), seed: ri(0, 9999) });
+      decor.push({ k: 'bucket', ...P(cu + cw - 70, 30, 30, 30) });
+      if (rnd() < 0.45) decor.push({ k: 'bones', ...P(cu + 40 + rnd() * (cw - 120), 160 + rnd() * 120, 48, 32), seed: ri(0, 9999) });
+      if (rnd() < 0.3) loot.push({ x: pt(cu + cw / 2, cellD / 2)[0], y: pt(cu + cw / 2, cellD / 2)[1] });
+    }
+    // The oil pits: three big ones down the middle, a chain rail round each.
+    const pits = [0.2, 0.5, 0.8].map((f) => P(LU * f - 260, cellD + CELL * 1.6, 520, Math.min(600, DV - cellD - CELL * 3.2), { k: 'oilpit', solid: true, seed: ri(0, 9999) }));
+    decor.push(...pits);
+    // Strip lights in rows across the ceiling (a few of them flicker), hooks on chains hanging between.
+    for (const v of [cellD + CELL * 0.8, cellD + CELL * 1.6 + 300, DV - CELL * 0.9]) {
+      for (let u = CELL * 1.2; u < LU - CELL; u += CELL * 2) decor.push({ k: 'tube', ...P(u - 70, v - 8, 140, 16), over: true, flicker: rnd() < 0.25, seed: ri(0, 9999) });
+    }
+    const clear = (r) => !pits.some((p) => r.x < p.x + p.w + 60 && p.x - 60 < r.x + r.w && r.y < p.y + p.h + 60 && p.y - 60 < r.y + r.h);
+    for (let i = 0, tries = 0; i < 7 && tries < 60; tries++) {
+      const r = P(CELL + rnd() * (LU - 2 * CELL), cellD + CELL * 0.6 + rnd() * (DV - cellD - CELL * 1.4), 30, 30, { k: 'hook', over: true, seed: ri(0, 9999) });
+      if (clear(r)) { decor.push(r); i++; }
+    }
+    for (let i = 0, tries = 0; i < 14 && tries < 80; tries++) {
+      const r = rnd() < 0.6 ? P(CELL * 0.5 + rnd() * (LU - CELL * 1.5), cellD + 60 + rnd() * (DV - cellD - 200), 130, 80, { k: 'oilstain', seed: ri(0, 9999) }) : P(CELL * 0.5 + rnd() * (LU - CELL * 1.5), cellD + 60 + rnd() * (DV - cellD - 200), 48, 32, { k: 'bones', seed: ri(0, 9999) });
+      if (clear(r)) { decor.push(r); i++; }
+    }
+    for (const u of [40, LU - 80]) for (let v = cellD + 120; v < DV - 260; v += 70) if (rnd() < 0.6) decor.push({ k: 'barrel', ...P(u, v, 40, 40), solid: true, oil: true });
+    const [sx, sy] = pt(LU / 2, DV - CELL * 0.45);
+    decor.push({ k: 'stencil', x: sx - 140, y: sy - 15, w: 280, h: 30, text: 'НЕФТЕХРАНИЛИЩЕ №3' });
+    for (let i = 0; i < 3; i++) { const [lx, ly] = pt(CELL + rnd() * (LU - 2 * CELL), cellD + CELL * 0.5); loot.push({ x: lx, y: ly }); }
+    return hall;
+  }
+  placeHall(16, 10) ?? placeHall(13, 8) ?? placeHall(10, 7);
 
   // ---- natural caves: grown like a cellular automaton inside a rough disc of the rock that's left ----------
   // One of them is a great chamber round an underground lake. And here and there a big chunk of solid
@@ -466,7 +545,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
             decor.push(horizontal ? { k: 'mrail', x: a, y: m2 - 14, w: b - a, h: 28 } : { k: 'mrail', x: m2 - 14, y: a, w: 28, h: b - a });
             if (rnd() < 0.5) { // a cart left on the line
               const u = (runStart + 1 + Math.floor(rnd() * (s - runStart - 2))) * CELL + CELL / 2;
-              decor.push(horizontal ? { k: 'cart', x: u - 40, y: m2 - 26, w: 80, h: 52, solid: true, coal: rnd() < 0.6 } : { k: 'cart', x: m2 - 26, y: u - 40, w: 52, h: 80, solid: true, coal: rnd() < 0.6 });
+              decor.push(horizontal ? { k: 'cart', x: u - 40, y: m2 - 26, w: 80, h: 52, coal: rnd() < 0.6 } : { k: 'cart', x: m2 - 26, y: u - 40, w: 52, h: 80, coal: rnd() < 0.6 }); // (not solid: it'd stop up the shaft)
             }
           }
           runStart = -1;
@@ -483,13 +562,13 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
       const px = x * CELL + CELL / 2, py = y * CELL + CELL / 2;
       if (rnd() < 0.35) loot.push({ x: px, y: py });
       const r = rnd();
-      if (r < 0.25) decor.push({ k: 'tnt', x: px - 22 - open[0][0] * 40, y: py - 16 - open[0][1] * 40, w: 44, h: 32, solid: true });
+      if (r < 0.25) decor.push({ k: 'tnt', x: px - 22 - open[0][0] * 24, y: py - 16 - open[0][1] * 24, w: 44, h: 32, solid: true });
       else if (r < 0.45) decor.push({ k: 'rubble', x: px - 50 - open[0][0] * 30, y: py - 50 - open[0][1] * 30, w: 100, h: 100, seed: ri(0, 9999) });
     }
   }
   for (const gl of galleries) {
-    loot.push({ x: gl.x + ri(-80, 80), y: gl.y + ri(-80, 80) });
-    if (rnd() < 0.5) decor.push({ k: 'barrel', x: gl.x + 100, y: gl.y - 120, w: 40, h: 40, solid: true });
+    loot.push({ x: gl.x + ri(-1, 1) * CELL, y: gl.y + ri(-1, 1) * CELL }); // (in the middle of one of its cells: clear of the pillars)
+    if (rnd() < 0.5) decor.push({ k: 'barrel', x: gl.x + CELL - 20, y: gl.y - CELL - 20, w: 40, h: 40 });
     decor.push({ k: 'lantern', x: gl.x - 12, y: gl.y - CELL * 1.5 + 4, w: 24, h: 24 });
   }
 
@@ -597,7 +676,33 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
 
   let grid = '';
   for (let i = 0; i < g.length; i++) grid += g[i];
-  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, loot, ladders, caves: caves.map(({ x, y, r, lake }) => ({ x, y, r, lake: Boolean(lake) })), lakes };
+  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, loot, ladders, caves: caves.map(({ x, y, r, lake }) => ({ x, y, r, lake: Boolean(lake) })), lakes, halls };
+}
+
+/**
+ * The rock either side of the mine shafts (they're SHAFT wide, in the middle of their cells): a strip along each
+ * side that meets rock, and a block in each corner where two ways meet (so the corners are rock too).
+ */
+export function shaftRects(ug) {
+  const { cols, rows, grid, cell: C } = ug, B = (C - SHAFT) / 2;
+  const code = (x, y) => (x < 0 || y < 0 || x >= cols || y >= rows ? 0 : grid.charCodeAt(y * cols + x) - 48);
+  const out = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (code(x, y) !== UG.MINE) continue;
+      const X = x * C, Y = y * C;
+      const n = !code(x, y - 1), s = !code(x, y + 1), w = !code(x - 1, y), e = !code(x + 1, y); // (rock that way)
+      if (n) out.push({ x: X, y: Y, w: C, h: B });
+      if (s) out.push({ x: X, y: Y + C - B, w: C, h: B });
+      if (w) out.push({ x: X, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
+      if (e) out.push({ x: X + C - B, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
+      if (!n && !w) out.push({ x: X, y: Y, w: B, h: B });
+      if (!n && !e) out.push({ x: X + C - B, y: Y, w: B, h: B });
+      if (!s && !w) out.push({ x: X, y: Y + C - B, w: B, h: B });
+      if (!s && !e) out.push({ x: X + C - B, y: Y + C - B, w: B, h: B });
+    }
+  }
+  return out;
 }
 
 /** The solid rock as rectangles: runs along each row, merged down with identical runs below (at most 8 cells long, for the grids). */

@@ -27,7 +27,7 @@ import { Wolves } from './wolves.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
-import { Underground, rockRects } from './underground.js';
+import { Underground, rockRects, shaftRects } from './underground.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -158,7 +158,7 @@ export class World {
     // Underground: the rock is solid, and so are the pillars, bunks, crates and carts down there.
     if (map?.underground) this.blocks.push(...map.underground.decor.filter((d) => d.solid).map(({ x, y, w, h }) => ({ x, y, w, h })));
     this.wallGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
-    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? rockRects(map.underground) : [])];
+    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? [...rockRects(map.underground), ...shaftRects(map.underground)] : [])];
     for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: Boolean(w.low) }); // (barbed wire: low, see-through)
     for (const w of this.rails) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
 

@@ -5577,7 +5577,24 @@
       rain: (o) => noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 1800, q: 0.5, vol: 0.5 }),
       siren: (o) => { for (let i = 0; i < 4; i++) tone(o, { at: i * 0.5, dur: 0.5, type: 'triangle', freq: i % 2 ? 900 : 650, endFreq: i % 2 ? 650 : 900, vol: 0.25 }); },
       boost: (o) => { noiseBurst(o, { dur: 1.5, filter: 'lowpass', freq: 700, q: 1, vol: 0.9 }); noiseBurst(o, { dur: 1.5, freq: 2600, q: 0.7, vol: 0.25 }); },
+      caveDrip: (o) => { for (let i = 0; i < 6; i++) dripSound(o, audio.ctx.currentTime + i * 0.45 + Math.random() * 0.3, 2.5); },
+      ugWind: (o) => noiseBurst(o, { dur: 3, freq: 380, q: 0.8, vol: 0.6 }),
+      fluoro: (o) => { tone(o, { dur: 2.5, type: 'sawtooth', freq: 100, vol: 0.05 }); tone(o, { dur: 2.5, type: 'sine', freq: 200, vol: 0.06 }); },
     };
+    /** One drop of water into a puddle: a quick falling plink, and its fainter echo off the rock. */
+    function dripSound(out, at, vol = 1) {
+      const a = audio.ctx, f = 900 + Math.random() * 900;
+      for (const [delay, v] of [[0, 1], [0.13 + Math.random() * 0.08, 0.3]]) {
+        const o = a.createOscillator(), g = a.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f, at + delay);
+        o.frequency.exponentialRampToValueAtTime(f * 0.45, at + delay + 0.09);
+        g.gain.setValueAtTime(0, at + delay);
+        g.gain.linearRampToValueAtTime(0.18 * vol * v, at + delay + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, at + delay + 0.12);
+        o.connect(g); g.connect(out); o.start(at + delay); o.stop(at + delay + 0.14);
+      }
+    }
     let previewing = null;
 
     function previewSound(slot) {
@@ -6509,6 +6526,36 @@
       for (const id of [...radios.keys()]) if (!want.has(id)) dropRadio(id);
     }
 
+    /** How much of the underground round (x, y) is cave: 0 nowhere near one, 1 in the middle of one. */
+    function caveNearness(x, y) {
+      const C = under.cell, cx = Math.floor(x / C), cy = Math.floor(y / C);
+      let n = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (ugCell(cx + dx, cy + dy) === UGC.CAVE) n++;
+      return Math.min(1, n / 12);
+    }
+
+    /** 1 inside the oil hall, fading to 0 within 500 of it (for its lights' hum). */
+    function hallNearness(x, y) {
+      let best = 0;
+      for (const r of under.halls ?? []) {
+        const dx = Math.max(r.x - x, 0, x - (r.x + r.w)), dy = Math.max(r.y - y, 0, y - (r.y + r.h));
+        best = Math.max(best, 1 - Math.min(1, Math.hypot(dx, dy) / 500));
+      }
+      return best;
+    }
+
+    /** The draught underground: gusts that rise and fall, and now and then a spell of dead quiet. 0 to 1. */
+    const ugGust = { level: 0, target: 0.5, until: 0 };
+    function undergroundGust(now) {
+      if (now > ugGust.until) {
+        const quiet = Math.random() < 0.3;
+        ugGust.target = quiet ? 0 : 0.3 + Math.random() * 0.7;
+        ugGust.until = now + (quiet ? 8 + Math.random() * 14 : 3 + Math.random() * 7);
+      }
+      ugGust.level += (ugGust.target - ugGust.level) * 0.02;
+      return ugGust.level;
+    }
+
     function updateLoops(dt) {
       if (!audio.ctx || audio.ctx.state !== 'running') return;
       const a = audio.ctx, now = a.currentTime;
@@ -6530,6 +6577,26 @@
       const rain = loop('rain', noiseLoop('lowpass', 1800, 0.5));
       const wind = loop('wind', null);
       const night = loop('night', null);
+      // Underground: drips in the caves (built in: drops scheduled a little ahead), a draught everywhere else.
+      const drip = loop('caveDrip', () => {
+        const g = a.createGain(); g.gain.value = 0; g.connect(audio.master);
+        return { g, next: 0 };
+      });
+      const fluoro = loop('fluoro', () => { // mains hum: 100 Hz buzz and its overtone, dulled
+        const o1 = a.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 100;
+        const o2 = a.createOscillator(); o2.type = 'sine'; o2.frequency.value = 200;
+        const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
+        const g = a.createGain(); g.gain.value = 0;
+        o1.connect(f); o2.connect(f); f.connect(g); g.connect(audio.master); o1.start(); o2.start();
+        return { o: o1, o2, g, stop: (t) => o2.stop(t) };
+      });
+      const ugWind = loop('ugWind', () => {
+        const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+        const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 380; f.Q.value = 0.8;
+        const g = a.createGain(); g.gain.value = 0;
+        src.connect(f); f.connect(g); g.connect(audio.master); src.start();
+        return { src, f, g };
+      });
       const boostLoop = loop('boost', () => { // a roar: low rumble plus a hiss
         const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
         const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 1;
@@ -6566,7 +6633,18 @@
       const winter = season.main === 'winter';
       loopGain(rain, 'rain', (rain?.file ? 0.6 : 0.14) * sky.rain * (winter ? 0 : 1), now, 0.5); // snow falls silently
       loopGain(wind, 'wind', winter && !under ? 0.12 + 0.3 * sky.rain : 0, now, 1);
-      loopGain(night, 'night', playing ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
+      loopGain(night, 'night', playing && !under ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
+      const cave = under && me && playing ? caveNearness(me.x, me.y) : 0;
+      if (drip && !drip.file && drip.next < now + 0.5 && cave > 0) { // (the next drop or two, at odd intervals)
+        drip.next = Math.max(drip.next, now) + 0.25 + Math.random() * 1.4;
+        dripSound(drip.g, drip.next);
+      }
+      loopGain(drip, 'caveDrip', cave * (drip?.file ? 0.25 : 0.35), now, 0.6);
+      const hall = under && me && playing ? hallNearness(me.x, me.y) : 0;
+      loopGain(fluoro, 'fluoro', hall * (fluoro?.file ? 0.3 : 0.05), now, 0.4);
+      const gust = under && playing ? undergroundGust(now) * (1 - hall * 0.8) : 0;
+      if (ugWind?.f) ugWind.f.frequency.setTargetAtTime(300 + gust * 260, now, 0.8); // (higher as it blows harder)
+      loopGain(ugWind, 'ugWind', gust * (1 - cave * 0.7) * (ugWind?.file ? 0.18 : 0.07), now, 1.2);
       updateMusic(now);
       updateRadios(now);
       updateCarEngines(now, dt);
@@ -11646,7 +11724,8 @@
 
     // ---- the underground: old Soviet bunkers, metro tunnels and mine shafts (the second world) ----------
 
-    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6 };
+    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6, HALL: 7 };
+    const UG_SHAFT = 120; // mine shafts are this wide (same as src/game/underground.js SHAFT)
     const UG_SPAN = 8; // cells per side of a decor bucket
     const ugHash = (x, y, k = 0) => {
       let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(k + 1, 83492791)) >>> 0;
@@ -11677,7 +11756,51 @@
         }
       }
       out.push({ x: cols * cell, y: 0, w: cell, h: rows * cell + cell }, { x: 0, y: rows * cell, w: cols * cell, h: cell });
+      for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (u.g[y * cols + x] === UGC.MINE) out.push(...shaftRock(u, x, y));
       return out;
+    }
+
+    /** The rock either side of a mine shaft in cell (x, y), and in its corners (same as src/game/underground.js shaftRects). */
+    function shaftRock(u, x, y) {
+      const C = u.cell, B = (C - UG_SHAFT) / 2, X = x * C, Y = y * C, out = [];
+      const rock = (cx, cy) => cx < 0 || cy < 0 || cx >= u.cols || cy >= u.rows || u.g[cy * u.cols + cx] === UGC.ROCK;
+      const n = rock(x, y - 1), s = rock(x, y + 1), w = rock(x - 1, y), e = rock(x + 1, y);
+      if (n) out.push({ x: X, y: Y, w: C, h: B });
+      if (s) out.push({ x: X, y: Y + C - B, w: C, h: B });
+      if (w) out.push({ x: X, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
+      if (e) out.push({ x: X + C - B, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
+      if (!n && !w) out.push({ x: X, y: Y, w: B, h: B });
+      if (!n && !e) out.push({ x: X + C - B, y: Y, w: B, h: B });
+      if (!s && !w) out.push({ x: X, y: Y + C - B, w: B, h: B });
+      if (!s && !e) out.push({ x: X + C - B, y: Y + C - B, w: B, h: B });
+      return out;
+    }
+
+    /** A mine shaft's rock sides and corners, lined with rough-hewn rock, the pit props' posts against them. */
+    function drawShaft(cx, cy) {
+      const C = under.cell, B = (C - UG_SHAFT) / 2, X = cx * C, Y = cy * C, wall = UG_WALL[UGC.MINE];
+      for (const r of shaftRock(under, cx, cy)) {
+        ctx.fillStyle = '#15120f'; ctx.fillRect(r.x, r.y, r.w, r.h);
+      }
+      // The lining: wherever floor meets the rock inside this cell.
+      const rock = (dx, dy) => ugCell(cx + dx, cy + dy) === UGC.ROCK;
+      const n = rock(0, -1), s = rock(0, 1), w = rock(-1, 0), e = rock(1, 0), t = 7;
+      const segs = []; // [x, y, w, h] of lining, on the rock's side of the line
+      if (n) segs.push([X + (w ? B : 0), Y + B - t, C - (w ? B : 0) - (e ? B : 0), t]); else { segs.push([X + B - t, Y, t, B]); segs.push([X + C - B, Y, t, B]); }
+      if (s) segs.push([X + (w ? B : 0), Y + C - B, C - (w ? B : 0) - (e ? B : 0), t]); else { segs.push([X + B - t, Y + C - B, t, B]); segs.push([X + C - B, Y + C - B, t, B]); }
+      if (w) segs.push([X + B - t, Y + (n ? B : 0), t, C - (n ? B : 0) - (s ? B : 0)]); else { segs.push([X, Y + B - t, B, t]); segs.push([X, Y + C - B, B, t]); }
+      if (e) segs.push([X + C - B, Y + (n ? B : 0), t, C - (n ? B : 0) - (s ? B : 0)]); else { segs.push([X + C - B, Y + B - t, B, t]); segs.push([X + C - B, Y + C - B, B, t]); }
+      for (const [sx, sy, sw, sh] of segs) {
+        ctx.fillStyle = wall.c; ctx.fillRect(sx, sy, sw, sh);
+        ctx.fillStyle = '#463b30';
+        for (let k = 0; k < Math.max(sw, sh); k += 22) if (ugHash(cx * 7 + k, cy, Math.round(sx + sy)) < 0.5) sw > sh ? ctx.fillRect(sx + k, sy, 12, sh) : ctx.fillRect(sx, sy + k, sw, 12);
+      }
+      const prop = mineProp(cx, cy);
+      if (prop) { // the timber set's two posts, either side of the shaft
+        ctx.fillStyle = '#6b4a28';
+        if (prop === 1) { ctx.fillRect(X + C / 2 - 8, Y + B - 6, 16, 14); ctx.fillRect(X + C / 2 - 8, Y + C - B - 8, 16, 14); }
+        else { ctx.fillRect(X + B - 6, Y + C / 2 - 8, 14, 16); ctx.fillRect(X + C - B - 8, Y + C / 2 - 8, 14, 16); }
+      }
     }
 
     /** Ready the underground's layout for drawing and bumping into (and the minimap: only where you've been). */
@@ -11705,7 +11828,7 @@
     const ugCell = (cx, cy) => (cx < 0 || cy < 0 || cx >= under.cols || cy >= under.rows ? UGC.ROCK : under.g[cy * under.cols + cx]);
 
     // Floors, and the wall each kind of place has where it meets the rock.
-    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f', [UGC.CAVE]: '#2c2b2d' };
+    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f', [UGC.CAVE]: '#2c2b2d', [UGC.HALL]: '#4b4f49' };
     const UG_WALL = {
       [UGC.MINE]: { t: 16, c: '#55483a', edge: '#2a221b' },
       [UGC.TUNNEL]: { t: 24, c: '#4e4d49', edge: '#22211f' },
@@ -11713,6 +11836,7 @@
       [UGC.BUNKER]: { t: 26, c: '#6a6d65', edge: '#3c3e39' },
       [UGC.PASSAGE]: { t: 18, c: '#5c5d56', edge: '#2f302c' },
       [UGC.CAVE]: { t: 20, c: '#3d3b3e', edge: '#19181b' },
+      [UGC.HALL]: { t: 26, c: '#7d8a7c', edge: '#3e463d' },
     };
 
     function drawUnderground(now) {
@@ -11742,7 +11866,7 @@
       for (let cy = y0; cy <= y1; cy++) {
         for (let cx = x0; cx <= x1; cx++) {
           const code = ugCell(cx, cy);
-          if (code === UGC.ROCK) continue;
+          if (code === UGC.ROCK || code === UGC.MINE) continue; // (a shaft's sides are drawn by drawShaft)
           const X = cx * C, Y = cy * C;
           for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             const n = ugCell(cx + dx, cy + dy);
@@ -11763,6 +11887,7 @@
           }
         }
       }
+      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) if (ugCell(cx, cy) === UGC.MINE) drawShaft(cx, cy);
       drawMetroTracks();
       // What's lying about, bolted down or left behind.
       u.mark++;
@@ -11781,7 +11906,7 @@
       for (let cy = y0; cy <= y1; cy++) {
         for (let cx = x0; cx <= x1; cx++) {
           const code = ugCell(cx, cy);
-          if (code === UGC.ROCK) continue;
+          if (code === UGC.ROCK || code === UGC.MINE) continue;
           const wall = UG_WALL[code], X = cx * C, Y = cy * C, t = wall.t;
           for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             if (ugCell(cx + dx, cy + dy) !== UGC.ROCK) continue;
@@ -11908,6 +12033,14 @@
           ctx.fillStyle = 'rgba(90, 110, 130, .18)';
           ctx.beginPath(); ctx.ellipse(X + C / 2, Y + C / 2, 50, 28, ugHash(cx, cy, 134) * 3, 0, Math.PI * 2); ctx.fill();
         }
+      } else if (code === UGC.HALL) { // the oil hall: big concrete slabs, black with oil where it's been spilt
+        ctx.strokeStyle = '#3c403b'; ctx.lineWidth = 3;
+        ctx.strokeRect(X + 1.5, Y + 1.5, C - 3, C - 3);
+        for (let k = 0; k < 3; k++) {
+          if (ugHash(cx, cy, k + 160) > 0.35) continue;
+          ctx.fillStyle = 'rgba(12, 10, 8, .35)';
+          ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, k + 161) * C, Y + ugHash(cx, cy, k + 162) * C, 14 + ugHash(cx, cy, k + 163) * 30, 8 + ugHash(cx, cy, k + 164) * 16, ugHash(cx, cy, k + 165) * 3, 0, Math.PI * 2); ctx.fill();
+        }
       } else if (code === UGC.PASSAGE) { // a service passage: concrete, with a drain down the middle
         const horiz = ugCell(cx - 1, cy) !== UGC.ROCK || ugCell(cx + 1, cy) !== UGC.ROCK;
         ctx.fillStyle = '#2d2e2a';
@@ -11946,6 +12079,11 @@
         for (let a = 20; a < along; a += 54) dy ? ctx.fillRect(r.x + a, r.y + 4, 2, r.h - 8) : ctx.fillRect(r.x + 4, r.y + a, r.w - 8, 2);
         ctx.fillStyle = '#7b7e75';
         dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y + 3, r.w, 3) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x + 3, r.y, 3, r.h);
+      } else if (code === UGC.HALL) { // glazed tiles (a sick hospital green) gone grimy, a black stripe at the foot
+        ctx.fillStyle = '#6f7b6e';
+        for (let a = 0; a < along; a += 20) dy ? ctx.fillRect(r.x + a, r.y, 1.5, r.h) : ctx.fillRect(r.x, r.y + a, r.w, 1.5);
+        ctx.fillStyle = '#222622';
+        dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y, r.w, 6) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x, r.y, 6, r.h);
       } else if (code === UGC.CAVE) { // natural rock: boulders bulging out of the wall a little
         for (let k = 0; k < 4; k++) {
           const a = 14 + ugHash(cx, cy, k + dx * 5 + dy * 11 + 140) * (along - 28), s = 9 + ugHash(cx, cy, k + 150 + dx + dy * 3) * 13;
@@ -12120,8 +12258,8 @@
         case 'barrel': { // an old fuel drum (army green, rusting)
           const cx = x + w / 2, cy = y + h / 2, R = w / 2;
           ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.arc(cx + 4, cy + 4, R, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = '#3e5537'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
-          ctx.strokeStyle = '#2a3a25'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, R - 5, 0, Math.PI * 2); ctx.stroke();
+          ctx.fillStyle = d.oil ? '#1e1f22' : '#3e5537'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill(); // (black: crude oil)
+          ctx.strokeStyle = d.oil ? '#3a3b40' : '#2a3a25'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, R - 5, 0, Math.PI * 2); ctx.stroke();
           ctx.fillStyle = '#7a4a26'; ctx.beginPath(); ctx.arc(cx - 6, cy + 5, 5, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = '#20251e'; ctx.beginPath(); ctx.arc(cx + 8, cy - 7, 3.5, 0, Math.PI * 2); ctx.fill();
           break;
@@ -12230,6 +12368,78 @@
           ctx.fillStyle = ['#a8321e', '#b8862a', '#2f5e8a', '#a8321e'][d.n ?? 0]; ctx.fillRect(x, y, w, h);
           ctx.fillStyle = '#f0e2b0'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(['СЛАВА ТРУДУ', 'БУДЬ ГОТОВ!', 'НЕ БОЛТАЙ!', 'ГРАЖДАНСКАЯ ОБОРОНА'][d.n ?? 0], x + w / 2, y + h / 2 + 1, w - 6);
+          break;
+        }
+        case 'oilpit': { // a pit of crude oil: a steel kerb, posts with a chain slung between, the oil black and slick
+          const m = 24, ix = x + m, iy = y + m, iw = w - 2 * m, ih = h - 2 * m;
+          ctx.fillStyle = '#2b2d2a'; ctx.fillRect(ix - 10, iy - 10, iw + 20, ih + 20); // the kerb
+          hazard(ix - 10, iy - 10, iw + 20, 6); hazard(ix - 10, iy + ih + 4, iw + 20, 6);
+          const g = ctx.createLinearGradient(ix, iy, ix + iw, iy + ih);
+          g.addColorStop(0, '#07070a'); g.addColorStop(0.5, '#121116'); g.addColorStop(1, '#050507');
+          ctx.fillStyle = g; ctx.fillRect(ix, iy, iw, ih);
+          // A rainbow sheen drifting on the surface, and the odd slow bubble.
+          const t = now / 1000;
+          for (let k = 0; k < 4; k++) {
+            const sx = ix + iw * (0.2 + 0.6 * ((ugHash(d.seed, k, 1) + t * 0.01 * (k + 1)) % 1)), sy = iy + ih * (0.2 + 0.6 * ugHash(d.seed, k, 2));
+            const sg = ctx.createRadialGradient(sx, sy, 2, sx, sy, 60);
+            sg.addColorStop(0, ['rgba(120, 60, 160, .18)', 'rgba(40, 120, 140, .16)', 'rgba(150, 130, 40, .12)', 'rgba(60, 140, 80, .12)'][k]);
+            sg.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = sg; ctx.fillRect(sx - 60, sy - 60, 120, 120);
+          }
+          for (let k = 0; k < 3; k++) {
+            const per = 4 + ugHash(d.seed, k, 3) * 5, ph = (t / per + ugHash(d.seed, k, 4)) % 1, c = Math.floor(t / per + ugHash(d.seed, k, 4));
+            const bx = ix + 30 + ugHash(d.seed, k + 7, c) * (iw - 60), by = iy + 30 + ugHash(d.seed, k + 9, c) * (ih - 60);
+            ctx.strokeStyle = `rgba(160, 150, 170, ${0.4 * (1 - ph)})`; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(bx, by, 3 + ph * 16, 0, Math.PI * 2); ctx.stroke();
+          }
+          // The rail: iron posts at the corners and along the sides, a sagging chain between them.
+          const posts = [];
+          for (let px = x + 6; px <= x + w - 6; px += (w - 12) / Math.max(1, Math.round((w - 12) / 130))) posts.push([px, y + 6], [px, y + h - 6]);
+          for (let py = y + 6 + (h - 12) / Math.max(1, Math.round((h - 12) / 130)); py < y + h - 12; py += (h - 12) / Math.max(1, Math.round((h - 12) / 130))) posts.push([x + 6, py], [x + w - 6, py]);
+          ctx.strokeStyle = '#6a665e'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
+          ctx.beginPath(); ctx.rect(x + 6, y + 6, w - 12, h - 12); ctx.stroke(); ctx.setLineDash([]);
+          for (const [px, py] of posts) { ctx.fillStyle = '#3a3a37'; ctx.fillRect(px - 5, py - 5, 10, 10); ctx.fillStyle = '#c9a227'; ctx.fillRect(px - 2, py - 2, 4, 4); }
+          break;
+        }
+        case 'cellwall': { ctx.fillStyle = '#5f655d'; ctx.fillRect(x, y, w, h); ctx.fillStyle = '#4a4f48'; ctx.fillRect(x + 3, y + 3, w - 6, h - 6); break; } // a concrete partition
+        case 'bars': { // a cell's front: iron bars, a rail top and bottom
+          const long = w >= h;
+          ctx.fillStyle = '#2c2c2a'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#77736a';
+          if (long) { ctx.fillRect(x, y, w, 3); ctx.fillRect(x, y + h - 3, w, 3); for (let k = 4; k < w; k += 14) ctx.fillRect(x + k, y, 5, h); }
+          else { ctx.fillRect(x, y, 3, h); ctx.fillRect(x + w - 3, y, 3, h); for (let k = 4; k < h; k += 14) ctx.fillRect(x, y + k, w, 5); }
+          break;
+        }
+        case 'celldoor': { // the barred door, swung open into the cell
+          const long = w >= h;
+          ctx.fillStyle = '#5f5b53';
+          if (long) { ctx.fillRect(x, y + h / 2 - 2, w, 4); for (let k = 2; k < w; k += 14) ctx.fillRect(x + k, y + 2, 4, h - 4); }
+          else { ctx.fillRect(x + w / 2 - 2, y, 4, h); for (let k = 2; k < h; k += 14) ctx.fillRect(x + 2, y + k, w - 4, 4); }
+          ctx.fillStyle = '#9a8a4a'; ctx.fillRect(x + w / 2 - 4, y + h / 2 - 4, 8, 8); // the lock
+          break;
+        }
+        case 'shackles': { // chains from rings in the wall, open cuffs on the floor
+          const cx = x + w / 2, cy = y + h / 2, back = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] }[d.side] ?? [0, -1];
+          const wx = cx + back[0] * (h / 2), wy = cy + back[1] * (h / 2);
+          ctx.strokeStyle = '#6d695f'; ctx.lineWidth = 3;
+          for (const off of [-18, 18]) {
+            const ox = back[1] ? off : 0, oy = back[0] ? off : 0;
+            const ex = cx + ox * 1.3 - back[0] * 20, ey = cy + oy * 1.3 - back[1] * 20;
+            ctx.setLineDash([5, 3]); ctx.beginPath(); ctx.moveTo(wx + ox, wy + oy); ctx.quadraticCurveTo(cx + ox, cy + oy, ex, ey); ctx.stroke(); ctx.setLineDash([]);
+            ctx.beginPath(); ctx.arc(ex, ey, 7, 0.3, Math.PI * 1.7); ctx.stroke();
+          }
+          break;
+        }
+        case 'bucket': { // a slop bucket
+          const cx = x + w / 2, cy = y + h / 2;
+          ctx.fillStyle = '#4a4e52'; ctx.beginPath(); ctx.arc(cx, cy, w / 2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#2c2a22'; ctx.beginPath(); ctx.arc(cx, cy, w / 2 - 4, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#6b6f73'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, w / 2 + 2, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+          break;
+        }
+        case 'oilstain': { // oil trodden across the concrete
+          ctx.fillStyle = 'rgba(8, 7, 9, .55)';
+          for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.ellipse(x + w * (0.25 + 0.5 * ugHash(d.seed, k, 1)), y + h * (0.25 + 0.5 * ugHash(d.seed, k, 2)), w * (0.15 + 0.2 * ugHash(d.seed, k, 3)), h * (0.15 + 0.2 * ugHash(d.seed, k, 4)), ugHash(d.seed, k, 5) * 3, 0, Math.PI * 2); ctx.fill(); }
           break;
         }
         case 'stalagmite': { // a stone cone grown up from the floor: ringed, pale at the tip
@@ -12350,7 +12560,8 @@
           const prop = mineProp(cx, cy);
           if (!prop) continue;
           ctx.fillStyle = 'rgba(80, 56, 30, .85)';
-          if (prop === 1) ctx.fillRect(cx * C + C / 2 - 7, cy * C - 6, 14, C + 12); else ctx.fillRect(cx * C - 6, cy * C + C / 2 - 7, C + 12, 14);
+          const B = (C - UG_SHAFT) / 2;
+          if (prop === 1) ctx.fillRect(cx * C + C / 2 - 7, cy * C + B - 6, 14, UG_SHAFT + 12); else ctx.fillRect(cx * C + B - 6, cy * C + C / 2 - 7, UG_SHAFT + 12, 14);
         }
       }
       u.mark++;
@@ -12361,6 +12572,9 @@
             if (!d.over || d.drawn === u.mark) continue;
             d.drawn = u.mark;
             const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+            if (cx < viewBox.l - 300 || cx > viewBox.r + 300 || cy < viewBox.t - 300 || cy > viewBox.b + 300) continue;
+            if (d.k === 'tube') { drawTube(d, now); continue; }
+            if (d.k === 'hook') { drawHook(d, now); continue; }
             if (cx < viewBox.l || cx > viewBox.r || cy < viewBox.t || cy > viewBox.b) continue;
             // A brass chandelier: a ring of glass shades round a hub.
             ctx.globalAlpha = 0.9;
@@ -12379,6 +12593,48 @@
       }
     }
 
+    /** How bright a strip light is just now: steady, or (a bad one) stuttering, buzzing off and back on. */
+    function tubeLevel(d, now) {
+      if (!d.flicker) return 1;
+      const t = now / 1000, s = d.seed;
+      const spell = Math.sin(t * 0.7 + s) + Math.sin(t * 1.9 + s * 3); // (now and then a bad spell)
+      if (spell < 1.1) return 1;
+      return ugHash(Math.floor(t * 14), s, 5) < 0.45 ? 0.08 : 0.9; // (stuttering)
+    }
+
+    /** A fluorescent strip light on the ceiling: a cold green-white glow round it, the tube in its tin housing. */
+    function drawTube(d, now) {
+      const on = tubeLevel(d, now), cx = d.x + d.w / 2, cy = d.y + d.h / 2, long = d.w >= d.h;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createRadialGradient(cx, cy, 10, cx, cy, 300);
+      g.addColorStop(0, `rgba(150, 230, 190, ${0.22 * on})`);
+      g.addColorStop(0.5, `rgba(110, 200, 160, ${0.08 * on})`);
+      g.addColorStop(1, 'rgba(90, 170, 140, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - 300, cy - 300, 600, 600);
+      ctx.restore();
+      ctx.fillStyle = '#5a605a'; ctx.fillRect(d.x - 4, d.y - 4, d.w + 8, d.h + 8); // the housing
+      ctx.fillStyle = on > 0.5 ? '#eafff2' : '#7d8a82';
+      if (long) ctx.fillRect(d.x + 4, d.y + d.h / 2 - 3, d.w - 8, 6); else ctx.fillRect(d.x + d.w / 2 - 3, d.y + 4, 6, d.h - 8);
+      if (on > 0.5) {
+        ctx.fillStyle = 'rgba(220, 255, 235, .35)';
+        if (long) ctx.fillRect(d.x, d.y + d.h / 2 - 7, d.w, 14); else ctx.fillRect(d.x + d.w / 2 - 7, d.y, 14, d.h);
+      }
+    }
+
+    /** A meat hook on a chain from the ceiling, turning slowly. */
+    function drawHook(d, now) {
+      const cx = d.x + d.w / 2, cy = d.y + d.h / 2, sway = Math.sin(now / 1400 + d.seed) * 0.4;
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(sway);
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.beginPath(); ctx.arc(10, 12, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#5c5a55'; ctx.lineWidth = 3;
+      for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.ellipse(0, k * 7, 3, 5, 0, 0, Math.PI * 2); ctx.stroke(); } // links, seen from above
+      ctx.strokeStyle = '#8a8378'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(4, 16, 8, Math.PI * 0.9, Math.PI * 2.3); ctx.stroke();
+      ctx.restore();
+    }
+
     /** Underground there's no sky: just the gloom, closing in round the edges. (Proper lighting comes later.) */
     function drawUnderShade(w, h, focus) {
       ctx.save();
@@ -12392,7 +12648,7 @@
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
-    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d', [UGC.CAVE]: '#5a5862' };
+    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d', [UGC.CAVE]: '#5a5862', [UGC.HALL]: '#9aa88f' };
     function revealUnderground() {
       if (!me || !playing) return;
       const u = under, C = u.cell, R = 5;
