@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { round1 } from '../utils/math.js';
 import { Environment } from './Environment.js';
 import { Teams } from './teams.js';
-import { createWorld } from './World.js';
+import { World, createWorld } from './World.js';
 import { makeWeapon } from './entities.js';
 import { ACHIEVEMENTS, earn, fromMessage, fromState } from './achievements.js';
 
@@ -41,17 +41,23 @@ let nextRoomId = 1;
 
 /** A game instance: one World, its clients, and its fixed-timestep loop. */
 export class Room {
-  /** With `store` (an AccountStore) owned warehouses are saved and come back after a restart. */
-  constructor(map = null, store = null) {
+  /**
+   * With `store` (an AccountStore) owned warehouses are saved and come back after a restart.
+   * `kind` 'underground' is the world under the town: built from `map`, keeping the town's `env` (its
+   * clock and weather) and saving only what players carry, never homes, factories or cars.
+   */
+  constructor(map = null, store = null, { kind = 'town', env = null } = {}) {
     this.id = `room-${nextRoomId++}`;
+    this.kind = kind;
     this.store = store;
-    this.world = createWorld(config.world, config.player, config.weapons, map);
+    this.world = kind === 'town' ? createWorld(config.world, config.player, config.weapons, map) : new World(config.world, config.player, config.weapons, map);
     this.#restoreWarehouses();
     this.#restoreProperties();
     this.teams = new Teams();
     this.#wireWorld();
     this.carSaveTimer = 0;
-    this.env = new Environment();
+    this.ownEnv = !env; // (a borrowed clock is stepped by the room it belongs to)
+    this.env = env ?? new Environment();
     this.lastOwners = '';
     this.lastProps = '';
     this.sentLayouts = new Map(); // warehouse id -> layout version last broadcast
@@ -126,7 +132,7 @@ export class Room {
   }
 
   #step(dt) {
-    this.env.step(dt);
+    if (this.ownEnv) this.env.step(dt);
     this.world.gripScale = 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain');
     this.world.frozen = this.env.season.name === 'winter';
     this.world.night = this.env.isNight;
@@ -322,6 +328,11 @@ export class Room {
     w.prison.onChange = (account) => account.id && !account.guest && this.#store('setPrison', account.id, account.prison ?? null);
   }
 
+  /** Homes, factories and cars are saved from the town (the underground has none of its own). */
+  get #persists() {
+    return Boolean(this.store) && this.kind === 'town';
+  }
+
   /** A store call that can't take the game down if the database has a problem. */
   #store(method, ...args) {
     if (!this.store) return;
@@ -335,6 +346,7 @@ export class Room {
   /** Cash and hotbar onto the account. */
   /** Save the furniture in the homes that changed. */
   #saveHomes() {
+    if (!this.#persists) return;
     const furnish = this.world.furnishings;
     for (const id of furnish.homesChanged) {
       const account = this.store?.live(id);
@@ -345,7 +357,7 @@ export class Room {
 
   /** Closed the game: their homes, factories and cars out on the road are saved and taken off the map (not when they just die). */
   #unload(account) {
-    if (!account?.id || account.guest || !this.store) return;
+    if (!account?.id || account.guest || !this.#persists) return;
     if ([...this.clients].some((c) => c.account?.id === account.id)) return; // (still playing in another tab)
     try {
       const carIds = this.store.cars(account.id).map((c) => c.id);
@@ -374,7 +386,7 @@ export class Room {
   /** Fuel and trunks of saved cars out on the road. */
   #saveCars() {
     this.carSaveTimer = 0;
-    if (!this.store) return;
+    if (!this.#persists) return;
     for (const v of this.world.vehicles.values()) if (v.carId) this.#saveCar(v);
   }
 
@@ -400,7 +412,7 @@ export class Room {
 
   /** Bought homes and rented rooms back from the database: each waits for its owner (or tenant) to load it in. */
   #restoreProperties() {
-    if (!this.store) return;
+    if (!this.#persists) return;
     this.world.homes.stored = this.store.loadProperties();
     if (this.world.homes.stored.length) logger.info('saved homes waiting to be loaded', { room: this.id, count: this.world.homes.stored.length });
   }
@@ -408,7 +420,7 @@ export class Room {
   #saveProperties() {
     this.propSaveTimer = 0;
     this.world.homes.changed = false;
-    if (!this.store) return;
+    if (!this.#persists) return;
     try {
       this.store.saveProperties(this.world.homes.toSave());
     } catch (err) {
@@ -418,7 +430,7 @@ export class Room {
 
   /** Owned factories back from the database: each waits for its owner to load it into a free warehouse of the same size. */
   #restoreWarehouses() {
-    if (!this.store) return;
+    if (!this.#persists) return;
     this.world.warehouses.stored = this.store.loadWarehouses();
     if (this.world.warehouses.stored.length) logger.info('saved factories waiting to be loaded', { room: this.id, count: this.world.warehouses.stored.length });
   }
@@ -426,7 +438,7 @@ export class Room {
   #saveWarehouses() {
     this.saveTimer = 0;
     this.world.warehouses.changed = false;
-    if (!this.store) return;
+    if (!this.#persists) return;
     try {
       this.store.saveWarehouses(this.world.warehouses.toSave());
     } catch (err) {
@@ -449,7 +461,8 @@ export class Room {
       t: ServerMsg.WELCOME,
       clientId: client.id,
       roomId: this.id,
-      world: { width: this.world.width, height: this.world.height },
+      world: { width: this.world.width, height: this.world.height, kind: this.kind },
+      underground: this.world.underground?.layout ?? null, // the maze down there: its grid of cells and what's in it
       tickRate: config.tickRate,
       snapshotRate: this.snapshotRate,
       buildings: this.world.buildings,
@@ -556,12 +569,16 @@ export class Room {
     }
   }
 
-  removeClient(client) {
+  /** `travel`: they're off to the other world (what they carry was taken out first), not logging off. */
+  removeClient(client, { travel = false } = {}) {
     if (!this.clients.delete(client)) return;
     client.onSend = null;
     this.teams.remove(client);
     this.#sendTeams();
-    if (client.player) {
+    if (client.player && travel) {
+      this.world.removePlayer(client.player.id);
+      this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
+    } else if (client.player) {
       // Logging off alive: what they carry goes with the account (not onto the ground).
       const p = client.player;
       if (p.alive && p.account?.id && !p.account.guest) {
@@ -572,20 +589,53 @@ export class Room {
       this.world.removePlayer(client.player.id);
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: client.player.id });
     }
-    this.#unload(client.account);
-    if (client.account && ![...this.clients].some((c) => c.account === client.account)) { // (a guest's crew isn't kept)
-      const crew = this.world.hires.unload(client.account);
-      if (crew && client.account.id && !client.account.guest) this.#store('setCrew', client.account.id, crew);
-    }
     client.player = null;
     client.room = null;
+    if (!travel) this.release(client.account);
+  }
+
+  /** Their account's gone from the game (closed it, here or in the other world): put their things away. */
+  release(account) {
+    if (!account || [...this.clients].some((c) => c.account === account)) return;
+    this.#unload(account);
+    const crew = this.world.hires.unload(account); // (a guest's crew isn't kept)
+    if (crew && account.id && !account.guest) this.#store('setCrew', account.id, crew);
+  }
+
+  /**
+   * Off to the other world: what they carry (cash, hotbar, health) comes off their player here, and
+   * they leave this room. Null if they can't go just now (dead, in a car, carrying someone, jailed).
+   */
+  takeOut(client) {
+    const p = client.player;
+    if (!p?.alive || p.vehicle || p.carrying || p.holdingCat || p.jailed || p.hidden) return null;
+    const carry = { cash: p.cash, inventory: p.inventory, selected: p.selected, health: p.health, mass: p.mass, stamina: p.stamina };
+    p.cash = 0;
+    p.inventory = p.inventory.map(() => null); // (so nothing drops here)
+    this.removeClient(client, { travel: true });
+    return carry;
+  }
+
+  /** In from the other world at `spot` (or anywhere open), with what they carried there. */
+  bringIn(client, carry, spot = null) {
+    this.spawn(client, client.name, client.look ?? null, { travel: true });
+    const p = client.player;
+    if (!p) return;
+    if (spot) Object.assign(p, { x: spot.x, y: spot.y });
+    if (carry) {
+      Object.assign(p, { cash: carry.cash, inventory: carry.inventory, selected: carry.selected, health: carry.health, mass: carry.mass, stamina: carry.stamina });
+      this.#saveCarried(p);
+    }
+    this.world.rebuildGrid();
   }
 
   /** Spawn (or respawn) a player for this client. */
   /** client.account is set before this (the browser's account, or a guest one whose money isn't saved). */
-  spawn(client, name, look) {
+  spawn(client, name, look, { travel = false } = {}) {
     if (client.player?.alive) return;
     const account = client.account;
+    client.look = look; // (kept for going between worlds)
+    const town = this.kind === 'town' && !travel; // (homes, a crew and a sentence come back in town, once)
     if (account?.id && !account.guest && name !== 'Player' && this.store?.setName) {
       // My things are labelled with the name I play under (if nobody else has it).
       const was = account.name;
@@ -595,20 +645,20 @@ export class Room {
         for (const w of this.world.warehouses.all.values()) if (w.owner === account) w.version++;
       }
     }
-    if (account?.id && !account.guest) {
+    if (account?.id && !account.guest && this.kind === 'town') {
       this.world.homes.assign(account, this.store?.homeSlot(account.id) ?? null);
       this.world.furnishings.restoreHome(account, account.homeItems); // (once a session)
     }
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
-    if (account?.id && !account.guest) this.world.hires.restore(player, account.crew); // my goons and guards, back from when I left (once a session)
+    if (account?.id && !account.guest && town) this.world.hires.restore(player, account.crew); // my goons and guards, back from when I left (once a session)
     player.achStart = { x: player.x, y: player.y }; // (walking away from here is the first achievement)
     // Back with what they had on them when they last left.
-    if (account?.id && !account.guest) {
+    if (account?.id && !account.guest && !travel) {
       player.cash = account.cash ?? 0;
       restoreSlots(player, account.carried);
     }
-    if (account?.prison) this.world.prison.jail(player, 0, account.prison); // still serving a sentence
+    if (account?.prison && this.kind === 'town') this.world.prison.jail(player, 0, account.prison); // still serving a sentence
     client.player = player;
     client.name = player.name;
     client.send({
@@ -848,10 +898,20 @@ export class Room {
     if (hires.bar) this.inspect(client, hires.bar.id);
   }
 
-  /** A bunker's trapdoor: a guard's key opens it. */
+  /** A bunker's trapdoor: a guard's key opens it; once it's open, down the ladder. Underground: up a ladder. */
   trapdoorAction(client, msg) {
     const p = client.player;
-    if (!p) return;
+    if (!p?.alive) return;
+    if (msg.action === 'up') {
+      const ladder = this.world.underground?.ladderNear(p);
+      return ladder ? this.onTravel?.(client, 'town', ladder) : client.send({ t: ServerMsg.ERROR, code: 'too_far' });
+    }
+    if (msg.action === 'down') {
+      const error = this.world.trapdoorDown(p, msg.id);
+      if (error) return client.send({ t: ServerMsg.ERROR, code: error });
+      const t = this.world.trapdoorOf(this.world.buildings[msg.id - 1]);
+      return this.onTravel?.(client, 'underground', { x: t.x + t.w / 2, y: t.y + t.h / 2 });
+    }
     const error = this.world.openTrapdoor(p, msg.id);
     if (error) return client.send({ t: ServerMsg.ERROR, code: error });
     client.send({ t: ServerMsg.DONE, what: 'trapdoor_open', id: msg.id });

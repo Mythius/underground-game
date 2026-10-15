@@ -27,6 +27,7 @@ import { Wolves } from './wolves.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
+import { Underground, rockRects } from './underground.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -154,8 +155,10 @@ export class World {
       ...this.atms.map((a) => ({ x: a.x - 12, y: a.y - 12, w: 24, h: 24, atm: true })),
       ...this.dumpsters.map((d) => ({ ...d, dumpster: true })),
     ];
+    // Underground: the rock is solid, and so are the pillars, bunks, crates and carts down there.
+    if (map?.underground) this.blocks.push(...map.underground.decor.filter((d) => d.solid).map(({ x, y, w, h }) => ({ x, y, w, h })));
     this.wallGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
-    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks];
+    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? rockRects(map.underground) : [])];
     for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: Boolean(w.low) }); // (barbed wire: low, see-through)
     for (const w of this.rails) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
 
@@ -215,6 +218,7 @@ export class World {
     this.atmsChanged = false; // (the room tells everyone which ATMs are broken)
     this.meleeDeaths = []; // knife kills this step (handed to step()'s deaths)
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
+    this.underground = map?.underground ? new Underground(this, map.underground) : null; // (the underground world: its layout and loot)
     this.rebuildGrid();
   }
 
@@ -1035,6 +1039,7 @@ export class World {
       this.pickupTimer = 0;
       if (this.pickups.size < this.opts.pickupMax) this.grid.insert(this.spawnPickup());
     }
+    this.underground?.step(dt);
     return { deaths, doorChanges, explosions };
   }
 
@@ -1063,6 +1068,36 @@ export class World {
     p.inventory[key] = null;
     this.openTrapdoors.add(b.id);
     return null;
+  }
+
+  /** Down an opened trapdoor (to the underground): null if p can go, else why not. */
+  trapdoorDown(p, id) {
+    const b = this.buildings[id - 1];
+    const t = this.trapdoorOf(b);
+    if (!t || !p.alive || p.vehicle) return 'too_far';
+    if (Math.hypot(t.x + t.w / 2 - p.x, t.y + t.h / 2 - p.y) > 60 + p.radius) return 'too_far';
+    if (!this.openTrapdoors.has(b.id)) return 'trapdoor_locked';
+    if (p.carrying || p.holdingCat || p.jailed || p.hidden) return 'busy';
+    return null;
+  }
+
+  /** Just up a ladder from the underground (at x, y there): beside the nearest trapdoor, which is open now. */
+  trapdoorArrival(x, y) {
+    const k = config.underground.scale;
+    let best = null, bd = Infinity;
+    for (const b of this.buildings) {
+      const t = this.trapdoorOf(b);
+      const d = t ? Math.hypot(t.x + t.w / 2 - x / k, t.y + t.h / 2 - y / k) : Infinity;
+      if (d < bd) [best, bd] = [b, d];
+    }
+    if (!best) return null;
+    this.openTrapdoors.add(best.id); // (it's open from below)
+    const t = this.trapdoorOf(best);
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const at = { x: t.x + t.w / 2 + dx * (t.w / 2 + 36), y: t.y + t.h / 2 + dy * (t.h / 2 + 36) };
+      if (!this.isBlocked(at.x, at.y, 22)) return at;
+    }
+    return { x: t.x + t.w / 2, y: t.y + t.h / 2 };
   }
 
   /** A door locked to p within reach, for lock picking. */

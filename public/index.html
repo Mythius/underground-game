@@ -585,7 +585,7 @@
     </div>
     <button type="button" id="open-admin">🔐 Admin</button>
     <div class="editor-buttons" id="admin-panel" hidden>
-      <button type="button" id="open-editor">🛠 Map editor</button>
+      <button type="button" id="open-editor">🛠 Map editor</button><button type="button" id="world-switch" title="Which world you play (and respawn) in">🕳 Go underground</button>
       <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button><button type="button" id="open-reports">📋 Reports</button>
     </div>
     <small id="credits">🎵 Music by Steve Oxen</small>
@@ -770,6 +770,7 @@
     let buildings = []; // from the welcome message; static for the room's lifetime
     const roofAlpha = new Map(); // building id -> current roof opacity (fades when I'm inside)
     let terrain = { roads: [], paths: [], trees: [], forests: [], water: { rivers: [], lakes: [] } };
+    let under = null; // the underground's layout while we're down there (null in town)
     let solidGroups = []; // buildings and trees: { x, y, w, h, walls, doors? } for client-side collision
     const doorById = new Map();
     let vehicleTypes = {};
@@ -927,7 +928,8 @@
       }
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
-      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
+      under = msg.underground ? prepUnderground(msg.underground) : null;
+      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
       doorReach = msg.doorReach ?? doorReach;
       if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost, knockDecay = knockDecay } = msg.vehicles);
       if (msg.homes) homesCfg = msg.homes;
@@ -959,6 +961,7 @@
       rainGrip = msg.rainGrip ?? rainGrip;
       gravelGrip = msg.gravelGrip ?? gravelGrip;
       lamps = terrain.lamps ?? [];
+      worldBtn.textContent = under ? '🏙 Go to town' : '🕳 Go underground';
       buildMinimap();
       doorById.clear();
       for (const b of buildings) for (const d of b.doors) { d.anim = d.open ? 1 : 0; doorById.set(d.id, d); }
@@ -995,6 +998,11 @@
           }
           break;
         case 'welcome':
+          if (msg.world?.kind !== world?.kind) { // off to the other world: nothing from this one carries over
+            snapshots.length = 0;
+            snapshot = null;
+            if (playing) toast(msg.world?.kind === 'underground' ? '🕳 You climb down the iron ladder into the dark. Cold air, the smell of damp concrete…' : '🪜 You climb back up the ladder and push the hatch open.', 4000);
+          }
           lastWelcome = msg;
           if (!editing) applyWelcome(msg);
           break;
@@ -1244,6 +1252,7 @@
           if (msg.what === 'refuel') toast('⛽ Tank filled');
           if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
+          if (msg.what === 'world') { worldBtn.textContent = msg.to === 'underground' ? '🏙 Go to town' : '🕳 Go underground'; toast(msg.to === 'underground' ? '🕳 You\'ll play in the underground (and respawn there) until you switch back' : '🏙 Back to playing in town'); }
           if (msg.what === 'trapdoor_open') { sfx('furnish'); toast('🗝️ The key turns. The padlock drops away and the hatch swings up — an iron ladder goes down into the dark. (The key stays in the lock.)', 4500); }
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
@@ -1371,8 +1380,21 @@
       e.preventDefault();
       play.disabled = true;
       initAudio(); // browsers only allow sound after a click
+      if (isAdmin && session && worldPref === 'underground') send({ t: 'world', to: 'underground', token: session.token }); // (the server forgets between visits)
       send({ t: 'join', name: nameInput.value, look: myLook, token: session?.token ?? undefined });
       nameInput.blur();
+    };
+
+    // Admin: play in the underground (now, and on every respawn) or back in town.
+    const worldBtn = document.getElementById('world-switch');
+    let worldPref = 'town';
+    try { worldPref = localStorage.getItem('ug-world') === 'underground' ? 'underground' : 'town'; } catch {}
+    worldBtn.onclick = () => {
+      const token = adminPassword();
+      if (!token) return;
+      worldPref = (world?.kind ?? 'town') === 'underground' ? 'town' : 'underground';
+      try { localStorage.setItem('ug-world', worldPref); } catch {}
+      send({ t: 'world', to: worldPref, token });
     };
 
     // ---- shop ----------------------------------------------------------------
@@ -3963,7 +3985,7 @@
     let openTraps = new Set(), openTrapsKey = ''; // the trapdoors (decor) a guard's key has opened
     function rattleTrapdoor() {
       const t = nearestTrapdoor();
-      if (t && openTraps.has(t)) return toast('🕳️ The hatch hangs open. An iron ladder goes down into the dark…', 3800);
+      if (t && openTraps.has(t)) { sfx('furnish'); return send({ t: 'trapdoor', id: t.bunker, action: 'down' }); } // open: down the ladder
       if (t && inv.some((s) => isTool(s) && s[1] === 'bunkerkey')) return send({ t: 'trapdoor', id: t.bunker });
       sfx('error');
       toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]}`, 3600);
@@ -4290,6 +4312,7 @@
       g.fillStyle = '#5d6b78';
       g.fillRect(0, 0, MAP_PX, MAP_PX);
       g.setTransform(s, 0, 0, s, 0, 0);
+      if (under) return buildUnderMinimap(g); // (just the bits you've been through)
       g.fillStyle = { winter: '#dde4ea', spring: '#5c9a45', summer: '#4a7a3a', autumn: '#6f7438' }[mapSeason];
       g.fillRect(0, 0, world.width, world.height);
       g.strokeStyle = winter ? '#b5ada0' : '#8f6f45';
@@ -4748,10 +4771,11 @@
 
     /** Pick the flocks' fields: open ground well away from town (street lamps), roads, water, buildings and trees. */
     function placeCrows() {
-      const key = `${world.width}x${world.height}:${terrain.trees.length}:${lamps.length}:${buildings.length}`;
+      const key = `${world.width}x${world.height}:${terrain.trees.length}:${lamps.length}:${buildings.length}:${under ? 'u' : 't'}`;
       if (crows.key === key) return;
       crows.key = key;
       crows.flocks = [];
+      if (under) return; // (no crows underground)
       const rnd = seeded((world.width * 7 + world.height * 13 + terrain.trees.length) % 2147483646 + 1);
       const want = Math.max(6, Math.min(60, Math.round((world.width * world.height) / 2.5e6)));
       for (let i = 0; i < want * 12 && crows.flocks.length < want; i++) {
@@ -4898,7 +4922,7 @@
       const clock = clockNow(now);
       const light = daylight(clock);
       const ease = 1 - Math.exp(-dt * 0.8);
-      sky.rain += (env.rain - sky.rain) * ease;
+      sky.rain += ((under ? 0 : env.rain) - sky.rain) * ease; // (no rain underground)
       sky.fog += (env.fog - sky.fog) * ease;
       // The time, then real-time countdowns: to dusk (or dawn), and to the next season.
       const mmss = (sec) => `${Math.floor(Math.max(0, sec) / 60)}:${String(Math.floor(Math.max(0, sec) % 60)).padStart(2, '0')}`;
@@ -4913,6 +4937,7 @@
       }
       const ox = w / 2 - camera.x, oy = h / 2 - camera.y; // world → screen
       const focus = me && playing ? { x: me.x + ox, y: me.y + oy } : { x: w / 2, y: h / 2 };
+      if (under) return drawUnderShade(w, h, focus);
       ctx.save();
       ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
 
@@ -6536,7 +6561,7 @@
       if (skid?.file) skid.src.playbackRate.setTargetAtTime(0.92 + 0.18 * Math.min(1, slip / 300), now, 0.1); // squeals higher the harder it slides
       const winter = season.main === 'winter';
       loopGain(rain, 'rain', (rain?.file ? 0.6 : 0.14) * sky.rain * (winter ? 0 : 1), now, 0.5); // snow falls silently
-      loopGain(wind, 'wind', winter ? 0.12 + 0.3 * sky.rain : 0, now, 1);
+      loopGain(wind, 'wind', winter && !under ? 0.12 + 0.3 * sky.rain : 0, now, 1);
       loopGain(night, 'night', playing ? 0.3 * (1 - daylight(clockNow())) : 0, now, 1);
       updateMusic(now);
       updateRadios(now);
@@ -7655,7 +7680,8 @@
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
           else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
-          else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked
+          else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked (or open: down the ladder)
+          else if (t?.kind === 'ladder') { sfx('furnish'); send({ t: 'trapdoor', id: 0, action: 'up' }); } // underground: back up to town
           else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
         }
@@ -10777,6 +10803,8 @@
       if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
+      const ladder = nearestLadder();
+      if (ladder) options.push({ kind: 'ladder', dist: ladder.d, x: ladder.x, y: ladder.y - 70 });
       const trap = nearestTrapdoor();
       if (trap) options.push({ kind: 'trapdoor', dist: d({ x: trap.x + trap.w / 2, y: trap.y + trap.h / 2 }) + 10, x: trap.x + trap.w / 2, y: trap.y - 18 });
       const placed = nearestFurnishing();
@@ -11611,6 +11639,697 @@
     const MAX_VIEW_AREA = 1920 * 1080; // the most world (px²) anyone's screen shows, whatever the window size or page zoom
     let viewBox = { l: 0, t: 0, r: 0, b: 0 };
 
+    // ---- the underground: old Soviet bunkers, metro tunnels and mine shafts (the second world) ----------
+
+    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5 };
+    const UG_SPAN = 8; // cells per side of a decor bucket
+    const ugHash = (x, y, k = 0) => {
+      let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(k + 1, 83492791)) >>> 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+      return (h ^ (h >>> 16)) / 4294967296;
+    };
+
+    /** The solid rock as rectangles (same as src/game/underground.js rockRects). */
+    function undergroundRocks(u) {
+      const { cols, rows, cell } = u;
+      const open = new Map(), out = [];
+      for (let y = 0; y <= rows; y++) {
+        const runs = new Set();
+        if (y < rows) {
+          for (let x = 0; x < cols;) {
+            if (u.g[y * cols + x] !== UGC.ROCK) { x++; continue; }
+            const x0 = x;
+            while (x < cols && x - x0 < 8 && u.g[y * cols + x] === UGC.ROCK) x++;
+            runs.add(`${x0},${x}`);
+          }
+        }
+        for (const [key, r] of open) {
+          if (runs.has(key) && r.h < cell * 8) { r.h += cell; runs.delete(key); } else { out.push(r); open.delete(key); }
+        }
+        for (const key of runs) {
+          const [x0, x1] = key.split(',').map(Number);
+          open.set(key, { x: x0 * cell, y: y * cell, w: (x1 - x0) * cell, h: cell });
+        }
+      }
+      out.push({ x: cols * cell, y: 0, w: cell, h: rows * cell + cell }, { x: 0, y: rows * cell, w: cols * cell, h: cell });
+      return out;
+    }
+
+    /** Ready the underground's layout for drawing and bumping into (and the minimap: only where you've been). */
+    function prepUnderground(u) {
+      u.g = new Uint8Array(u.cols * u.rows);
+      for (let i = 0; i < u.g.length; i++) u.g[i] = u.grid.charCodeAt(i) - 48;
+      u.rocks = undergroundRocks(u);
+      u.solids = u.decor.filter((d) => d.solid);
+      u.buckets = new Map();
+      const span = u.cell * UG_SPAN;
+      for (const d of u.decor) {
+        for (let by = Math.floor(d.y / span); by <= Math.floor((d.y + d.h) / span); by++) {
+          for (let bx = Math.floor(d.x / span); bx <= Math.floor((d.x + d.w) / span); bx++) {
+            const key = by * 4096 + bx;
+            if (!u.buckets.has(key)) u.buckets.set(key, []);
+            u.buckets.get(key).push(d);
+          }
+        }
+      }
+      u.seen = new Uint8Array(u.cols * u.rows);
+      u.mark = 0; // (decor drawn this frame)
+      return u;
+    }
+
+    const ugCell = (cx, cy) => (cx < 0 || cy < 0 || cx >= under.cols || cy >= under.rows ? UGC.ROCK : under.g[cy * under.cols + cx]);
+
+    // Floors, and the wall each kind of place has where it meets the rock.
+    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f' };
+    const UG_WALL = {
+      [UGC.MINE]: { t: 16, c: '#55483a', edge: '#2a221b' },
+      [UGC.TUNNEL]: { t: 24, c: '#4e4d49', edge: '#22211f' },
+      [UGC.PLATFORM]: { t: 20, c: '#d4cab3', edge: '#8c8169' },
+      [UGC.BUNKER]: { t: 26, c: '#6a6d65', edge: '#3c3e39' },
+      [UGC.PASSAGE]: { t: 18, c: '#5c5d56', edge: '#2f302c' },
+    };
+
+    function drawUnderground(now) {
+      const u = under, C = u.cell;
+      const x0 = Math.max(0, Math.floor(viewBox.l / C)), y0 = Math.max(0, Math.floor(viewBox.t / C));
+      const x1 = Math.min(u.cols - 1, Math.floor(viewBox.r / C)), y1 = Math.min(u.rows - 1, Math.floor(viewBox.b / C));
+      ctx.fillStyle = '#15120f';
+      ctx.fillRect(viewBox.l, viewBox.t, viewBox.r - viewBox.l, viewBox.b - viewBox.t);
+      // Rock: grain and the odd seam of something paler.
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const code = ugCell(cx, cy), X = cx * C, Y = cy * C;
+          if (code === UGC.ROCK) {
+            for (let k = 0; k < 4; k++) {
+              const r = ugHash(cx, cy, k);
+              ctx.fillStyle = r < 0.5 ? '#1d1915' : '#0e0c0a';
+              ctx.fillRect(X + ugHash(cx, cy, k + 9) * (C - 30), Y + r * (C - 20), 10 + r * 26, 6 + ugHash(cx, cy, k + 4) * 12);
+            }
+            if (ugHash(cx, cy, 77) < 0.08) { ctx.fillStyle = 'rgba(120, 104, 80, .25)'; ctx.fillRect(X + 20, Y + ugHash(cx, cy, 78) * C, C - 40, 4); }
+            continue;
+          }
+          drawUnderFloor(code, cx, cy, X, Y, C);
+        }
+      }
+      // Soft shadow along the foot of every wall, and the platform edges.
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const code = ugCell(cx, cy);
+          if (code === UGC.ROCK) continue;
+          const X = cx * C, Y = cy * C;
+          for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+            const n = ugCell(cx + dx, cy + dy);
+            if (n === UGC.ROCK) {
+              for (const [d, a] of [[0, 0.3], [6, 0.16], [12, 0.07]]) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${a})`;
+                if (dy) ctx.fillRect(X, dy < 0 ? Y + d : Y + C - d - 6, C, 6);
+                else ctx.fillRect(dx < 0 ? X + d : X + C - d - 6, Y, 6, C);
+              }
+            } else if (code === UGC.PLATFORM && n === UGC.TUNNEL) { // the platform's edge: granite, a yellow line, then the drop
+              ctx.fillStyle = '#e4dcc6';
+              if (dy) ctx.fillRect(X, dy < 0 ? Y : Y + C - 14, C, 14); else ctx.fillRect(dx < 0 ? X : X + C - 14, Y, 14, C);
+              ctx.fillStyle = '#d4a72c';
+              if (dy) ctx.fillRect(X, dy < 0 ? Y + 20 : Y + C - 26, C, 5); else ctx.fillRect(dx < 0 ? X + 20 : X + C - 26, Y, 5, C);
+              ctx.fillStyle = 'rgba(0, 0, 0, .55)';
+              if (dy) ctx.fillRect(X, dy < 0 ? Y - 10 : Y + C, C, 10); else ctx.fillRect(dx < 0 ? X - 10 : X + C, Y, 10, C);
+            }
+          }
+        }
+      }
+      drawMetroTracks();
+      // What's lying about, bolted down or left behind.
+      u.mark++;
+      const span = C * UG_SPAN;
+      for (let by = Math.floor(viewBox.t / span); by <= Math.floor(viewBox.b / span); by++) {
+        for (let bx = Math.floor(viewBox.l / span); bx <= Math.floor(viewBox.r / span); bx++) {
+          for (const d of u.buckets.get(by * 4096 + bx) ?? []) {
+            if (d.drawn === u.mark || d.over || d.wall) continue;
+            d.drawn = u.mark;
+            if (d.x > viewBox.r || d.x + d.w < viewBox.l || d.y > viewBox.b || d.y + d.h < viewBox.t) continue;
+            drawUnderDecor(d, now);
+          }
+        }
+      }
+      // The walls: each kind of place lined its own way where it meets the rock.
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const code = ugCell(cx, cy);
+          if (code === UGC.ROCK) continue;
+          const wall = UG_WALL[code], X = cx * C, Y = cy * C, t = wall.t;
+          for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+            if (ugCell(cx + dx, cy + dy) !== UGC.ROCK) continue;
+            const r = dy ? { x: X, y: dy < 0 ? Y - t : Y + C, w: C, h: t } : { x: dx < 0 ? X - t : X + C, y: Y, w: t, h: C };
+            ctx.fillStyle = wall.c;
+            ctx.fillRect(r.x, r.y, r.w, r.h);
+            drawWallDetail(code, r, dx, dy, cx, cy);
+            ctx.fillStyle = wall.edge; // the line where wall meets floor
+            if (dy) ctx.fillRect(X, dy < 0 ? Y - 3 : Y, C, 3); else ctx.fillRect(dx < 0 ? X - 3 : X, Y, 3, C);
+          }
+          // Outside corners: fill the notch where two walls meet round a corner of rock.
+          for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+            if (ugCell(cx + dx, cy + dy) !== UGC.ROCK || ugCell(cx + dx, cy) === UGC.ROCK || ugCell(cx, cy + dy) === UGC.ROCK) continue;
+            ctx.fillStyle = wall.c;
+            ctx.fillRect(dx < 0 ? X - t : X + C, dy < 0 ? Y - t : Y + C, t, t);
+          }
+        }
+      }
+      // Signs and posters hung on the walls.
+      u.mark++;
+      for (let by = Math.floor(viewBox.t / span); by <= Math.floor(viewBox.b / span); by++) {
+        for (let bx = Math.floor(viewBox.l / span); bx <= Math.floor(viewBox.r / span); bx++) {
+          for (const d of u.buckets.get(by * 4096 + bx) ?? []) {
+            if (!d.wall || d.drawn === u.mark) continue;
+            d.drawn = u.mark;
+            if (d.x <= viewBox.r && d.x + d.w >= viewBox.l && d.y <= viewBox.b && d.y + d.h >= viewBox.t) drawUnderDecor(d, now);
+          }
+        }
+      }
+      revealUnderground();
+    }
+
+    function drawUnderFloor(code, cx, cy, X, Y, C) {
+      ctx.fillStyle = UG_FLOOR[code];
+      ctx.fillRect(X, Y, C, C);
+      if (code === UGC.MINE) { // packed dirt and gravel, a puddle here and there
+        for (let k = 0; k < 6; k++) {
+          const r = ugHash(cx, cy, k);
+          ctx.fillStyle = r < 0.5 ? '#2e261f' : '#4a3e31';
+          ctx.fillRect(X + ugHash(cx, cy, k + 20) * (C - 8), Y + r * (C - 8), 4 + r * 6, 3 + r * 4);
+        }
+        if (ugHash(cx, cy, 5) < 0.06) {
+          ctx.fillStyle = 'rgba(40, 55, 70, .55)';
+          ctx.beginPath(); ctx.ellipse(X + C / 2, Y + C / 2, 40 + ugHash(cx, cy, 6) * 30, 20 + ugHash(cx, cy, 7) * 14, ugHash(cx, cy, 8) * 3, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (code === UGC.TUNNEL) { // ballast
+        for (let k = 0; k < 10; k++) {
+          const r = ugHash(cx, cy, k);
+          ctx.fillStyle = r < 0.5 ? '#36332f' : '#232120';
+          ctx.fillRect(X + ugHash(cx, cy, k + 30) * (C - 6), Y + r * (C - 6), 5, 4);
+        }
+      } else if (code === UGC.PLATFORM) { // polished granite, laid in a check
+        const T = C / 2;
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+          ctx.fillStyle = (cx * 2 + i + cy * 2 + j) % 2 ? '#a0978a' : '#857d70';
+          ctx.fillRect(X + i * T, Y + j * T, T, T);
+        }
+        ctx.fillStyle = 'rgba(255, 255, 255, .05)';
+        ctx.fillRect(X + 6, Y + 6, T - 12, 6);
+        ctx.strokeStyle = 'rgba(40, 36, 30, .5)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(X, Y, C, C);
+      } else if (code === UGC.BUNKER) { // poured concrete slabs, stained
+        ctx.strokeStyle = '#41443d';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(X + 1, Y + 1, C / 2 - 2, C / 2 - 2);
+        ctx.strokeRect(X + C / 2 + 1, Y + C / 2 + 1, C / 2 - 2, C / 2 - 2);
+        if (ugHash(cx, cy, 3) < 0.25) {
+          ctx.fillStyle = 'rgba(30, 28, 20, .25)';
+          ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, 4) * C, Y + ugHash(cx, cy, 5) * C, 30, 18, ugHash(cx, cy, 6) * 3, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (code === UGC.PASSAGE) { // a service passage: concrete, with a drain down the middle
+        const horiz = ugCell(cx - 1, cy) !== UGC.ROCK || ugCell(cx + 1, cy) !== UGC.ROCK;
+        ctx.fillStyle = '#2d2e2a';
+        if (horiz) ctx.fillRect(X, Y + C / 2 - 5, C, 10); else ctx.fillRect(X + C / 2 - 5, Y, 10, C);
+        ctx.fillStyle = '#55564f';
+        for (let k = 8; k < C; k += 16) horiz ? ctx.fillRect(X + k, Y + C / 2 - 5, 3, 10) : ctx.fillRect(X + C / 2 - 5, Y + k, 10, 3);
+      }
+    }
+
+    /** Detail on a stretch of wall `r` (the rock side of a floor cell's edge; dx, dy: which way the rock is). */
+    function drawWallDetail(code, r, dx, dy, cx, cy) {
+      const along = dy ? r.w : r.h;
+      if (code === UGC.MINE) { // rough-hewn rock, and the pit props holding it up
+        ctx.fillStyle = '#463b30';
+        for (let k = 0; k < 5; k++) {
+          const a = ugHash(cx, cy, k + dx * 3 + dy * 7 + 50) * (along - 20), d = 4 + ugHash(cx, cy, k + 60) * 10;
+          if (dy) ctx.fillRect(r.x + a, dy < 0 ? r.y : r.y + r.h - d, 18, d); else ctx.fillRect(dx < 0 ? r.x : r.x + r.w - d, r.y + a, d, 18);
+        }
+        if (mineProp(cx, cy)) {
+          ctx.fillStyle = '#6b4a28';
+          const p = 16;
+          if (dy) ctx.fillRect(r.x + along / 2 - p / 2, dy < 0 ? r.y + r.h - p : r.y, p, p); else ctx.fillRect(dx < 0 ? r.x + r.w - p : r.x, r.y + along / 2 - p / 2, p, p);
+        }
+      } else if (code === UGC.TUNNEL) { // cast-iron tubing rings, and cables along the wall
+        ctx.fillStyle = '#3d3c39';
+        for (let a = 0; a < along; a += 40) dy ? ctx.fillRect(r.x + a, r.y, 4, r.h) : ctx.fillRect(r.x, r.y + a, r.w, 4);
+        ctx.fillStyle = '#1b1b1b';
+        for (const off of [6, 11, 16]) dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - off - 2 : r.y + off, r.w, 2) : ctx.fillRect(dx < 0 ? r.x + r.w - off - 2 : r.x + off, r.y, 2, r.h);
+      } else if (code === UGC.PLATFORM) { // marble cladding: big slabs, a bronze strip along the foot
+        ctx.fillStyle = '#c2b79e';
+        for (let a = 0; a < along; a += 80) dy ? ctx.fillRect(r.x + a, r.y, 2, r.h) : ctx.fillRect(r.x, r.y + a, r.w, 2);
+        ctx.fillStyle = '#8a6a32';
+        dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 5 : r.y, r.w, 5) : ctx.fillRect(dx < 0 ? r.x + r.w - 5 : r.x, r.y, 5, r.h);
+      } else if (code === UGC.BUNKER) { // thick concrete, the shuttering marks still in it
+        ctx.fillStyle = '#5d6059';
+        for (let a = 20; a < along; a += 54) dy ? ctx.fillRect(r.x + a, r.y + 4, 2, r.h - 8) : ctx.fillRect(r.x + 4, r.y + a, r.w - 8, 2);
+        ctx.fillStyle = '#7b7e75';
+        dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y + 3, r.w, 3) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x + 3, r.y, 3, r.h);
+      } else { // a passage: a pipe along the wall
+        ctx.fillStyle = '#3f4a52';
+        dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 10 : r.y + 4, r.w, 6) : ctx.fillRect(dx < 0 ? r.x + r.w - 10 : r.x + 4, r.y, 6, r.h);
+      }
+    }
+
+    /** A straight bit of mine shaft with a timber set (posts each side, a cap across overhead) in it. */
+    function mineProp(cx, cy) {
+      if (ugCell(cx, cy) !== UGC.MINE || ugHash(cx, cy, 90) > 0.55) return 0;
+      const h = ugCell(cx - 1, cy) !== UGC.ROCK && ugCell(cx + 1, cy) !== UGC.ROCK && ugCell(cx, cy - 1) === UGC.ROCK && ugCell(cx, cy + 1) === UGC.ROCK;
+      const v = ugCell(cx, cy - 1) !== UGC.ROCK && ugCell(cx, cy + 1) !== UGC.ROCK && ugCell(cx - 1, cy) === UGC.ROCK && ugCell(cx + 1, cy) === UGC.ROCK;
+      return h ? 1 : v ? 2 : 0;
+    }
+
+    /** A polyline of straight runs meeting at right angles, moved sideways by d (the corners stay mitred). */
+    function offsetLine(pts, d) {
+      const normal = (a, b) => { const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1; return [-(b[1] - a[1]) / len, (b[0] - a[0]) / len]; };
+      return pts.map(([x, y], i) => {
+        const n1 = i > 0 ? normal(pts[i - 1], pts[i]) : null, n2 = i < pts.length - 1 ? normal(pts[i], pts[i + 1]) : null;
+        const nx = (n1?.[0] ?? 0) + (n2?.[0] ?? 0), ny = (n1?.[1] ?? 0) + (n2?.[1] ?? 0);
+        const k = n1 && n2 && Math.abs(n1[0] * n2[0] + n1[1] * n2[1]) > 0.99 ? 0.5 : 1; // (straight on: the two normals are the same)
+        return [x + nx * d * k, y + ny * d * k];
+      });
+    }
+
+    function roundedPath(pts, radius) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length - 1; i++) ctx.arcTo(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], radius);
+      ctx.lineTo(pts.at(-1)[0], pts.at(-1)[1]);
+    }
+
+    /** The metro's track: sleepers on the ballast, two running rails and the covered third rail. */
+    function drawMetroTracks() {
+      const vb = viewBox;
+      for (const line of under.lines) {
+        const pts = line.pts;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+          if (Math.max(ax, bx) + 100 < vb.l || Math.min(ax, bx) - 100 > vb.r || Math.max(ay, by) + 100 < vb.t || Math.min(ay, by) - 100 > vb.b) continue;
+          const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
+          ctx.fillStyle = '#3b3027';
+          for (let s = i ? 130 : 20; s < len - (i < pts.length - 2 ? 130 : 20); s += 34) {
+            const x = ax + ux * s, y = ay + uy * s;
+            if (x < vb.l || x > vb.r || y < vb.t || y > vb.b) continue;
+            if (Math.abs(ux) > 0.5) ctx.fillRect(x - 6, y - 52, 12, 104); else ctx.fillRect(x - 52, y - 6, 104, 12);
+          }
+        }
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#4a4238'; ctx.lineWidth = 12; // the third rail's wooden cover
+        roundedPath(offsetLine(pts, 68), 150); ctx.stroke();
+        ctx.strokeStyle = '#8a7a4a'; ctx.lineWidth = 3;
+        roundedPath(offsetLine(pts, 68), 150); ctx.stroke();
+        for (const off of [-30, 30]) {
+          const rail = offsetLine(pts, off);
+          ctx.strokeStyle = '#5d5952'; ctx.lineWidth = 7;
+          roundedPath(rail, 150 - off); ctx.stroke();
+          ctx.strokeStyle = '#a8a59d'; ctx.lineWidth = 2.5; // worn bright on top
+          roundedPath(rail, 150 - off); ctx.stroke();
+        }
+      }
+    }
+
+    function drawUnderDecor(d, now) {
+      const { x, y, w, h } = d;
+      const long = w >= h; // which way it runs
+      ctx.save();
+      switch (d.k) {
+        case 'pillar': { // marble-clad pillar with a bronze collar
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(x + 6, y + 6, w, h);
+          ctx.fillStyle = '#e2dbc9'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#c9bea6'; ctx.fillRect(x + w / 2, y, w / 2, h);
+          ctx.strokeStyle = '#8a6a32'; ctx.lineWidth = 4; ctx.strokeRect(x + 5, y + 5, w - 10, h - 10);
+          ctx.fillStyle = '#b6a98d'; ctx.fillRect(x + w / 2 - 3, y + 8, 6, h - 16);
+          break;
+        }
+        case 'bench': { // wooden slats on cast-iron ends
+          ctx.fillStyle = '#2a2622';
+          if (long) { ctx.fillRect(x, y, 8, h); ctx.fillRect(x + w - 8, y, 8, h); } else { ctx.fillRect(x, y, w, 8); ctx.fillRect(x, y + h - 8, w, 8); }
+          ctx.fillStyle = '#7a5530';
+          for (let k = 0; k < 3; k++) long ? ctx.fillRect(x + 6, y + 3 + k * (h - 6) / 3, w - 12, (h - 6) / 3 - 3) : ctx.fillRect(x + 3 + k * (w - 6) / 3, y + 6, (w - 6) / 3 - 3, h - 12);
+          break;
+        }
+        case 'sign': { // the station's name, white on blue, with the red Metro M
+          ctx.fillStyle = '#1d2c55'; ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+          ctx.translate(x + w / 2, y + h / 2);
+          if (!long) ctx.rotate(Math.PI / 2);
+          const L = long ? w : h;
+          ctx.fillStyle = '#c0392b';
+          ctx.beginPath(); ctx.arc(-L / 2 + 13, 0, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.font = '700 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('М', -L / 2 + 13, 1);
+          ctx.font = '700 12px system-ui, sans-serif';
+          ctx.fillText(d.text.toUpperCase(), 10, 1);
+          break;
+        }
+        case 'mosaic': { // a Soviet mosaic set in the floor: a red star on blue, gold rays
+          const cx = x + w / 2, cy = y + h / 2, R = w / 2;
+          ctx.fillStyle = '#c9a227'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#23396b'; ctx.beginPath(); ctx.arc(cx, cy, R - 7, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(232, 200, 90, .7)'; ctx.lineWidth = 3;
+          for (let k = 0; k < 16; k++) { const a = (k / 16) * Math.PI * 2; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * 30, cy + Math.sin(a) * 30); ctx.lineTo(cx + Math.cos(a) * (R - 12), cy + Math.sin(a) * (R - 12)); ctx.stroke(); }
+          ugStar(cx, cy, 28, '#b32a1f');
+          break;
+        }
+        case 'wagon': { // an 81-717 left at the platform: grey roof, blue sides, vents along the top
+          ctx.fillStyle = 'rgba(0, 0, 0, .4)'; ctx.fillRect(x + 6, y + 6, w, h);
+          ctx.fillStyle = '#2f6e9b'; roundRect(x, y, w, h, 14); ctx.fill();
+          ctx.fillStyle = '#8b949b'; roundRect(x + (long ? 10 : 8), y + (long ? 8 : 10), w - (long ? 20 : 16), h - (long ? 16 : 20), 10); ctx.fill();
+          ctx.fillStyle = '#e4dcc0'; // the cream stripe
+          if (long) { ctx.fillRect(x + 12, y + 3, w - 24, 3); ctx.fillRect(x + 12, y + h - 6, w - 24, 3); } else { ctx.fillRect(x + 3, y + 12, 3, h - 24); ctx.fillRect(x + w - 6, y + 12, 3, h - 24); }
+          ctx.fillStyle = '#5c646a';
+          const L = long ? w : h;
+          for (let s = 50; s < L - 50; s += 70) long ? ctx.fillRect(x + s, y + h / 2 - 10, 34, 20) : ctx.fillRect(x + w / 2 - 10, y + s, 20, 34);
+          ctx.fillStyle = '#3d4449'; // cab ends
+          if (long) { ctx.fillRect(x + 4, y + 10, 16, h - 20); ctx.fillRect(x + w - 20, y + 10, 16, h - 20); } else { ctx.fillRect(x + 10, y + 4, w - 20, 16); ctx.fillRect(x + 10, y + h - 20, w - 20, 16); }
+          ctx.fillStyle = '#e8e8e0'; ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(String(d.n), long ? x + 70 : x + w / 2, long ? y + h / 2 : y + 70);
+          break;
+        }
+        case 'collapse': { // where the tunnel caved in: broken concrete, rock and a bent rail
+          for (let k = 0; k < 26; k++) {
+            const r = ugHash(Math.round(x), Math.round(y), k);
+            ctx.fillStyle = ['#4a443c', '#5d574d', '#38332d', '#6b6a64'][k % 4];
+            const px = x + ugHash(Math.round(x), k, 3) * w, py = y + r * h, s = 14 + ugHash(k, Math.round(y), 5) * 30;
+            ctx.beginPath(); ctx.moveTo(px, py - s / 2); ctx.lineTo(px + s / 2, py - s / 5); ctx.lineTo(px + s / 3, py + s / 2); ctx.lineTo(px - s / 2, py + s / 3); ctx.closePath(); ctx.fill();
+          }
+          ctx.strokeStyle = '#7d7a74'; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.moveTo(x + w * 0.2, y + h * 0.3); ctx.quadraticCurveTo(x + w * 0.6, y + h * 0.1, x + w * 0.8, y + h * 0.55); ctx.stroke();
+          break;
+        }
+        case 'mrail': { // narrow-gauge rails down a shaft
+          ctx.fillStyle = '#3e2f22';
+          const L = long ? w : h;
+          for (let s = 6; s < L; s += 26) long ? ctx.fillRect(x + s, y, 8, h) : ctx.fillRect(x, y + s, w, 8);
+          ctx.fillStyle = '#6e6a62';
+          if (long) { ctx.fillRect(x, y + 5, w, 3); ctx.fillRect(x, y + h - 8, w, 3); } else { ctx.fillRect(x + 5, y, 3, h); ctx.fillRect(x + w - 8, y, 3, h); }
+          break;
+        }
+        case 'cart': { // a mine cart, coal still in it
+          ctx.fillStyle = '#1b1a18';
+          for (const [px, py] of [[x - 3, y + 6], [x + w - 5, y + 6], [x - 3, y + h - 14], [x + w - 5, y + h - 14]]) ctx.fillRect(px, py, 8, 8);
+          ctx.fillStyle = '#6e3f22'; roundRect(x, y, w, h, 6); ctx.fill();
+          ctx.fillStyle = '#4a2c1a'; ctx.fillRect(x + 6, y + 6, w - 12, h - 12);
+          if (d.coal) { ctx.fillStyle = '#151515'; for (let k = 0; k < 9; k++) { ctx.beginPath(); ctx.arc(x + 12 + ugHash(Math.round(x), k) * (w - 24), y + 12 + ugHash(k, Math.round(y)) * (h - 24), 6, 0, Math.PI * 2); ctx.fill(); } }
+          break;
+        }
+        case 'tnt': { // a crate of dynamite
+          ctx.fillStyle = '#8a6a3a'; ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = '#5a4424'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+          ctx.fillStyle = '#a3261b'; ctx.font = '800 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('ТНТ', x + w / 2, y + h / 2 + 1);
+          break;
+        }
+        case 'rubble': {
+          for (let k = 0; k < 10; k++) {
+            ctx.fillStyle = ['#4d4135', '#5f5244', '#3a3128'][k % 3];
+            const px = x + ugHash(d.seed, k, 1) * w, py = y + ugHash(d.seed, k, 2) * h, s = 10 + ugHash(d.seed, k, 3) * 22;
+            ctx.beginPath(); ctx.ellipse(px, py, s, s * 0.7, ugHash(d.seed, k, 4) * 3, 0, Math.PI * 2); ctx.fill();
+          }
+          break;
+        }
+        case 'barrel': { // an old fuel drum (army green, rusting)
+          const cx = x + w / 2, cy = y + h / 2, R = w / 2;
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.arc(cx + 4, cy + 4, R, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#3e5537'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#2a3a25'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, R - 5, 0, Math.PI * 2); ctx.stroke();
+          ctx.fillStyle = '#7a4a26'; ctx.beginPath(); ctx.arc(cx - 6, cy + 5, 5, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#20251e'; ctx.beginPath(); ctx.arc(cx + 8, cy - 7, 3.5, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'lantern': { // a miner's lamp on a hook, long since gone out
+          ctx.fillStyle = '#2b2620'; ctx.fillRect(x + w / 2 - 2, y - 6, 4, 8);
+          ctx.fillStyle = '#8a6a2a'; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#d8c48a'; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2 - 5, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'blastdoor': drawBlastDoor(d); break;
+        case 'partition': {
+          ctx.fillStyle = '#6a6d65'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#7b7e75'; long ? ctx.fillRect(x, y + 3, w, 3) : ctx.fillRect(x + 3, y, 3, h);
+          ctx.strokeStyle = '#3c3e39'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+          break;
+        }
+        case 'doorframe': { // a steel frame through the inner wall, hazard-striped sill
+          ctx.fillStyle = '#3f4440'; ctx.fillRect(x, y, w, 10); ctx.fillRect(x, y + h - 10, w, 10);
+          hazard(x + 6, y + 10, w - 12, h - 20);
+          break;
+        }
+        case 'bunk': { // a two-tier army bunk: green frame, grey blanket, a pillow at the wall end
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 4, y + 4, w, h);
+          ctx.fillStyle = '#3f4d3c'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#6d6f62'; ctx.fillRect(x + 5, y + 5, w - 10, h - 10);
+          ctx.fillStyle = '#4c5a75'; ctx.fillRect(x + 5, d.flip ? y + 5 : y + h * 0.45, w - 10, h * 0.5 - 5);
+          ctx.fillStyle = '#cfc8b2'; ctx.fillRect(x + 9, d.flip ? y + h - 30 : y + 9, w - 18, 20);
+          ctx.strokeStyle = '#2b3529'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y + h); ctx.moveTo(x + w, y); ctx.lineTo(x, y + h); ctx.globalAlpha = 0.25; ctx.stroke();
+          break;
+        }
+        case 'cot': {
+          ctx.fillStyle = '#4d4a3a'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#8c8a6a'; ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+          ctx.fillStyle = '#e6e2d6'; ctx.fillRect(x + 8, d.flip ? y + h - 26 : y + 8, w - 16, 18);
+          ctx.fillStyle = '#b32a1f'; ctx.fillRect(x + w / 2 - 3, y + h / 2 - 10, 6, 20); ctx.fillRect(x + w / 2 - 10, y + h / 2 - 3, 20, 6);
+          break;
+        }
+        case 'table': {
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 4, y + 4, w, h);
+          ctx.fillStyle = '#5e4630'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#6e5539'; ctx.fillRect(x + 4, y + 4, w - 8, h / 2 - 6);
+          ctx.fillStyle = '#c9c5b8'; ctx.beginPath(); ctx.arc(x + w * 0.3, y + h * 0.55, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#2e5e8a'; ctx.beginPath(); ctx.arc(x + w * 0.65, y + h * 0.4, 6, 0, Math.PI * 2); ctx.fill(); // an enamel mug
+          ctx.fillStyle = '#d8d0b0'; ctx.fillRect(x + w * 0.55, y + h * 0.6, 26, 16); // cards
+          break;
+        }
+        case 'maptable': { // the war map: rivers, a front line, red arrows and pins
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(x + 6, y + 6, w, h);
+          ctx.fillStyle = '#4a3a2a'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#cdbf94'; ctx.fillRect(x + 10, y + 10, w - 20, h - 20);
+          ctx.strokeStyle = '#4f7a9a'; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(x + 14, y + h * 0.3); ctx.bezierCurveTo(x + w * 0.3, y + h * 0.6, x + w * 0.6, y + h * 0.2, x + w - 14, y + h * 0.7); ctx.stroke();
+          ctx.strokeStyle = '#6a5a3a'; ctx.lineWidth = 1;
+          for (let k = 1; k < 6; k++) { ctx.beginPath(); ctx.moveTo(x + 10 + k * (w - 20) / 6, y + 10); ctx.lineTo(x + 10 + k * (w - 20) / 6, y + h - 10); ctx.stroke(); }
+          ctx.strokeStyle = '#a3261b'; ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(x + w * 0.25, y + h * 0.75); ctx.quadraticCurveTo(x + w * 0.45, y + h * 0.35, x + w * 0.7, y + h * 0.35); ctx.stroke();
+          ctx.fillStyle = '#a3261b'; ctx.beginPath(); ctx.moveTo(x + w * 0.74, y + h * 0.35); ctx.lineTo(x + w * 0.66, y + h * 0.28); ctx.lineTo(x + w * 0.66, y + h * 0.42); ctx.fill();
+          for (let k = 0; k < 5; k++) { ctx.fillStyle = k % 2 ? '#1d4fa0' : '#a3261b'; ctx.beginPath(); ctx.arc(x + 30 + ugHash(Math.round(x), k) * (w - 60), y + 25 + ugHash(k, Math.round(y)) * (h - 50), 4, 0, Math.PI * 2); ctx.fill(); }
+          break;
+        }
+        case 'desk': { // a steel desk with a field radio on it, dials and a green lamp
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 4, y + 4, w, h);
+          ctx.fillStyle = '#5d6458'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#2f3a33'; ctx.fillRect(x + 8, y + 8, 50, h - 16);
+          ctx.fillStyle = '#9aa38f'; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(x + 18 + k * 14, y + h / 2 + 6, 4, 0, Math.PI * 2); ctx.fill(); }
+          ctx.fillStyle = '#5ad15a'; ctx.globalAlpha = 0.6 + 0.4 * Math.sin(now / 400 + x); ctx.fillRect(x + 14, y + 12, 10, 5); ctx.globalAlpha = 1;
+          ctx.fillStyle = '#d8d2bc'; ctx.save(); ctx.translate(x + 82, y + h / 2); ctx.rotate(0.15); ctx.fillRect(-14, -10, 28, 20); ctx.restore();
+          break;
+        }
+        case 'star': ctx.globalAlpha = 0.45; ctx.strokeStyle = '#9a2a1f'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2 - 4, 0, Math.PI * 2); ctx.stroke(); ugStar(x + w / 2, y + h / 2, w / 2 - 22, '#9a2a1f'); break;
+        case 'crate': { // a wooden army crate, a star stencilled on the lid
+          ctx.translate(x + w / 2, y + h / 2); ctx.rotate(d.a ?? 0);
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(-w / 2 + 4, -h / 2 + 4, w, h);
+          ctx.fillStyle = '#5f5a35'; ctx.fillRect(-w / 2, -h / 2, w, h);
+          ctx.strokeStyle = '#3f3c22'; ctx.lineWidth = 3; ctx.strokeRect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4);
+          ctx.beginPath(); ctx.moveTo(-w / 2 + 4, -h / 2 + 4); ctx.lineTo(w / 2 - 4, h / 2 - 4); ctx.stroke();
+          ugStar(0, 0, 10, '#a3261b');
+          break;
+        }
+        case 'generator': { // a diesel generator: engine block, fuel tank, exhaust, hazard stripes round it
+          hazard(x - 8, y - 8, w + 16, h + 16);
+          ctx.fillStyle = '#4d5a48'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#3a4536'; ctx.fillRect(x + 10, y + 10, w * 0.55, h - 20);
+          for (let k = 0; k < 6; k++) { ctx.fillStyle = '#2a3227'; ctx.fillRect(x + 18 + k * 14, y + 18, 8, h - 36); }
+          ctx.fillStyle = '#6b6f5a'; roundRect(x + w * 0.65, y + 12, w * 0.3, h - 24, 12); ctx.fill();
+          ctx.fillStyle = '#222'; ctx.beginPath(); ctx.arc(x + w - 18, y + 18, 9, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#e8dcb0'; ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('ДГ-100', x + w * 0.8, y + h / 2);
+          break;
+        }
+        case 'cabinet': {
+          ctx.fillStyle = '#d6d2c6'; ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = '#9a968a'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+          ctx.fillStyle = '#b32a1f'; ctx.fillRect(x + w / 2 - 4, y + h / 2 - 13, 8, 26); ctx.fillRect(x + w / 2 - 13, y + h / 2 - 4, 26, 8);
+          break;
+        }
+        case 'locker': { // a grey-green locker, a gas mask hung on some
+          ctx.fillStyle = '#56614f'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#3f483a'; for (let k = 0; k < 3; k++) ctx.fillRect(x + 6, y + 8 + k * 6, w - 12, 2);
+          ctx.strokeStyle = '#2f362b'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+          if (ugHash(Math.round(x), Math.round(y)) < 0.5) { ctx.fillStyle = '#6a6a5a'; ctx.beginPath(); ctx.arc(x + w + 4, y + h * 0.6, 9, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.arc(x + w + 1, y + h * 0.56, 2.5, 0, Math.PI * 2); ctx.arc(x + w + 7, y + h * 0.56, 2.5, 0, Math.PI * 2); ctx.fill(); }
+          break;
+        }
+        case 'poster': { // a propaganda poster on the wall
+          ctx.fillStyle = ['#a8321e', '#b8862a', '#2f5e8a', '#a8321e'][d.n ?? 0]; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#f0e2b0'; ctx.font = '800 9px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(['СЛАВА ТРУДУ', 'БУДЬ ГОТОВ!', 'НЕ БОЛТАЙ!', 'ГРАЖДАНСКАЯ ОБОРОНА'][d.n ?? 0], x + w / 2, y + h / 2 + 1, w - 6);
+          break;
+        }
+        case 'stencil': { // the bunker's name painted on the floor
+          ctx.globalAlpha = 0.6; ctx.fillStyle = '#c9b458'; ctx.font = '800 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(d.text, x + w / 2, y + h / 2);
+          break;
+        }
+        case 'ladder': { // an iron ladder going up a shaft, the trapdoor above
+          ctx.fillStyle = '#0b0a09'; ctx.fillRect(x, y, w, h);
+          hazard(x - 6, y - 6, w + 12, 6); hazard(x - 6, y + h, w + 12, 6);
+          ctx.fillStyle = '#7a7a72'; ctx.fillRect(x + 12, y, 5, h); ctx.fillRect(x + w - 17, y, 5, h);
+          ctx.fillStyle = '#9a9a90'; for (let s = 8; s < h; s += 14) ctx.fillRect(x + 12, y + s, w - 24, 4);
+          ctx.fillStyle = '#f4c430'; ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText('▲ ВЫХОД', x + w / 2, y - 16);
+          break;
+        }
+        case 'signal': { // a signal head on the tunnel wall
+          ctx.fillStyle = '#1a1a1a'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = ugHash(Math.round(x), Math.round(y)) < 0.5 ? '#7a1a14' : '#1d5a26';
+          ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, 4, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+      }
+      ctx.restore();
+    }
+
+    /** A blast door in a bunker's doorway, swung open against the inside wall. */
+    function drawBlastDoor(d) {
+      const C = d.w, { x, y } = d;
+      // The doorway's on the cell's outer edge; the frame is thick concrete either side of it.
+      const out = { n: [0, -1], s: [0, 1], w: [-1, 0], e: [1, 0] }[d.side];
+      const horiz = out[1] !== 0; // the opening runs along x
+      const ex = out[0] > 0 ? x + C : x, ey = out[1] > 0 ? y + C : y; // a point on the outer edge
+      ctx.fillStyle = '#5a5d56';
+      if (horiz) { ctx.fillRect(x - 26, ey - 13, 26, 26); ctx.fillRect(x + C, ey - 13, 26, 26); } else { ctx.fillRect(ex - 13, y - 26, 26, 26); ctx.fillRect(ex - 13, y + C, 26, 26); }
+      if (horiz) hazard(x, ey - 6, C, 12); else hazard(ex - 6, y, 12, C);
+      // The leaf: a thick steel slab with a wheel, swung back flat against the wall inside, beside the doorway.
+      const L = C * 0.8;
+      const leaf = { n: { x: x + C + 4, y: y + 2, w: L, h: 20 }, s: { x: x + C + 4, y: y + C - 22, w: L, h: 20 }, w: { x: x + 2, y: y + C + 4, w: 20, h: L }, e: { x: x + C - 22, y: y + C + 4, w: 20, h: L } }[d.side];
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)';
+      ctx.fillRect(leaf.x + 3, leaf.y + 3, leaf.w, leaf.h);
+      ctx.fillStyle = '#5c625e'; ctx.fillRect(leaf.x, leaf.y, leaf.w, leaf.h);
+      ctx.strokeStyle = '#3a3e3b'; ctx.lineWidth = 2; ctx.strokeRect(leaf.x + 1, leaf.y + 1, leaf.w - 2, leaf.h - 2);
+      ctx.fillStyle = '#8a8f8a';
+      const lx = leaf.x + leaf.w / 2, ly = leaf.y + leaf.h / 2;
+      ctx.beginPath(); ctx.arc(lx, ly, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3a3e3b'; ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
+    }
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+    }
+
+    function hazard(x, y, w, h) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+      ctx.fillStyle = '#d4a72c'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 6;
+      for (let s = -h - 20; s < w + h; s += 20) { ctx.beginPath(); ctx.moveTo(x + s, y + h + 2); ctx.lineTo(x + s + h + 4, y - 2); ctx.stroke(); }
+      ctx.restore();
+    }
+
+    function ugStar(cx, cy, R, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) {
+        const a = -Math.PI / 2 + (k * Math.PI) / 5, r = k % 2 ? R * 0.42 : R;
+        k ? ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    /** Overhead, above the people: chandeliers in the stations, the caps across the mine's timber sets. */
+    function drawUndergroundOver(now) {
+      const u = under, C = u.cell;
+      const x0 = Math.max(0, Math.floor(viewBox.l / C)), y0 = Math.max(0, Math.floor(viewBox.t / C));
+      const x1 = Math.min(u.cols - 1, Math.floor(viewBox.r / C)), y1 = Math.min(u.rows - 1, Math.floor(viewBox.b / C));
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const prop = mineProp(cx, cy);
+          if (!prop) continue;
+          ctx.fillStyle = 'rgba(80, 56, 30, .85)';
+          if (prop === 1) ctx.fillRect(cx * C + C / 2 - 7, cy * C - 6, 14, C + 12); else ctx.fillRect(cx * C - 6, cy * C + C / 2 - 7, C + 12, 14);
+        }
+      }
+      u.mark++;
+      const span = C * UG_SPAN;
+      for (let by = Math.floor(viewBox.t / span); by <= Math.floor(viewBox.b / span); by++) {
+        for (let bx = Math.floor(viewBox.l / span); bx <= Math.floor(viewBox.r / span); bx++) {
+          for (const d of u.buckets.get(by * 4096 + bx) ?? []) {
+            if (!d.over || d.drawn === u.mark) continue;
+            d.drawn = u.mark;
+            const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+            if (cx < viewBox.l || cx > viewBox.r || cy < viewBox.t || cy > viewBox.b) continue;
+            // A brass chandelier: a ring of glass shades round a hub.
+            ctx.globalAlpha = 0.9;
+            ctx.strokeStyle = '#a07a32'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(cx, cy, 22, 0, Math.PI * 2); ctx.stroke();
+            for (let k = 0; k < 8; k++) {
+              const a = (k / 8) * Math.PI * 2 + 0.2;
+              ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * 22, cy + Math.sin(a) * 22); ctx.stroke();
+              ctx.fillStyle = '#e8dcb0';
+              ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 24, cy + Math.sin(a) * 24, 5, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.fillStyle = '#c9a227'; ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+    }
+
+    /** Underground there's no sky: just the gloom, closing in round the edges. (Proper lighting comes later.) */
+    function drawUnderShade(w, h, focus) {
+      ctx.save();
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      const g = ctx.createRadialGradient(focus.x, focus.y, 180, focus.x, focus.y, Math.max(w, h) * 0.7);
+      g.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      g.addColorStop(1, 'rgba(0, 0, 0, .6)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
+
+    // The minimap only shows the parts of the underground you've been through (this visit).
+    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d' };
+    function revealUnderground() {
+      if (!me || !playing) return;
+      const u = under, C = u.cell, R = 5;
+      const mx = Math.floor(me.x / C), my = Math.floor(me.y / C);
+      if (u.lastReveal === mx * 100000 + my) return;
+      u.lastReveal = mx * 100000 + my;
+      const g = mapImage.getContext('2d');
+      const s = MAP_PX / Math.max(world.width, world.height);
+      g.setTransform(s, 0, 0, s, 0, 0);
+      for (let cy = my - R; cy <= my + R; cy++) {
+        for (let cx = mx - R; cx <= mx + R; cx++) {
+          if (cx < 0 || cy < 0 || cx >= u.cols || cy >= u.rows || u.seen[cy * u.cols + cx] || (cx - mx) ** 2 + (cy - my) ** 2 > R * R) continue;
+          u.seen[cy * u.cols + cx] = 1;
+          paintMapCell(g, cx, cy);
+        }
+      }
+    }
+
+    function paintMapCell(g, cx, cy) {
+      const code = ugCell(cx, cy), C = under.cell;
+      g.fillStyle = code === UGC.ROCK ? '#24201b' : UG_MAP[code];
+      g.fillRect(cx * C - 1, cy * C - 1, C + 2, C + 2);
+      for (const l of under.ladders) if (Math.floor(l.x / C) === cx && Math.floor(l.y / C) === cy) { g.fillStyle = '#f4c430'; g.fillRect(l.x - 120, l.y - 120, 240, 240); }
+    }
+
+    function buildUnderMinimap(g) {
+      g.fillStyle = '#0d0b09';
+      g.fillRect(0, 0, world.width, world.height);
+      for (let cy = 0; cy < under.rows; cy++) for (let cx = 0; cx < under.cols; cx++) if (under.seen[cy * under.cols + cx]) paintMapCell(g, cx, cy);
+    }
+
+    /** Within reach of a ladder up (underground)? */
+    function nearestLadder() {
+      if (!under || !me) return null;
+      let best = null, bd = Infinity;
+      for (const l of under.ladders) {
+        const d = Math.hypot(l.x - me.x, l.y - me.y);
+        if (d < 70 + radiusOf(me.mass) && d < bd) [best, bd] = [l, d];
+      }
+      return best ? { ...best, d: bd } : null;
+    }
+
     function draw(frameTime) {
       requestAnimationFrame(draw);
       const dt = Math.min((frameTime - lastFrame) / 1000, 0.1);
@@ -11717,6 +12436,7 @@
       ctx.lineWidth = 6;
       ctx.strokeRect(0, 0, world.width, world.height);
       viewBox = { l: camera.x - vw / 2 - 100, t: camera.y - vh / 2 - 100, r: camera.x + vw / 2 + 100, b: camera.y + vh / 2 + 100 };
+      if (under) drawUnderground(frameTime);
       drawForestFloors(viewBox.l, viewBox.t, viewBox.r, viewBox.b);
       drawPaths();
       drawWater(frameTime);
@@ -11917,6 +12637,7 @@
       for (const i of visibleTrees) drawCanopy(terrain.trees[i], canopyAlpha[i]);
       for (const b of visibleBuildings) drawRoof(b, roofAlpha.get(b.id) ?? 1);
       for (const b of visibleBuildings) drawSubRoofs(b, dt);
+      if (under) drawUndergroundOver(frameTime);
       drawSmoke(visibleBuildings, frameTime);
       drawCrows(true, frameTime); // (up in the air: over the trees and roofs)
       drawPowerLines();

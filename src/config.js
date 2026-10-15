@@ -714,6 +714,21 @@ export const config = Object.freeze({
     tradeReach: 110,
     respawnSec: 120,
   },
+  // The underground: a second world (old bunkers, metro tunnels and mine shafts) under the town, a quarter
+  // its size (half as wide and half as high). It only runs while someone's down there (down an opened
+  // bunker trapdoor; up the ladder in an entrance bunker), and stops idleSec after the last one leaves.
+  // Loot lies about at fixed spots and comes back lootRespawnSec (±25%) after it's taken.
+  underground: {
+    scale: 0.5,
+    seed: 1937,
+    entrances: 12, // entrance bunkers (with a ladder up), spread out under the town's trapdoors
+    idleSec: 120,
+    lootRespawnSec: 240,
+    gunChance: 0.2,
+    goodsChance: 0.45,
+    cash: [20, 150],
+    goods: [['vodka', 2, 6], ['bread', 1, 3], ['scrap', 2, 6], ['coal', 3, 8], ['parts', 1, 3], ['guns', 1, 2], ['counterfeit', 1, 3]],
+  },
   // Wolves: at nightfall packsPerNight packs come out of forests in the country (never in town), each
   // packSize strong, and pad about their den. Come within `sight` of one on foot and the pack runs you
   // down (faster than you can sprint); each bite takes biteShare of your max health. They leave anyone in

@@ -414,7 +414,18 @@ function handleMessage(client, msg) {
           client.account = { id: null, name: msg.name, bank: config.accounts.startingBank, guest: true };
         }
       }
+      // Everyone (re)spawns in town; the admin can pick the underground (🕳 in the admin menu).
+      const world = client.admin && client.worldPref === 'underground' ? 'underground' : 'town';
+      if (client.room && client.room.kind !== world) rooms.place(client, world);
       client.room?.spawn(client, msg.name, msg.look);
+      break;
+    }
+    case ClientMsg.WORLD: {
+      if (!isAdminToken(msg.token)) break;
+      client.worldPref = msg.to;
+      if (client.player?.alive) rooms.travel(client, msg.to);
+      else rooms.place(client, msg.to);
+      client.send({ t: ServerMsg.DONE, what: 'world', to: client.room?.kind ?? 'town' });
       break;
     }
     case ClientMsg.BANK:
