@@ -289,6 +289,42 @@ test('down an opened trapdoor into the underground with what you carry, and back
   }
 });
 
+test('a saved crew survives a session that starts underground, and comes back out up the ladder', () => {
+  const store = new AccountStore(':memory:');
+  const { account } = store.createDeviceAccount();
+  const crew = [{ role: 'goon', mode: 'follow', post: null, out: 1 }, { role: 'guard', mode: 'follow', post: null, out: 0 }];
+  store.setCrew(account.id, crew);
+  const rooms = new RoomManager({ store });
+  rooms.map = map;
+  rooms.warm();
+  try {
+    const client = () => ({ id: 1, account: store.live(account.id), send: () => {}, sendRaw: () => {}, chatLimiter: { tryConsume: () => true }, isOpen: true });
+    // Straight into the underground (the admin's switch), then off again: the saved crew is left alone.
+    let c = client();
+    rooms.join(c);
+    rooms.place(c, 'underground');
+    c.room.spawn(c, 'me', null);
+    rooms.leave(c);
+    assert.deepEqual(store.account(account.id).crew, crew, 'still saved');
+    // Again, but up the ladder into town this time: the crew's back (the goon who was out comes out).
+    c = client();
+    rooms.join(c);
+    rooms.place(c, 'underground');
+    const under = c.room;
+    under.spawn(c, 'me', null);
+    Object.assign(c.player, under.world.underground.arrival(under.world.underground.layout.ladders[0].x / config.underground.scale, under.world.underground.layout.ladders[0].y / config.underground.scale));
+    under.trapdoorAction(c, { id: 0, action: 'up' });
+    const town = c.room;
+    assert.equal(town.kind, 'town');
+    const acc = c.account;
+    assert.deepEqual(town.world.hires.roster(acc).map((r) => [r[1], r[2]]).sort(), [['goon', 1], ['guard', 0]]);
+    rooms.leave(c);
+    assert.deepEqual(store.account(account.id).crew.map((s) => [s.role, s.out]).sort(), [['goon', 1], ['guard', 0]], 'saved again on logging off');
+  } finally {
+    rooms.stopAll();
+  }
+});
+
 test("the admin's switch: over to the underground from the menu, and everyone else respawns in town", () => {
   const rooms = new RoomManager();
   rooms.map = map;

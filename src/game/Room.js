@@ -619,7 +619,7 @@ export class Room {
   release(account) {
     if (!account || [...this.clients].some((c) => c.account === account)) return;
     this.#unload(account);
-    const crew = this.world.hires.unload(account); // (a guest's crew isn't kept)
+    const crew = this.kind === 'town' ? this.world.hires.unload(account) : null; // (a guest's crew isn't kept; goons only work in town, so only the town saves them)
     if (crew && account.id && !account.guest) this.#store('setCrew', account.id, crew);
   }
 
@@ -656,7 +656,6 @@ export class Room {
     if (client.player?.alive) return;
     const account = client.account;
     client.look = look; // (kept for going between worlds)
-    const town = this.kind === 'town' && !travel; // (homes, a crew and a sentence come back in town, once)
     if (account?.id && !account.guest && name !== 'Player' && this.store?.setName) {
       // My things are labelled with the name I play under (if nobody else has it).
       const was = account.name;
@@ -672,7 +671,7 @@ export class Room {
     }
     const player = this.world.spawnPlayer(name, look, account);
     player.account = client.account;
-    if (account?.id && !account.guest && town) this.world.hires.restore(player, account.crew); // my goons and guards, back from when I left (once a session)
+    if (account?.id && !account.guest && this.kind === 'town') this.world.hires.restore(player, account.crew); // my goons and guards, back from when I left (once a session; up a ladder too, if the session began underground)
     player.achStart = { x: player.x, y: player.y }; // (walking away from here is the first achievement)
     // Back with what they had on them when they last left.
     if (account?.id && !account.guest && !travel) {

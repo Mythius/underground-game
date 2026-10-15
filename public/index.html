@@ -9238,6 +9238,25 @@
     }
 
     // Sandy banks, deep and shallow water, and a slow drifting shimmer.
+    /**
+     * Rivers run across the whole map: the stretches of `river` near the screen (within m), as [first, last]
+     * point indexes, so only those get drawn. river.along: how far along the river each point is.
+     */
+    function riverRuns(river, m) {
+      const pts = river.points;
+      if (river.alongOf !== pts) { let d = 0; river.along = pts.map(([x, y], i) => (i ? (d += Math.hypot(x - pts[i - 1][0], y - pts[i - 1][1])) : 0)); river.alongOf = pts; }
+      const runs = [];
+      let run = null;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
+        const on = Math.max(ax, bx) > viewBox.l - m && Math.min(ax, bx) < viewBox.r + m && Math.max(ay, by) > viewBox.t - m && Math.min(ay, by) < viewBox.b + m;
+        if (!on) run = null;
+        else if (run) run[1] = i + 1;
+        else runs.push((run = [i, i + 1]));
+      }
+      return runs;
+    }
+
     function drawWater(now) {
       if (under) return; // (the underground lake is drawn with the caves)
       const { rivers, lakes } = terrain.water;
@@ -9246,16 +9265,19 @@
       const layers = [[mix('#b9a46e', '#e4eaf0', sn), 28], ...(sn > 0.02 ? [[mix('#b9a46e', '#e9f1f6', sn), 8]] : []), [mix('#2a6590', '#2c4d63', sn), 0], [mix('#3479a8', '#355c75', sn), -0.4]];
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      const runs = rivers.map((river) => riverRuns(river, river.width + 60));
+      const shownLakes = lakes.filter((l) => l.x + l.r + 30 > viewBox.l && l.x - l.r - 30 < viewBox.r && l.y + l.r + 30 > viewBox.t && l.y - l.r - 30 < viewBox.b);
       for (const [color, grow] of layers) {
         ctx.strokeStyle = color;
         ctx.fillStyle = color;
-        for (const river of rivers) {
+        rivers.forEach((river, ri) => {
+          if (!runs[ri].length) return;
           ctx.lineWidth = grow < 0 ? river.width * (1 + grow) : river.width + grow;
           ctx.beginPath();
-          river.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          for (const [a, b] of runs[ri]) for (let i = a; i <= b; i++) (i > a ? ctx.lineTo : ctx.moveTo).call(ctx, river.points[i][0], river.points[i][1]);
           ctx.stroke();
-        }
-        for (const lake of lakes) {
+        });
+        for (const lake of shownLakes) {
           const r = grow < 0 ? lake.r * (1 + grow * 0.6) : lake.r + grow / 2;
           ctx.beginPath(); ctx.arc(lake.x, lake.y, r, 0, Math.PI * 2); ctx.fill();
         }
@@ -9300,14 +9322,16 @@
       ctx.strokeStyle = sn > 0.5 ? 'rgba(220, 235, 245, .3)' : 'rgba(190, 225, 255, .25)'; // drifting slush, or shimmer
       ctx.lineWidth = sn > 0.5 ? 4 : 3;
       ctx.setLineDash(sn > 0.5 ? [16, 70] : [22, 60]);
-      ctx.lineDashOffset = -now / 40; // flows downstream
-      for (const river of rivers) {
-        for (const off of [-0.2, 0.15]) {
-          ctx.beginPath();
-          river.points.forEach(([x, y], i) => (i ? ctx.lineTo(x + off * river.width, y) : ctx.moveTo(x + off * river.width, y)));
-          ctx.stroke();
+      rivers.forEach((river, ri) => {
+        for (const [a, b] of runs[ri]) {
+          ctx.lineDashOffset = river.along[a] - now / 40; // flows downstream (each stretch picks the dashes up where they'd be)
+          for (const off of [-0.2, 0.15]) {
+            ctx.beginPath();
+            for (let i = a; i <= b; i++) (i > a ? ctx.lineTo : ctx.moveTo).call(ctx, river.points[i][0] + off * river.width, river.points[i][1]);
+            ctx.stroke();
+          }
         }
-      }
+      });
       ctx.setLineDash([]);
       ctx.lineDashOffset = 0;
     }
@@ -9797,19 +9821,26 @@
       }
 
       // Faded white paint: concrete curbs, edge lines, dashed lanes and a double solid line down the middle.
+      // Roads run the whole map, so only the stretch on screen (lo..hi along the road) is painted. Each run of
+      // paint starts its dashes afresh, so a run cut short at the screen's edge starts on a whole dash period:
+      // the dashes sit exactly where they would if the whole run were drawn.
       const paint = (r, offset, color, dash, width) => {
         const wr = roadWear(r);
+        const lo = (wr.horizontal ? viewBox.l - r.x : viewBox.t - r.y) - 100, hi = (wr.horizontal ? viewBox.r - r.x : viewBox.b - r.y) + 100;
+        const period = dash.length ? dash.reduce((a, b) => a + b, 0) * (dash.length % 2 ? 2 : 1) : 0;
         ctx.setLineDash(dash);
         ctx.strokeStyle = color;
         ctx.lineWidth = width;
         ctx.beginPath();
         let from = 0;
         for (const [g0, g1] of [...wr.gaps, [wr.len, wr.len]]) {
-          if (g0 > from) {
-            if (wr.horizontal) { ctx.moveTo(r.x + from, r.y + offset); ctx.lineTo(r.x + g0, r.y + offset); }
-            else { ctx.moveTo(r.x + offset, r.y + from); ctx.lineTo(r.x + offset, r.y + g0); }
+          if (g0 > from && g0 > lo && from < hi) {
+            const a = from < lo ? (period ? from + Math.floor((lo - from) / period) * period : lo) : from, b = Math.min(g0, hi);
+            if (wr.horizontal) { ctx.moveTo(r.x + a, r.y + offset); ctx.lineTo(r.x + b, r.y + offset); }
+            else { ctx.moveTo(r.x + offset, r.y + a); ctx.lineTo(r.x + offset, r.y + b); }
           }
           from = Math.max(from, g1);
+          if (from >= hi) break;
         }
         ctx.stroke();
       };
@@ -9821,8 +9852,9 @@
         ctx.strokeStyle = '#8f8e88';
         ctx.lineWidth = 7;
         ctx.beginPath();
-        if (wr.horizontal) { ctx.moveTo(r.x, r.y + 3); ctx.lineTo(r.x + r.w, r.y + 3); ctx.moveTo(r.x, r.y + r.h - 3); ctx.lineTo(r.x + r.w, r.y + r.h - 3); }
-        else { ctx.moveTo(r.x + 3, r.y); ctx.lineTo(r.x + 3, r.y + r.h); ctx.moveTo(r.x + r.w - 3, r.y); ctx.lineTo(r.x + r.w - 3, r.y + r.h); }
+        const x0 = Math.max(r.x, viewBox.l), x1 = Math.min(r.x + r.w, viewBox.r), y0 = Math.max(r.y, viewBox.t), y1 = Math.min(r.y + r.h, viewBox.b); // (just the bit on screen)
+        if (wr.horizontal) { ctx.moveTo(x0, r.y + 3); ctx.lineTo(x1, r.y + 3); ctx.moveTo(x0, r.y + r.h - 3); ctx.lineTo(x1, r.y + r.h - 3); }
+        else { ctx.moveTo(r.x + 3, y0); ctx.lineTo(r.x + 3, y1); ctx.moveTo(r.x + r.w - 3, y0); ctx.lineTo(r.x + r.w - 3, y1); }
         ctx.stroke();
         // Grey slush and snow pushed against the curbs.
         ctx.fillStyle = `rgba(205, 212, 220, ${0.45 * snowAmount})`;

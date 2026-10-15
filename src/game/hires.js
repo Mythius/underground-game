@@ -306,6 +306,7 @@ export class Hires {
   unload(account) {
     if (!account) return null;
     const saved = this.crewSave(account); // (who's out now comes back out when they log in)
+    if (account.id && !this.restored.has(account.id) && !saved.length) return null; // never brought back this session (played only underground): the saved crew stays as it is
     for (const h of this.list.filter((x) => x.employer === account && CREW.includes(x.role))) this.#putAway(h);
     this.away = this.away.filter((a) => a.employer !== account);
     if (account.id) this.restored.delete(account.id);
