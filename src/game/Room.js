@@ -170,6 +170,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.giantRats?.events.splice(0) ?? []) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.homeless?.events.splice(0) ?? []) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -556,7 +560,7 @@ export class Room {
         carrySpeed: config.bodies.carrySpeed, // walking with a body over your shoulder
       },
       weapons: Object.fromEntries(
-        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel, melee: w.melee ?? false, cooldownSec: w.cooldownSec }]),
+        Object.entries(config.weapons).map(([type, w]) => [type, { name: w.name, magazineSize: w.magazineSize, reloadSec: w.reloadSec, barrel: w.barrel, melee: w.melee ?? false, thrown: w.thrown ?? false, cooldownSec: w.cooldownSec }]),
       ),
     });
   }
@@ -920,6 +924,15 @@ export class Room {
     client.send({ t: ServerMsg.DONE, what: 'miner_tool', ...r });
   }
 
+  /** The trader underground: one bottle of vodka for bread, a bat, a knife or a Molotov. */
+  traderAction(client, msg) {
+    const p = client.player;
+    if (!p?.alive || !this.world.underground) return;
+    const r = this.world.underground.trade(p, msg.item);
+    if (typeof r === 'string') return client.send({ t: ServerMsg.ERROR, code: r });
+    client.send({ t: ServerMsg.DONE, what: 'traded', ...r });
+  }
+
   /** A bunker's trapdoor: a guard's key opens it; once it's open, down the ladder. Underground: up a ladder. */
   trapdoorAction(client, msg) {
     const p = client.player;
@@ -1117,6 +1130,14 @@ export class Room {
     return out;
   }
 
+  /** Molotovs in the air ([id, x, y, height 0–1]) and the fires burning ([id, x, y, r, seconds left, of]): 0 when there are none. */
+  #molotovsInView(cx, cy) {
+    const range = config.world.viewDistance + 100, w = this.world;
+    if (!w.molotovs.length && !w.fires.length) return 0;
+    const near = (o) => Math.abs(o.x - cx) <= range && Math.abs(o.y - cy) <= range;
+    return [w.molotovs.filter(near).map((m) => [m.id, Math.round(m.x), Math.round(m.y), Math.round(m.h * 100) / 100]), w.fires.filter(near).map((f) => [f.id, Math.round(f.x), Math.round(f.y), f.r, Math.round(f.left * 10) / 10, f.sec])];
+  }
+
   /** Per-client snapshot containing only what's in that client's view. */
   #sendSnapshots() {
     const tick = this.world.tick;
@@ -1161,12 +1182,15 @@ export class Room {
           pickups,
           vehicles,
           bullets: this.#bulletsInView(cx, cy),
+          molotovs: this.#molotovsInView(cx, cy),
           npcs: this.world.townsfolk.visible(cx, cy, config.world.viewDistance),
           bodies: this.world.bodies.near(cx, cy, config.world.viewDistance),
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
           wolves: this.world.wolves.visible(cx, cy, config.world.viewDistance),
           bears: this.world.bears.visible(cx, cy, config.world.viewDistance),
           homeless: this.world.homeless?.visible(cx, cy, config.world.viewDistance) ?? [],
+          rats: this.world.giantRats?.visible(cx, cy, config.world.viewDistance) ?? [],
+          tnt: this.world.tnt.some((c) => c.blown) ? this.world.tnt.filter((c) => c.blown).map((c) => c.decor) : 0, // crates of dynamite that have gone off (their index in the decor)
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),
           // Teammates wherever they are, for the map: [player id, x, y, driving].

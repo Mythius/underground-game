@@ -45,6 +45,7 @@ export const ClientMsg = Object.freeze({
   CROWS: 'crows', // { t } wheat in hand: toss a handful to the crows (uses one)
   TRAPDOOR: 'trapdoor', // { t, id, action? } E on a bunker's trapdoor (id: the bunker): open it with a guard's key; action 'down': climb down it (once open); 'up': up the ladder you're at, underground
   MINER: 'miner', // { t } E on the old miner underground: borrow his pickaxe (or give it back)
+  TRADER: 'trader', // { t, item: 'bread' | 'bat' | 'knife' | 'molotov' } the trader in a bunker underground: one bottle of vodka for it
   WORLD: 'world', // { t, to: 'town' | 'underground', token } admin: which world to play in (now, if playing, and on every spawn)
   CREW: 'crew', // { t, action: 'away' | 'out' | 'fire' | 'mode' (mode: 'follow' | 'wait') | 'post' (post: building id), id } the clipboard: your goons and guards
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar

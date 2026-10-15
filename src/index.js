@@ -473,6 +473,9 @@ function handleMessage(client, msg) {
     case ClientMsg.MINER:
       client.room?.minerAction(client);
       break;
+    case ClientMsg.TRADER:
+      client.room?.traderAction(client, msg);
+      break;
     case ClientMsg.TRAPDOOR:
       client.room?.trapdoorAction(client, msg);
       break;

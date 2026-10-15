@@ -32,6 +32,7 @@ export const SOUND_SLOTS = [
     { id: 'hit', name: 'Someone else gets hit' },
     { id: 'death', name: 'Death' },
     { id: 'explosion', name: 'Vehicle explosion' },
+    { id: 'molotov', name: 'A Molotov breaking and catching fire' },
     { id: 'bat', name: 'Swinging a baseball bat' },
     { id: 'batHit', name: 'A bat smashing into an ATM' },
   ] },
@@ -80,6 +81,7 @@ export const SOUND_SLOTS = [
   { group: 'Animals', slots: [
     { id: 'howl', name: 'A wolf howling (at night, in the woods)' },
     { id: 'rat', name: 'A rat squeaking (underground, now and then)' },
+    { id: 'giantRat', name: 'A giant rat shrieking (when one spots you, underground)' },
     { id: 'bearBreath', name: "The albino bear's heavy breathing", loop: true, note: 'Plays near the bear underground, louder the closer; faster while it charges. Built-in default: slow rasping breaths.' },
     { id: 'bearRoar', name: 'The albino bear roars (it heard you, close)' },
     { id: 'growl', name: 'Wolves snarling as they run at you' },

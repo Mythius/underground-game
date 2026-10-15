@@ -219,7 +219,7 @@ export class Railway {
   #unregistered(p) {
     const out = [];
     const v = this.world.economy.vehicleOf(p);
-    for (const list of [p.inventory, v?.cargo ?? []]) list.forEach((s, i) => s?.illegal && out.push([list, i]));
+    for (const list of [p.inventory, v?.cargo ?? []]) list.forEach((s, i) => s?.illegal && !config.weapons[s.type]?.thrown && out.push([list, i])); // (not Molotovs)
     return out;
   }
 

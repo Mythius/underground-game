@@ -26,6 +26,7 @@ import { Cats } from './cats.js';
 import { Wolves } from './wolves.js';
 import { Bears } from './bear.js';
 import { Homeless } from './homeless.js';
+import { GiantRats } from './giantRats.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
@@ -96,6 +97,8 @@ export class World {
     this.food = new Map();
     this.bullets = new Map();
     this.pickups = new Map();
+    this.molotovs = []; // Molotov cocktails in the air: { id, owner, x0, y0, x1, y1, t (0–1 of the way), sec, x, y, h }
+    this.fires = []; // where they broke: { id, x, y, r, left, sec, dps, owner, pulse }
     this.pickupTimer = 0;
     this.vehicles = new Map();
     this.vehicleRespawns = []; // seconds until each destroyed vehicle is replaced
@@ -158,8 +161,11 @@ export class World {
       ...this.dumpsters.map((d) => ({ ...d, dumpster: true })),
     ];
     // Underground: the rock is solid, and so are the pillars, bunks, crates and carts down there.
-    if (map?.underground) this.blocks.push(...map.underground.decor.filter((d) => d.solid).map(({ x, y, w, h }) => ({ x, y, w, h })));
+    if (map?.underground) this.blocks.push(...map.underground.decor.filter((d) => d.solid && d.k !== 'tnt').map(({ x, y, w, h }) => ({ x, y, w, h })));
+    // …and the crates of dynamite, until one goes off: [{ x, y, w, h, decor (its index in the layout's decor), blown, back }]
+    this.tnt = (map?.underground?.decor ?? []).flatMap((d, i) => (d.k === 'tnt' ? [{ x: d.x, y: d.y, w: d.w, h: d.h, decor: i, blown: false, back: 0 }] : []));
     this.wallGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
+    for (const c of this.tnt) this.wallGrid.insert({ x: c.x + c.w / 2, y: c.y + c.h / 2, radius: Math.max(c.w, c.h) / 2, rect: c, tnt: c });
     const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? rockRects(map.underground) : [])];
     for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: Boolean(w.low) }); // (barbed wire: low, see-through)
     for (const w of this.rails) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
@@ -224,6 +230,7 @@ export class World {
     this.pendingDoors = []; // doors opened outside #handleUse (picked locks), to announce
     this.underground = map?.underground ? new Underground(this, map.underground) : null; // (the underground world: its layout and loot)
     this.homeless = map?.underground ? new Homeless(this, map.underground) : null; // (the knife-carrying homeless down there)
+    this.giantRats = map?.underground ? new GiantRats(this, map.underground) : null; // (and rats the size of dogs)
     this.rebuildGrid();
   }
 
@@ -362,7 +369,7 @@ export class World {
   /** Walls whose bounding boxes come within `range` of (x, y). Bullets pass `tall` to skip low bridge rails. */
   wallsNear(x, y, range, tall = false) {
     const out = [];
-    for (const e of this.wallGrid.query(x, y, range)) if (!e.door?.open && !(tall && e.low)) out.push(e.rect);
+    for (const e of this.wallGrid.query(x, y, range)) if (!e.door?.open && !e.tnt?.blown && !(tall && e.low)) out.push(e.rect);
     return out;
   }
 
@@ -998,7 +1005,7 @@ export class World {
     this.rebuildGrid();
     const explosions = [];
     const deaths = this.#resolveCollisions(dt);
-    deaths.push(...this.#moveBullets(dt, explosions), ...this.meleeDeaths.splice(0));
+    deaths.push(...this.#moveBullets(dt, explosions), ...this.meleeDeaths.splice(0), ...this.#burn(dt, explosions));
 
     this.economy.step(dt);
     this.warehouses.step(dt);
@@ -1034,6 +1041,12 @@ export class World {
       if (!this.players.has(p.id)) continue;
       this.removePlayer(p.id);
       deaths.push({ victim: p, killer: { name: 'a homeless man' } });
+    }
+    this.giantRats?.step(dt);
+    for (const p of this.giantRats?.kills.splice(0) ?? []) {
+      if (!this.players.has(p.id)) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'a giant rat' } });
     }
     this.wolves.step(dt);
     for (const p of this.wolves.kills.splice(0)) {
@@ -1488,6 +1501,30 @@ export class World {
         w.y += (dy / dist) * (reach - dist);
       }
     }
+    // Underground: the homeless and the giant rats are solid too — walk into one and you shove him aside (never into the rock).
+    const under = [...(this.homeless?.list ?? []).map((h) => [h, config.homeless.radius]), ...(this.giantRats?.list ?? []).map((g) => [g, config.giantRats.radius])];
+    if (!under.length) return;
+    for (const p of this.players.values()) {
+      if (p.vehicle || !p.alive || p.hidden) continue;
+      for (const [w, wr] of under) {
+        const dx = w.x - p.x, dy = w.y - p.y, reach = p.radius + wr;
+        if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
+        const dist = Math.hypot(dx, dy) || 1;
+        if (dist >= reach) continue;
+        const was = [w.x, w.y];
+        w.x += (dx / dist) * (reach - dist);
+        w.y += (dy / dist) * (reach - dist);
+        for (const wall of this.wallsNear(w.x, w.y, wr)) pushCircleOutOfRect(w, wr, wall);
+        if (this.isSwimming(w.x, w.y)) [w.x, w.y] = was;
+        const left = reach - Math.hypot(w.x - p.x, w.y - p.y); // pinned against the rock: then you're the one stopped
+        if (left > 0.5) {
+          const d2 = Math.hypot(w.x - p.x, w.y - p.y) || 1;
+          p.x -= ((w.x - p.x) / d2) * left;
+          p.y -= ((w.y - p.y) / d2) * left;
+          for (const wall of this.wallsNear(p.x, p.y, p.radius)) pushCircleOutOfRect(p, p.radius, wall);
+        }
+      }
+    }
   }
 
   /**
@@ -1547,6 +1584,13 @@ export class World {
       if (!gun) continue; // empty hand
 
       const stats = this.weapons[gun.type];
+      if (stats.thrown) { // a Molotov: thrown, one at a time; the slot's empty once the last one's gone
+        if (!p.input.fire || p.shotCooldown > 0 || gun.ammo <= 0) continue;
+        p.shotCooldown = stats.cooldownSec;
+        this.#throwMolotov(p, stats);
+        if (--gun.ammo <= 0) p.inventory[p.selected] = null;
+        continue;
+      }
       if (stats.melee) {
         if (!p.input.fire || p.shotCooldown > 0) continue;
         p.shotCooldown = stats.cooldownSec;
@@ -1581,6 +1625,108 @@ export class World {
         p.nextFireCrime = this.economy.time + 1;
         this.police.crime(p, 'fire');
       }
+    }
+  }
+
+  /** A Molotov, thrown where p's aiming: it flies its range, or breaks against the first wall in the way. */
+  #throwMolotov(p, stats) {
+    const aim = p.input.aim ?? 0, c = Math.cos(aim), s = Math.sin(aim);
+    const x0 = p.x + c * p.radius, y0 = p.y + s * p.radius;
+    const ex = x0 + c * stats.range, ey = y0 + s * stats.range;
+    let t = 1;
+    for (const w of this.wallsNear((x0 + ex) / 2, (y0 + ey) / 2, stats.range / 2 + 6, true)) {
+      const hit = segmentRectHit(x0, y0, ex, ey, w, 6);
+      if (hit !== null && hit < t) t = hit;
+    }
+    t = Math.max(0, t - 10 / stats.range); // (just short of the wall it smashed on: the fire's on this side)
+    const x1 = x0 + (ex - x0) * t, y1 = y0 + (ey - y0) * t;
+    this.molotovs.push({ id: this.nextEntityId++, owner: p, x0, y0, x1, y1, t: 0, sec: stats.flightSec * Math.max(0.2, t), x: x0, y: y0, h: 0, fire: stats.fire });
+    if ((p.nextFireCrime ?? 0) <= this.economy.time) { // (draws attention like gunfire)
+      p.nextFireCrime = this.economy.time + 1;
+      this.police.crime(p, 'fire');
+    }
+  }
+
+  /** Molotovs flying and landing, and the fires they leave burning whatever's in them. Returns the players it killed. */
+  #burn(dt, explosions) {
+    const deaths = [];
+    for (let i = this.molotovs.length - 1; i >= 0; i--) {
+      const m = this.molotovs[i];
+      m.t = Math.min(1, m.t + dt / m.sec);
+      m.x = m.x0 + (m.x1 - m.x0) * m.t;
+      m.y = m.y0 + (m.y1 - m.y0) * m.t;
+      m.h = Math.sin(m.t * Math.PI); // (up and over)
+      if (m.t < 1) continue;
+      this.molotovs.splice(i, 1);
+      if (this.isSwimming(m.x1, m.y1)) continue; // in the water: it just sinks
+      this.fires.push({ id: m.id, x: m.x1, y: m.y1, r: m.fire.radius, left: m.fire.sec, sec: m.fire.sec, dps: m.fire.dps, owner: m.owner, pulse: 0 });
+    }
+    for (let i = this.fires.length - 1; i >= 0; i--) {
+      const f = this.fires[i];
+      if ((f.left -= dt) <= 0) { this.fires.splice(i, 1); continue; }
+      if ((f.pulse -= dt) > 0) continue;
+      f.pulse = 0.25;
+      this.#scorch(f, f.dps * 0.25, deaths, explosions);
+      for (const c of this.tnt) if (!c.blown && Math.hypot(c.x + c.w / 2 - f.x, c.y + c.h / 2 - f.y) < f.r + 20) this.#blowTnt(c, f.owner, deaths, explosions); // (the fire reaches a crate of dynamite)
+    }
+    for (const c of this.tnt) { // a new crate where one went off, a good while later, with nobody about to see it
+      if (!c.blown || (c.back -= dt) > 0) continue;
+      if ([...this.players.values()].some((p) => Math.hypot(p.x - c.x, p.y - c.y) < config.tnt.respawnClear)) { c.back = 10; continue; }
+      c.blown = false;
+    }
+    return deaths;
+  }
+
+  /** A crate of dynamite goes off (set off by `by`): a blast that hurts everything in reach, and sets off the crates near it. */
+  #blowTnt(c, by, deaths, explosions) {
+    if (c.blown) return;
+    const t = config.tnt;
+    Object.assign(c, { blown: true, back: t.respawnSec });
+    const x = c.x + c.w / 2, y = c.y + c.h / 2;
+    explosions.push({ x: Math.round(x), y: Math.round(y) });
+    this.#harmArea(x, y, t.radius, (d) => t.damage * Math.max(0.15, 1 - d / t.radius), by, deaths, explosions, true);
+    for (const o of this.tnt) if (!o.blown && Math.hypot(o.x + o.w / 2 - x, o.y + o.h / 2 - y) < t.radius * 0.8 && this.lineOfSight(x, y, o.x + o.w / 2, o.y + o.h / 2)) this.#blowTnt(o, by, deaths, explosions);
+  }
+
+  /** One burst of a fire's heat: `dmg` to everyone and everything in it (its thrower too, if he stands in it). */
+  #scorch(f, dmg, deaths, explosions) {
+    this.#harmArea(f.x, f.y, f.r, () => dmg, f.owner, deaths, explosions, false, 'the fire');
+  }
+
+  /**
+   * Hurts everyone and everything within r of (x, y) — players, hires, the homeless, rats, wolves, bears,
+   * townsfolk, officers, cars — by dmgAt(distance), on behalf of `o`. walled: not through rock or walls.
+   */
+  #harmArea(cx, cy, r, dmgAt, o, deaths, explosions, walled, selfName = 'the blast') {
+    const f = { x: cx, y: cy, r };
+    const inFire = (x, y, rad = 0) => Math.hypot(x - f.x, y - f.y) < f.r + rad * 0.5 && (!walled || this.lineOfSight(f.x, f.y, x, y));
+    const at = (x, y) => dmgAt(Math.hypot(x - f.x, y - f.y));
+    const blame = o?.kind === 'player' || o?.kind === 'hire' ? o : null; // (who answers for it: not an officer's stray bullet)
+    for (const p of [...this.players.values()]) {
+      if (!p.alive || p.vehicle || p.hidden || !inFire(p.x, p.y, p.radius)) continue;
+      p.hurt(at(p.x, p.y));
+      const killed = p.health <= 0;
+      if (o !== p && blame) {
+        if (!this.police.lawful(o, p)) this.police.crime(o, killed ? 'murder' : 'assault');
+        this.hires.noteAttack(o, p);
+      }
+      if (killed) {
+        this.removePlayer(p.id);
+        deaths.push({ victim: p, killer: o === p || !o ? { name: selfName } : o });
+      }
+    }
+    for (const h of [...this.hires.list]) if (!h.vehicle && inFire(h.x, h.y, h.radius)) this.hires.damage(h, at(h.x, h.y), o);
+    for (const h of [...(this.homeless?.list ?? [])]) if (inFire(h.x, h.y, config.homeless.radius)) this.homeless.damage(h, at(h.x, h.y), o);
+    for (const r of [...(this.giantRats?.list ?? [])]) if (inFire(r.x, r.y, config.giantRats.radius)) this.giantRats.damage(r, at(r.x, r.y), o);
+    for (const w of [...this.wolves.list]) if (inFire(w.x, w.y, config.wolves.radius)) this.wolves.damage(w, at(w.x, w.y), o);
+    for (const b of [...this.bears.list]) if (inFire(b.x, b.y, config.bear.radius)) this.bears.damage(b, at(b.x, b.y), o);
+    for (const t of [...this.townsfolk.people]) if (t.inside <= 0 && inFire(t.x, t.y, 17)) { if (blame) this.#hurtTownsperson(t, at(t.x, t.y), o); else this.townsfolk.damage(t, at(t.x, t.y)); }
+    for (const u of [...this.police.units]) if (u.officer.onFoot && u.officer.health > 0 && inFire(u.officer.x, u.officer.y, 20)) this.police.damageOfficer(u.officer, at(u.officer.x, u.officer.y), o);
+    for (const v of [...this.vehicles.values()]) {
+      if (!vehicleCircles(v, v.stats).some((c) => inFire(c.x, c.y, c.r))) continue;
+      v.health -= at(v.x, v.y);
+      if (blame && v.driver && v.driver !== o && !this.police.lawful(o, v.driver)) this.police.crime(o, 'assault');
+      if (v.health <= 0 && this.vehicles.has(v.id)) this.#destroyVehicle(v, o, deaths, explosions);
     }
   }
 
@@ -1623,6 +1769,7 @@ export class World {
     for (const w of this.wolves.list) consider('wolf', w, config.wolves.radius);
     for (const b of this.bears.list) consider('bear', b, config.bear.radius);
     for (const h of this.homeless?.list ?? []) consider('homeless', h, config.homeless.radius);
+    for (const r of this.giantRats?.list ?? []) consider('rat', r, config.giantRats.radius);
     if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
       const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
       if (atm) this.#smashAtm(p, atm);
@@ -1634,6 +1781,7 @@ export class World {
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
     if (best.kind === 'wolf') return this.wolves.damage(t, config.wolves.health * stats.share + 0.01, p);
     if (best.kind === 'homeless') return void this.homeless.damage(t, config.homeless.health * stats.share + 0.01, p);
+    if (best.kind === 'rat') return void this.giantRats.damage(t, config.giantRats.health * stats.share + 0.01, p);
     if (best.kind === 'bear') return this.bears.damage(t, 60 * stats.share, p); // (a knife: 20 a stab. It hardly notices.)
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
@@ -1661,6 +1809,14 @@ export class World {
         continue;
       }
 
+      // A crate of dynamite in the way: it goes off.
+      const crate = this.tnt.find((c) => !c.blown && Math.abs(c.x + c.w / 2 - b.x) < 300 && Math.abs(c.y + c.h / 2 - b.y) < 300 && segmentRectHit(px, py, b.x, b.y, c, b.radius) !== null);
+      if (crate) {
+        this.bullets.delete(b.id);
+        this.#blowTnt(crate, b.owner, deaths, explosions);
+        continue;
+      }
+
       // Stop the path at the first wall it touches.
       let wallHit = false;
       const len = Math.hypot(b.x - px, b.y - py);
@@ -1684,6 +1840,12 @@ export class World {
       if (bear) {
         this.bullets.delete(b.id);
         this.bears.damage(bear, b.damage, shooter);
+        continue;
+      }
+      const rat = this.giantRats?.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);
+      if (rat) {
+        this.bullets.delete(b.id);
+        this.giantRats.damage(rat, b.damage, shooter);
         continue;
       }
       const tramp = this.homeless?.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);

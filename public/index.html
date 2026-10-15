@@ -844,6 +844,9 @@
     let fireplaces = []; // every fireplace on the map (walls with fireplace: true), for their glow
     let storedReminded = false;
     const explosions = []; // { x, y, start }
+    let ratToastAt = 0; // (the giant rat warning: not every time one spots you)
+    let flames = []; // Molotov fires burning in view, from the snapshot: [id, x, y, r, seconds left, of] (they light up the dark)
+    const seenFires = new Set(); // (each one's smash and whoosh plays once)
     let doorReach = 45;
     let useRequested = false;
     const canopyAlpha = []; // per tree, fades when I'm underneath
@@ -936,7 +939,8 @@
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
       rats.list = []; // (the last world's rats)
-      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))];
+      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] })),
+        ...(under?.decor ?? []).filter((d) => d.k === 'tnt').map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))]; // (a crate of dynamite: solid till it goes off — d.open)
       doorReach = msg.doorReach ?? doorReach;
       if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost, knockDecay = knockDecay } = msg.vehicles);
       if (msg.homes) homesCfg = msg.homes;
@@ -1141,6 +1145,7 @@
           if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
           if (msg.kind === 'bear') { sfx('bearRoar'); addShake(4); toast('🐻 It heard you. It can\'t see — stand still, or run'); }
+          if (msg.kind === 'giant_rat') { sfx('giantRat', null); if (performance.now() > (ratToastAt ?? 0)) { ratToastAt = performance.now() + 15000; toast('🐀 A rat the size of a dog — red eyes, coming straight for you! Sprint, or fight it.'); } }
           if (msg.kind === 'homeless_attack') { addShake(2); toast(msg.behind ? '🔪 Someone\'s right behind you — a homeless man, knife out!' : '🔪 A homeless man comes at you with a knife!'); }
           if (msg.kind === 'bear_killed') toast('🐻 The albino bear is down. Whatever it ate is lying there.');
           if (msg.kind === 'wolves') { sfx('growl'); addShake(2); toast('🐺 Wolves! They\'re faster than you — get in a car, or fight them off'); }
@@ -1298,6 +1303,7 @@
           if (msg.what === 'wh_take' || msg.what === 'wh_mtake') toast('📤 Loaded into your cargo');
           if (msg.what === 'wh_mload') toast('📥 Loaded into the machine');
           if (msg.what === 'wh_place') sfx('build');
+          if (msg.what === 'traded') { sfx('pickup'); traderSays(pick(SPEECH.traderDeal ?? ['…'])); toast(`🕴️ One bottle of vodka for ${TRADES.find((x) => x[0] === msg.item)?.[1] ?? msg.item}.${msg.item === 'molotov' ? ' Select it and click to throw — and keep out of the fire yourself. Contraband in town.' : ''}`); }
           if (msg.what === 'miner_tool') { toast(msg.borrowed ? '⛏ The old miner\'s pickaxe — swing it at the gold in the walls. Don\'t take it far.' : '⛏ You give him his pickaxe back. He sniffs it.'); if (msg.borrowed) minerSays(pick(SPEECH.minerLend)); }
           if (msg.what === 'work_tool') toast(msg.borrowed ? `${TOOL_ICONS[msg.borrowed]} ${TOOL_NAMES[msg.borrowed]} borrowed — click to work. It goes back when you leave.` : 'Tool handed back');
           if (msg.what === 'work_haul') { sfx('coin'); toast(`💰 The foreman paid ${money(msg.paid)} for ${msg.qty}`); }
@@ -1335,6 +1341,7 @@
           break;
         case 'error':
           if (GONE[msg.code]) { goneWhy = GONE[msg.code]; toast(goneWhy); break; }
+          if (traderOpen && !shopEl.hidden && TRADER_ERRORS[msg.code]) { sfx('error'); toast(TRADER_ERRORS[msg.code]); break; }
           if (!['chat_too_fast', 'join_first'].includes(msg.code)) sfx('error');
           if (msg.code === 'not_enough_cash') toast('Not enough cash — withdraw some at an ATM');
           if (msg.code === 'not_enough_bank') toast("You don't have that much in the bank");
@@ -1693,6 +1700,7 @@
     }
 
     function renderShop() {
+      if (traderOpen) return renderTrader();
       document.getElementById('shop-coins').textContent = `${money(coins)}`;
       renderGasSection(nearestShopkeeper());
       const live = econ.gas?.catalog; // prices at this shop right now
@@ -1724,6 +1732,10 @@
     }
 
     function openShop() {
+      if (traderOpen) { // (the panel was the trader's: back to the shop's own heading)
+        traderOpen = false;
+        ['h2', '.sub', '.close'].forEach((q, i) => { shopEl.querySelector(q).innerHTML = shopHead[i]; });
+      }
       const keeper = nearestShopkeeper();
       econ.gas = null;
       if (keeper?.building) send({ t: 'inspect', id: keeper.building }); // stock and today's prices
@@ -1733,7 +1745,52 @@
       firing = false;
     }
     function closeShop() { shopEl.hidden = true; }
-    function buy(item) { if (item) send({ t: 'buy', item }); }
+
+    // ---- the trader underground: in the shop's panel, one bottle of vodka for any one thing ----
+    const shopHead = ['h2', '.sub', '.close'].map((q) => shopEl.querySelector(q).innerHTML);
+    let traderOpen = false;
+    let traderVodka = -1; // bottles I had when the panel was last drawn
+    const TRADES = [ // [item, name, what it's good for]
+      ['bread', 'Bread', 'Something to eat: +15 health'],
+      ['bat', 'Baseball bat', 'Hits harder the bigger you are · smashes ATMs open'],
+      ['knife', 'Knife', 'A spare blade'],
+      ['molotov', 'Molotov cocktail', 'Click to throw · a pool of fire that burns anyone in it · 3 to a slot · contraband in town'],
+      ['rod', 'Fishing rod', 'Fish rivers and lakes (the lake cave down here never freezes)'],
+    ];
+    const TRADER_ERRORS = {
+      no_vodka: '🕴️ "No vodka, no business." (Bottles lie about down here — tunnels, shafts, caves.)',
+      no_room: '🕴️ "Your hands are full, friend." Make room in your hotbar first',
+      too_far: 'Walk up to him first',
+      have_rod: '🕴️ "You have a rod already. One is enough, no?"',
+    };
+    const vodkaCarried = () => inv.reduce((n, w) => n + (w?.[0] === 'goods' && w[1] === 'vodka' ? w[2] : 0), 0);
+    const nearTrader = (extra = 0) => Boolean(me && under?.trader && Math.hypot(under.trader.x - me.x, under.trader.y - me.y) < 100 + radiusOf(me.mass) + extra);
+    function renderTrader() {
+      const vodka = traderVodka = vodkaCarried();
+      shopEl.querySelector('h2').textContent = '🕴️ The trader';
+      shopEl.querySelector('.sub').innerHTML = `"One bottle each. No roubles." You have <b>${vodka}</b> bottle${vodka === 1 ? '' : 's'} of vodka.`;
+      shopEl.querySelector('.close').textContent = 'E or Esc to close · 1–5 to trade';
+      document.getElementById('shop-fuel').replaceChildren();
+      shopItems.replaceChildren(...TRADES.map(([id, name, desc], i) => {
+        const b = document.createElement('button');
+        b.className = 'item';
+        b.disabled = !vodka;
+        b.innerHTML = `<span class="icon"></span><span><span class="key">${i + 1}</span><b class="name"></b><span class="desc"></span></span><span class="price">${iconHTML('vodka', 20)} ×1</span>`;
+        b.querySelector('.icon').innerHTML = id === 'bread' ? iconHTML('food:bread', 34) : id === 'rod' ? iconHTML('tool:rod', 34) : `<img src="${gunIcon(id)}" alt="" style="width:34px;height:34px">`;
+        b.querySelector('.name').textContent = name;
+        b.querySelector('.desc').textContent = desc;
+        b.onclick = () => tradeWith(id);
+        return b;
+      }));
+    }
+    function tradeWith(item) { if (item) send({ t: 'trader', item }); }
+    function openTrader() {
+      traderOpen = true;
+      renderTrader();
+      shopEl.hidden = false;
+      keys.clear();
+      firing = false;
+    }    function buy(item) { if (item) send({ t: 'buy', item }); }
 
     // ---- account (this browser) ----------------------------------------------------
 
@@ -4180,6 +4237,57 @@
       if (!me?.car) { send({ t: 'drop', slot: i }); sfx('drop'); } // onto the ground
     });
 
+    /** A bottle of vodka lying on its side on the floor (underground), catching the light now and then so you spot it. */
+    function drawLooseBottle(x, y, id, now) {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(id * 2.3);
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.ellipse(1, 3, 15, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.scale(22, 22); ctx.translate(-0.5, 0);
+      const glass = 'rgba(205, 232, 215, .85)';
+      ctx.fillStyle = glass;
+      ctx.beginPath(); ctx.moveTo(0.05, -0.17); ctx.lineTo(0.52, -0.17); ctx.quadraticCurveTo(0.66, -0.17, 0.7, -0.06); ctx.lineTo(0.7, 0.06); ctx.quadraticCurveTo(0.66, 0.17, 0.52, 0.17); ctx.lineTo(0.05, 0.17); ctx.closePath(); ctx.fill();
+      ctx.fillRect(0.7, -0.055, 0.2, 0.11);
+      ctx.fillStyle = '#c0392b'; ctx.fillRect(0.88, -0.07, 0.07, 0.14); // the red foil cap
+      ctx.fillStyle = '#e7e1cf'; ctx.fillRect(0.14, -0.12, 0.3, 0.24); // the label
+      ctx.fillStyle = '#c0392b'; ctx.fillRect(0.2, -0.035, 0.18, 0.07);
+      const glint = Math.max(0, Math.sin(now / 600 + id) - 0.85) / 0.15; // (a glint every few seconds)
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.35 + 0.6 * glint})`; ctx.fillRect(0.1, -0.15, 0.5, 0.04);
+      ctx.restore();
+    }
+
+    /** A pool of fire from a Molotov: a scorch, a glow and licking tongues of flame; it catches quickly and dies down at the end. */
+    function drawFire(x, y, r, left, sec, id, now) {
+      if (x < viewBox.l - 200 || x > viewBox.r + 200 || y < viewBox.t - 200 || y > viewBox.b + 200) return;
+      const life = Math.max(0, Math.min(1, left / 1.5, 0.3 + (sec - left) / 0.3));
+      ctx.save();
+      ctx.fillStyle = 'rgba(18, 10, 4, .5)'; ctx.beginPath(); ctx.arc(x, y, r * 1.05, 0, Math.PI * 2); ctx.fill(); // the scorch
+      ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 1.7);
+      g.addColorStop(0, `rgba(255, 140, 40, ${0.5 * life})`); g.addColorStop(1, 'rgba(255, 70, 0, 0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < 20; i++) {
+        const a = i * 2.39996 + id, d = r * Math.sqrt((i + 0.5) / 20) * 0.92;
+        const fx = x + Math.cos(a) * d, fy = y + Math.sin(a) * d;
+        const flick = 0.6 + 0.4 * Math.sin(now / (60 + (i % 5) * 14) + i * 1.7);
+        const size = (10 + (i % 4) * 3.5) * flick * life;
+        const lean = Math.sin(now / 300 + i) * 0.25;
+        ctx.fillStyle = `rgba(255, ${80 + (i % 3) * 35}, 15, .5)`;
+        ctx.beginPath(); ctx.ellipse(fx, fy - size * 0.5, size * 0.55, size * 1.15, lean, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 228, 120, .55)';
+        ctx.beginPath(); ctx.ellipse(fx, fy - size * 0.35, size * 0.25, size * 0.55, lean, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    /** A Molotov in the air: turning over and over, higher (bigger) mid-flight, its shadow on the ground below. */
+    function drawFlyingMolotov(x, y, h, id, now) {
+      ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.beginPath(); ctx.ellipse(x, y, 9 - h * 3, 4 - h * 1.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.save(); ctx.translate(x, y - h * 70); ctx.rotate(now / 80 + id);
+      const k = 20 * (1 + h * 0.4);
+      ctx.scale(k, k); ctx.translate(-0.5, 0);
+      drawGun(ctx, 'molotov');
+      ctx.restore();
+    }
+
     function drawGoodsCrate(x, y, good, qty, now) {
       const bob = Math.sin(now / 300) * 1.5;
       ctx.fillStyle = 'rgba(0, 0, 0, .35)';
@@ -5048,6 +5156,7 @@
           const t = (now - e.start) / 700;
           if (t >= 0 && t < 1) lightHole(e.x + ox, e.y + oy, 0, 420 * (1 - t));
         }
+        for (const [id, fx, fy, r] of flames) if (onSky(fx + ox, fy + oy, w, h, 300)) lightHole(fx + ox, fy + oy, 0, r * 2.6 + 12 * Math.sin(now / 90 + id), 0.95); // Molotov fires
         ctx.drawImage(skyCanvas, 0, 0, w, h);
       }
       drawWolfEyes(now, w, h, ox, oy, Math.max(0.35, dark / 0.86));
@@ -5522,6 +5631,11 @@
       hit: (o) => { tone(o, { dur: 0.05, type: 'square', freq: 1100, vol: 0.12 }); },
       death: (o) => { tone(o, { dur: 0.9, type: 'sawtooth', freq: 420, endFreq: 50, vol: 0.25 }); },
       explosion: (o) => { noiseBurst(o, { dur: 1.6, filter: 'lowpass', freq: 1200, endFreq: 80, vol: 1.4 }); tone(o, { dur: 1.2, freq: 70, endFreq: 25, vol: 1 }); },
+      molotov: (o) => { // the bottle smashing, then the petrol going up with a whoosh
+        for (let i = 0; i < 7; i++) tone(o, { at: Math.random() * 0.12, dur: 0.07, freq: 2500 + Math.random() * 4500, vol: 0.07, attack: 0.001 });
+        noiseBurst(o, { dur: 0.08, freq: 4000, q: 1, vol: 0.5 });
+        noiseBurst(o, { at: 0.06, dur: 0.9, filter: 'lowpass', freq: 300, endFreq: 1800, vol: 0.9 });
+      },
       doorOpen: (o) => { tone(o, { dur: 0.35, type: 'sawtooth', freq: 160, endFreq: 260, vol: 0.06, attack: 0.05 }); noiseBurst(o, { dur: 0.25, freq: 600, q: 3, vol: 0.2 }); },
       doorClose: (o) => { tone(o, { dur: 0.16, freq: 95, endFreq: 60, vol: 0.6 }); noiseBurst(o, { dur: 0.12, filter: 'lowpass', freq: 700, vol: 0.5 }); },
       pickup: (o) => { tone(o, { dur: 0.12, freq: 660, vol: 0.25 }); tone(o, { at: 0.09, dur: 0.2, freq: 990, vol: 0.25 }); },
@@ -5548,6 +5662,11 @@
       whistle: (o) => { tone(o, { dur: 0.35, freq: 2500, endFreq: 2700, vol: 0.12 }); tone(o, { at: 0.45, dur: 0.8, freq: 2600, endFreq: 2500, vol: 0.12 }); },
       meow: (o) => { tone(o, { dur: 0.45, type: 'triangle', freq: 520, endFreq: 760, vol: 0.12, attack: 0.08 }); tone(o, { at: 0.3, dur: 0.35, type: 'triangle', freq: 760, endFreq: 430, vol: 0.1 }); },
       purr: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.22, dur: 0.18, type: 'sawtooth', freq: 26, endFreq: 24, vol: 0.12, attack: 0.05 }); },
+      giantRat: (o) => { // a big rat's shriek and hiss
+        tone(o, { dur: 0.35, type: 'sawtooth', freq: 1900, endFreq: 1200, vol: 0.12 });
+        tone(o, { at: 0.12, dur: 0.25, type: 'triangle', freq: 2600, endFreq: 1700, vol: 0.1 });
+        noiseBurst(o, { at: 0.3, dur: 0.5, freq: 5000, q: 1, vol: 0.25 });
+      },
       rat: (o) => { for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) tone(o, { at: i * 0.09, dur: 0.06, type: 'triangle', freq: 3400 + Math.random() * 900, endFreq: 2600, vol: 0.06 }); },
       bearRoar: (o) => { noiseBurst(o, { dur: 1.6, filter: 'lowpass', freq: 380, q: 1.5, vol: 1.2 }); tone(o, { dur: 1.5, type: 'sawtooth', freq: 95, endFreq: 70, vol: 0.18, attack: 0.15 }); tone(o, { dur: 1.2, type: 'sawtooth', freq: 140, endFreq: 90, vol: 0.08, attack: 0.2 }); },
       howl: (o) => { tone(o, { dur: 1.1, freq: 330, endFreq: 610, vol: 0.22, attack: 0.35 }); tone(o, { at: 1.0, dur: 1.7, freq: 610, endFreq: 370, vol: 0.22, attack: 0.1 }); tone(o, { dur: 2.6, type: 'triangle', freq: 660, endFreq: 760, vol: 0.03, attack: 0.6 }); },
@@ -6627,6 +6746,26 @@
       ctx.fillStyle = '#a9a69c'; for (let k = -1; k <= 1; k++) ctx.fillRect(16, k * 4 - 1, 5, 1.6);
       ctx.restore();
     }
+    // The trader: a trench coat and a fedora, collar up, keeping an eye on you; a crate of his wares at his feet.
+    const UG_TRADER_LOOK = { skin: '#d9a877', shirt: '#2e2b28', pants: '#1c1c1c', hat: 'fedora', coat: '#5d5142' };
+    const ugTrader = { aim: Math.PI / 2, say: null };
+    function drawTrader(t, now) {
+      if (t.x < viewBox.l - 300 || t.x > viewBox.r + 300 || t.y < viewBox.t - 300 || t.y > viewBox.b + 300) return;
+      const near = me && playing && Math.hypot(me.x - t.x, me.y - t.y) < 500;
+      const want = near ? Math.atan2(me.y - t.y, me.x - t.x) : Math.PI / 2 + Math.sin(now / 1900) * 1.2; // (watching you; otherwise the doors)
+      ugTrader.aim += Math.atan2(Math.sin(want - ugTrader.aim), Math.cos(want - ugTrader.aim)) * 0.08;
+      const cx = t.x + 26, cy = t.y + 30; // his crate: bottles and a loaf, a bat across the top
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(cx - 18, cy - 12, 40, 30);
+      ctx.fillStyle = '#7a5a36'; ctx.fillRect(cx - 20, cy - 15, 40, 30);
+      ctx.strokeStyle = '#4e3820'; ctx.lineWidth = 2; ctx.strokeRect(cx - 20, cy - 15, 40, 30);
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = 'rgba(205, 232, 215, .9)'; ctx.beginPath(); ctx.arc(cx - 11 + i * 8, cy - 5, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(cx - 11 + i * 8, cy - 5, 1.4, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = '#c8954f'; ctx.beginPath(); ctx.ellipse(cx + 9, cy + 6, 8, 5, 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.save(); ctx.translate(cx - 18, cy + 9); ctx.rotate(-0.15); ctx.scale(22, 22); drawGun(ctx, 'bat'); ctx.restore();
+      const sway = Math.sin(now / 1300) * 1.5;
+      drawPerson({ x: t.x + sway, y: t.y, r: 18, aim: ugTrader.aim, weapon: null, thrust: 0 }, UG_TRADER_LOOK);
+    }
+    function traderSays(text) { ugTrader.say = text; }
+
     /** Make the old miner say something right now (lending you his pick). */
     function minerSays(text) { oldMiner.say = text; }
 
@@ -7739,7 +7878,7 @@
 
     // Filled from the server's welcome message; these defaults are only placeholders.
     let weapons = { knife: { name: 'Knife', melee: true, magazineSize: 0, reloadSec: 0, barrel: 1.1 }, pistol: { name: 'Pistol', magazineSize: 5, reloadSec: 1.5, barrel: 1.6 } };
-    const RARITY = { rod: '#c9a26a', bat: '#c69c6d', knife: '#8a8f96', pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
+    const RARITY = { rod: '#c9a26a', molotov: '#e8742a', bat: '#c69c6d', knife: '#8a8f96', pistol: '#bbbbbb', smg: '#4aa3ff', shotgun: '#ff8c3a', rifle: '#5ad15a', sniper: '#c86bff' };
 
     let inv = [['knife', 0, 0], null, null, null, null]; // from the server: [type, ammo, reload seconds] per slot
     let reloadEnds = []; // performance.now() time each slot's reload finishes
@@ -8012,6 +8151,7 @@
           else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
           else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked (or open: down the ladder)
           else if (t?.kind === 'miner') send({ t: 'miner' }); // the old miner: his pickaxe, lent (or back)
+          else if (t?.kind === 'trader') openTrader(); // the trader: vodka for things
           else if (t?.kind === 'ladder') { sfx('furnish'); send({ t: 'trapdoor', id: 0, action: 'up' }); } // underground: back up to town
           else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
@@ -8027,6 +8167,7 @@
       if (e.code === 'Escape' && bodyOpen) return closeBody();
       if (e.code === 'Escape' && garageCars !== null) return closeGarage();
       if (e.code === 'Escape' && !jobsEl.hidden) return closeJobs();
+      if (!shopEl.hidden && traderOpen && /^Digit[1-5]$/.test(e.code)) return tradeWith(TRADES[Number(e.code.slice(5)) - 1]?.[0]);
       if (!shopEl.hidden && /^Digit[1-4]$/.test(e.code)) return buy(Object.keys(shop.menu)[Number(e.code.slice(5)) - 1]);
       // M: the big map — in the game, and never while typing (a name with an "m" in it used to open it over the Start button).
       if (e.code === 'KeyM' && playing && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) { minimap.classList.toggle('expanded'); return; }
@@ -8581,6 +8722,12 @@
       for (const [id, x, y, angle, state, health, hurt] of msg.bears ?? []) bears.set(id, { x, y, angle, state, health, hurt: hurt === 1 });
       const homeless = new Map(); // the homeless underground: [id, x, y, angle, state (0 sitting, 1 walking, 2 creeping after someone, 3 fighting), health, stabbing]
       for (const [id, x, y, angle, state, hp, stab] of msg.homeless ?? []) homeless.set(id, { x, y, angle, state, hp, stab: stab === 1 });
+      if (under) { // crates of dynamite that have gone off: not there (open) till a new one's left
+        const gone = new Set(msg.tnt || []);
+        for (const d of under.tntList ??= under.decor.map((d, i) => [d, i]).filter(([d]) => d.k === 'tnt')) d[0].open = gone.has(d[1]);
+      }
+      const rats = new Map(); // giant rats underground: [id, x, y, angle, running, health, biting]
+      for (const [id, x, y, angle, run, hp, bite] of msg.rats ?? []) rats.set(id, { x, y, angle, run: run === 1, hp, bite: bite === 1 });
       otherLines = msg.lines ?? [];
       const crew = new Map(); // hired muscle: goons, guards, hitmen
       for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
@@ -8591,7 +8738,7 @@
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       const cats = new Map();
       for (const [id, x, y, angle, move, look, petted, knows, heldBy] of msg.cats ?? []) cats.set(id, { x, y, angle, move, look, petted: petted === 1, knows: knows === 1, heldBy });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, cats, bodies: corpses });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, cats, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -8758,7 +8905,12 @@
         const ca = a.cats?.get(id);
         cats.set(id, ca ? { ...cb, x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t) } : cb);
       }
-      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, cats, bodies: b.bodies };
+      const rats = new Map();
+      for (const [id, rb] of b.rats ?? []) {
+        const ra = a.rats?.get(id);
+        rats.set(id, ra ? { ...rb, x: lerp(ra.x, rb.x, t), y: lerp(ra.y, rb.y, t), angle: lerpAngle(ra.angle, rb.angle, t) } : rb);
+      }
+      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, cats, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -8912,6 +9064,19 @@
           rect(0.55, 0.62, -0.26, 0.26, '#4a1f1b'); // the clasp side
           rect(0.57, 0.61, -0.05, 0.05, '#d4a017'); // brass clasp
           break;
+        case 'molotov': { // a vodka bottle with a rag stuffed in its neck, alight
+          const glass = 'rgba(205, 232, 215, .9)';
+          g.fillStyle = glass;
+          g.beginPath(); g.moveTo(0.05, -0.17); g.lineTo(0.52, -0.17); g.quadraticCurveTo(0.66, -0.17, 0.7, -0.06); g.lineTo(0.7, 0.06); g.quadraticCurveTo(0.66, 0.17, 0.52, 0.17); g.lineTo(0.05, 0.17); g.closePath(); g.fill();
+          rect(0.7, 0.88, -0.055, 0.055, glass); // the neck
+          rect(0.14, 0.44, -0.12, 0.12, '#e7e1cf'); // the label
+          rect(0.2, 0.38, -0.035, 0.035, '#c0392b');
+          rect(0.86, 0.98, -0.07, 0.07, '#cbb994'); // the rag
+          const f = 0.8 + 0.2 * Math.sin(performance.now() / 70);
+          g.fillStyle = '#ff8a1e'; g.beginPath(); g.ellipse(1.04, 0, 0.1 * f, 0.07 * f, 0, 0, Math.PI * 2); g.fill();
+          g.fillStyle = '#ffe07a'; g.beginPath(); g.ellipse(1.02, 0, 0.05 * f, 0.035 * f, 0, 0, Math.PI * 2); g.fill();
+          break;
+        }
         case 'bat': // a wooden baseball bat: taped grip, swelling to a fat barrel
           rect(0.15, 0.55, -0.05, 0.05, '#2c2c2c'); // tape
           g.fillStyle = '#c69c6d';
@@ -11150,6 +11315,7 @@
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
       if (under?.miner && Math.hypot(under.miner.x - me.x, under.miner.y - me.y) < 90 + radiusOf(me.mass)) options.push({ kind: 'miner', dist: d(under.miner) - 10, x: under.miner.x, y: under.miner.y - 56 });
+      if (nearTrader()) options.push({ kind: 'trader', dist: d(under.trader) - 10, x: under.trader.x, y: under.trader.y - 56 });
       const ladder = nearestLadder();
       if (ladder) options.push({ kind: 'ladder', dist: ladder.d, x: ladder.x, y: ladder.y - 70 });
       const trap = nearestTrapdoor();
@@ -11157,7 +11323,7 @@
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
-      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'cat'].includes(o.kind))) best = o;
+      for (const o of options) if ((!best || o.dist < best.dist) && (!eating || ['shop', 'bank', 'place', 'furnish', 'gangster', 'cat', 'trader'].includes(o.kind))) best = o;
       // Furniture in hand at my place: E puts it down (a small home has a cabinet or the door always in reach), unless I'm right at a door.
       if (placeableHere() && !(best?.kind === 'use' && usable.door && usable.dist < 20)) return null;
       return best;
@@ -11580,6 +11746,13 @@
         }
         return null;
       });
+      if (under?.trader) speaker('trader', under.trader.x, under.trader.y, 40, (s, d) => { // a word as you come up; now and then while you're near
+        if (ugTrader.say) { const text = ugTrader.say; ugTrader.say = null; s.next = t + 8; return { text, urgent: true }; }
+        const edge = approach(s, d, 260, 340);
+        if (edge === 'in') { s.next = t + 10 + Math.random() * 6; return { text: pick(SPEECH.trader ?? ['Psst.']), urgent: true }; }
+        if (d < 300 && t > (s.next ?? 0)) { s.next = t + 12 + Math.random() * 10; return { text: pick(SPEECH.trader ?? ['Psst.']) }; }
+        return null;
+      });
       // The homeless: muttering (in Russian) as you go by, swearing at you when they come at you; one
       // creeping up behind you keeps quiet.
       for (const [id, h] of v.homeless ?? []) {
@@ -11927,7 +12100,7 @@
       // Arms reach forward to the gun (the front hand further out on long guns), or hang at the sides.
       const barrel = p.weapon ? weapons[p.weapon]?.barrel ?? 1.6 : 0;
       const front = Math.max(0.88, 0.6 + (barrel - 0.6) * 0.5);
-      const knife = p.weapon === 'knife' || p.weapon === 'purse' || p.weapon === 'bat';
+      const knife = p.weapon === 'knife' || p.weapon === 'purse' || p.weapon === 'bat' || p.weapon === 'molotov'; // (a Molotov too: in one hand, ready to throw)
       // A knife (or an angry townsperson's purse) is held in one hand, jabbing/swinging forward (p.thrust 0–1); the other arm hangs.
       const held = !p.weapon && !p.sleeping ? p.held : null; // goods or food in hand: carried out in front, a little one of its hotbar picture
       const hands = knife ? [[0.25, -0.98], [0.62 + (p.thrust ?? 0) * 0.5, 0.45]] : p.weapon ? [[0.78, -0.2], [front, 0.14]] : held ? [[0.25, -0.98], [0.85, 0.42]] : [[0.25, -0.98], [0.25, 0.98]];
@@ -12320,6 +12493,49 @@
       }
     }
 
+    // ---- giant rats (the server's: they come for you): three times an ordinary rat, mangy and dark, eyes glowing red ----
+    let shownRats = new Map();
+    const GIANT = 3;
+    const ratEyes = (r) => [-1, 1].map((side) => ({ x: r.x + (Math.cos(r.angle) * 11 - Math.sin(r.angle) * side * 2.6) * GIANT, y: r.y + (Math.sin(r.angle) * 11 + Math.cos(r.angle) * side * 2.6) * GIANT }));
+    function drawGiantRat(r, id, now) {
+      const k = GIANT, moving = r.run || (r.lastX !== undefined && Math.hypot(r.x - r.lastX, r.y - r.lastY) > 0.3);
+      r.lastX = r.x; r.lastY = r.y;
+      ctx.save();
+      ctx.translate(r.x, r.y); ctx.rotate(r.angle); ctx.scale(k, k);
+      const sw = Math.sin(now / (moving ? 70 : 300) + id) * (moving ? 0.5 : 0.25);
+      ctx.strokeStyle = '#a77f76'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-9, 0); ctx.quadraticCurveTo(-18, sw * 10, -28, sw * -6); ctx.stroke(); // the tail
+      ctx.fillStyle = '#211a15'; const l = moving ? Math.sin(now / 45 + id) * 3 : 0;
+      for (const [fx, s] of [[5, 1], [-4, -1]]) { ctx.fillRect(fx + l * s, -6.5, 3, 2); ctx.fillRect(fx - l * s, 4.5, 3, 2); } // claws
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.ellipse(1, 2, 11.5, 7, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3b302a'; ctx.beginPath(); ctx.ellipse(0, 0, 10.5, 6, 0, 0, Math.PI * 2); ctx.fill(); // the body
+      ctx.strokeStyle = '#2a211c'; ctx.lineWidth = 0.6; // bristling, mangy fur
+      for (let i = -7; i <= 6; i += 2.2) { ctx.beginPath(); ctx.moveTo(i, -5); ctx.lineTo(i - 1.5, -6.6); ctx.moveTo(i, 5); ctx.lineTo(i - 1.5, 6.6); ctx.stroke(); }
+      ctx.fillStyle = '#5a463a'; ctx.beginPath(); ctx.ellipse(-2, 1.5, 3, 2, 0.4, 0, Math.PI * 2); ctx.fill(); // a bald patch
+      const lunge = r.bite ? 1.5 : 0;
+      ctx.fillStyle = '#4a3b31'; ctx.beginPath(); ctx.ellipse(9 + lunge, 0, 5.2, 3.7, 0, 0, Math.PI * 2); ctx.fill(); // the head
+      ctx.fillStyle = '#a77f76'; ctx.beginPath(); ctx.arc(7 + lunge, -3.8, 1.9, 0, Math.PI * 2); ctx.arc(7 + lunge, 3.8, 1.9, 0, Math.PI * 2); ctx.fill(); // ears
+      if (r.bite || r.run) { ctx.fillStyle = '#e8dcc0'; ctx.fillRect(13.2 + lunge, -1.1, 1.6, 0.9); ctx.fillRect(13.2 + lunge, 0.2, 1.6, 0.9); } // yellow teeth bared
+      ctx.fillStyle = '#c9928a'; ctx.beginPath(); ctx.arc(14.4 + lunge, 0, 1.1, 0, Math.PI * 2); ctx.fill(); // nose
+      ctx.restore();
+      drawRatEyeGlow(r, id, now, 1); // (and again over the dark, in drawUnderShade)
+      if (r.hp < 100) {
+        ctx.fillStyle = 'rgba(0, 0, 0, .6)'; ctx.fillRect(r.x - 20, r.y - 34, 40, 4);
+        ctx.fillStyle = r.hp > 50 ? '#5ad15a' : r.hp > 25 ? '#f4c430' : '#e74c3c'; ctx.fillRect(r.x - 20, r.y - 34, 40 * r.hp / 100, 4);
+      }
+    }
+    /** A rat's eyes, glowing red (in world space). */
+    function drawRatEyeGlow(r, id, now, glow) {
+      if ((now / 1000 + id * 1.3) % 4 < 0.12) return; // a blink
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const e of ratEyes(r)) {
+        const g = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, 11);
+        g.addColorStop(0, `rgba(255, 235, 210, ${glow})`); g.addColorStop(0.25, `rgba(255, 40, 30, ${0.9 * glow})`); g.addColorStop(1, 'rgba(200, 0, 0, 0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(e.x, e.y, 11, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
     /** The underground's doors: steel, in a frame; the oil hall's locked ones padlocked with a red lamp. */
     let ugDoorClock = 0;
     function drawUnderDoors(now) {
@@ -12634,7 +12850,15 @@
           if (d.coal) { ctx.fillStyle = '#151515'; for (let k = 0; k < 9; k++) { ctx.beginPath(); ctx.arc(x + 12 + ugHash(Math.round(x), k) * (w - 24), y + 12 + ugHash(k, Math.round(y)) * (h - 24), 6, 0, Math.PI * 2); ctx.fill(); } }
           break;
         }
-        case 'tnt': { // a crate of dynamite
+        case 'tnt': { // a crate of dynamite (gone off: a blackened scorch and splinters)
+          if (d.open) {
+            const g = ctx.createRadialGradient(x + w / 2, y + h / 2, 4, x + w / 2, y + h / 2, 70);
+            g.addColorStop(0, 'rgba(10, 8, 6, .75)'); g.addColorStop(1, 'rgba(10, 8, 6, 0)');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, 70, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#4a3a22';
+            for (let k = 0; k < 7; k++) ctx.fillRect(x + ugHash(Math.round(x), k, 1) * w * 1.6 - w * 0.3, y + ugHash(Math.round(y), k, 2) * h * 1.6 - h * 0.3, 10, 3);
+            break;
+          }
           ctx.fillStyle = '#8a6a3a'; ctx.fillRect(x, y, w, h);
           ctx.strokeStyle = '#5a4424'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
           ctx.fillStyle = '#a3261b'; ctx.font = '800 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -13131,6 +13355,12 @@
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
+      if (shownRats.size) { // the giant rats' eyes glow through the gloom
+        ctx.save();
+        ctx.setTransform(devicePixelRatio * viewZ, 0, 0, devicePixelRatio * viewZ, devicePixelRatio * (w / 2 - camera.x * viewZ), devicePixelRatio * (h / 2 - camera.y * viewZ));
+        for (const [id, r] of shownRats) drawRatEyeGlow(r, id, performance.now(), 0.8);
+        ctx.restore();
+      }
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
@@ -13325,6 +13555,7 @@
       // Guns on the ground: a pulsing glow in the gun's colour, the gun slowly turning, and its name.
       for (const [id, x, y, type, amount, extra] of snapshot?.pickups ?? []) {
         if (type === 'cash') { drawCashBag(x, y, amount, frameTime + id * 97); continue; }
+        if (type === 'goods' && amount === 'vodka' && extra === 1) { drawLooseBottle(x, y, id, frameTime); continue; } // one bottle on its own: lying on the floor
         if (type === 'goods') { drawGoodsCrate(x, y, amount, extra, frameTime + id * 97); continue; }
         const pulse = 0.5 + 0.5 * Math.sin(frameTime / 300 + id);
         const glow = ctx.createRadialGradient(x, y, 4, x, y, 34);
@@ -13346,6 +13577,15 @@
         ctx.fillStyle = RARITY[type];
         ctx.fillText(weapons[type]?.name ?? TOOL_NAMES[type] ?? type, x, y + 38);
       }
+
+      // Molotovs: pools of fire where they broke, and bottles turning over in the air.
+      const [flying, burning] = snapshot?.molotovs || [[], []];
+      flames = burning;
+      for (const [id, x, y, r, left, sec] of burning) {
+        if (!seenFires.has(id)) { seenFires.add(id); if (seenFires.size > 300) seenFires.clear(), seenFires.add(id); sfx('molotov', { x, y }); }
+        drawFire(x, y, r, left, sec, id, frameTime);
+      }
+      for (const [id, x, y, h] of flying) drawFlyingMolotov(x, y, h, id, frameTime);
 
       // Bullets: small grey slugs, pointing the way they fly.
       for (const { x, y, a = 0 } of view.bullets.values()) {
@@ -13468,10 +13708,16 @@
       }
       wolfSounds(frameTime);
       if (under?.miner) drawOldMiner(under.miner, frameTime);
+      if (under?.trader) drawTrader(under.trader, frameTime);
       shownBears = view.bears ?? new Map();
       for (const [id, bf] of shownBears) {
         if (bf.x < viewBox.l - 100 || bf.x > viewBox.r + 100 || bf.y < viewBox.t - 100 || bf.y > viewBox.b + 100) continue;
         drawBear(bf, id, frameTime);
+      }
+      shownRats = view.rats ?? new Map();
+      for (const [id, r] of shownRats) {
+        if (r.x < viewBox.l - 80 || r.x > viewBox.r + 80 || r.y < viewBox.t - 80 || r.y > viewBox.b + 80) continue;
+        drawGiantRat(r, id, frameTime);
       }
       for (const [id, h] of view.homeless ?? []) {
         if (h.x < viewBox.l - 60 || h.x > viewBox.r + 60 || h.y < viewBox.t - 60 || h.y > viewBox.b + 60) continue;
@@ -13630,7 +13876,8 @@
       if (wh.open && (!nearWh || nearWh.id !== wh.open)) closeWarehouse(); // walked off
       else if (nearWh && !wh.open) { const b = whBuilding(nearWh); drawKeyPrompt(b.x + b.w / 2, b.y - 58, 'B'); }
       updateCashHold(performance.now());
-      if (!shopEl.hidden && !keeper) closeShop(); // walked away
+      if (!shopEl.hidden && !(traderOpen ? nearTrader(40) : keeper)) closeShop(); // walked away
+      if (!shopEl.hidden && traderOpen && vodkaCarried() !== traderVodka) renderTrader(); // (a bottle spent or picked up)
       if (!bankEl.hidden && !banker) closeBank();
       if (econ.open && !place) closePlace();
       updateJobHud();

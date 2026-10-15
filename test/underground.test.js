@@ -4,6 +4,8 @@ import { config } from '../src/config.js';
 config.gangsters.count = 0;
 const HOMELESS = { sitters: config.homeless.sitters, wanderers: config.homeless.wanderers };
 Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); // (no knives in the other tests; theirs put them back)
+const RATS = config.giantRats.count;
+config.giantRats.count = 0; // (no giant rats either, but in their own test)
 import { AccountStore } from '../src/accounts.js';
 import { RoomManager } from '../src/game/RoomManager.js';
 import { validateMap } from '../src/game/mapFile.js';
@@ -97,12 +99,12 @@ test("doors where the shafts come out into built places; the oil hall's are lock
   assert.equal(plain.open, true, 'a shaft door just opens');
 });
 
-test("nothing lies about on the floor: it's in the bunkers' cabinets, which anyone can open, and they fill again once emptied", () => {
+test("loot's in the bunkers' cabinets, which anyone can open, and they fill again once emptied (on the floor: only bottles of vodka)", () => {
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
   const u = world.underground.layout;
   assert.equal(u.loot, undefined);
-  assert.equal(world.pickups.size, 0, 'nothing on the ground');
+  assert.ok([...world.pickups.values()].every((k) => k.goods?.good === 'vodka' && k.goods.qty === 1), 'nothing on the ground but loose bottles');
   assert.ok(u.cabinets.length >= u.bunkers.length, 'a cabinet or two in every bunker room');
   for (const c of u.cabinets) assert.ok(u.bunkers.some((b) => c.x >= b.x && c.y >= b.y && c.x + c.w <= b.x + b.w && c.y + c.h <= b.y + b.h), 'in a bunker');
   const cabs = world.underground.cabinets.map((c) => c.it);
@@ -385,5 +387,179 @@ test('a wanderer who sees you comes at you (80% of the time), and keeps on until
       assert.equal(r.state, 'fight');
       assert.ok(p.health < hp, 'stabbed');
     } finally { config.homeless.attackChance = was; }
+  } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
+});
+
+test('bottles of vodka lie about the underground, and turn up again somewhere else once picked up', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const bottles = [...world.pickups.values()];
+  assert.equal(bottles.length, config.underground.bottles);
+  for (const b of bottles) assert.ok(!world.isBlocked(b.x, b.y, 10) && !world.isSwimming(b.x, b.y), 'on open, dry floor');
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  p.inventory = p.inventory.map((s, i) => (i ? null : s));
+  Object.assign(p, { x: bottles[0].x, y: bottles[0].y });
+  world.step(1 / 30);
+  assert.equal(p.inventory.find((s) => s?.good === 'vodka')?.qty, 1, 'walked over it: a bottle in the hotbar');
+  assert.equal(world.pickups.size, config.underground.bottles - 1);
+  Object.assign(p, { x: -9999, y: -9999 }); // (out of the way: new ones turn up out of everyone's sight)
+  world.underground.step(config.underground.bottleRespawnSec + 1);
+  assert.equal(world.pickups.size, config.underground.bottles, 'another one somewhere');
+});
+
+test('the trader in a bunker swaps one bottle of vodka for bread, a bat, a knife or a Molotov', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const u = world.underground.layout, t = u.trader;
+  assert.ok(t, 'he has a spot');
+  assert.ok(u.bunkers.some((b) => b.entrance === null && t.x > b.x && t.x < b.x + b.w && t.y > b.y && t.y < b.y + b.h), 'in a bunker without a ladder');
+  assert.deepEqual(generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).trader, generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).trader, 'always the same spot');
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  p.inventory = [makeWeapon('knife'), { good: 'vodka', qty: 4 }, null, null, null];
+  Object.assign(p, { x: t.x + 300, y: t.y });
+  assert.equal(world.underground.trade(p, 'bread'), 'too_far');
+  Object.assign(p, { x: t.x + 50, y: t.y });
+  assert.equal(world.underground.trade(p, 'vodka'), 'bad_item');
+  assert.ok(config.underground.trades.includes('rod'), 'he has fishing rods too');
+  assert.deepEqual(world.underground.trade(p, 'bread'), { item: 'bread' });
+  assert.deepEqual(world.underground.trade(p, 'bread'), { item: 'bread' });
+  assert.deepEqual(p.inventory[2], { food: 'bread', qty: 2 }, 'bread stacks');
+  assert.deepEqual(world.underground.trade(p, 'bat'), { item: 'bat' });
+  assert.equal(p.inventory[3].type, 'bat');
+  assert.deepEqual(world.underground.trade(p, 'molotov'), { item: 'molotov' });
+  assert.ok(!p.inventory.some((s) => s?.good === 'vodka'), 'four bottles spent');
+  assert.equal(p.inventory[1].type, 'molotov', "in the last bottle's slot");
+  assert.ok(p.inventory[1].illegal, 'contraband');
+  assert.equal(world.underground.trade(p, 'knife'), 'no_vodka');
+  p.inventory[4] = { good: 'vodka', qty: 1 };
+  assert.deepEqual(world.underground.trade(p, 'molotov'), { item: 'molotov' });
+  assert.equal(p.inventory[1].ammo, 2, 'Molotovs stack');
+  p.inventory = [makeWeapon('knife'), makeWeapon('pistol'), makeWeapon('pistol'), makeWeapon('pistol'), { good: 'vodka', qty: 2 }];
+  assert.equal(world.underground.trade(p, 'knife'), 'no_room', 'no room: and he gives the bottle back');
+  assert.equal(p.inventory[4].qty, 2);
+  p.inventory[4].qty = 1;
+  assert.deepEqual(world.underground.trade(p, 'knife'), { item: 'knife' }, "the last bottle's slot takes what he gives you");
+  assert.equal(p.inventory[4].type, 'knife');
+});
+
+test('a thrown Molotov flies, breaks into a pool of fire that burns whoever is in it, and goes out', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const b = world.underground.layout.bunkers.toSorted((x, y) => y.w * y.h - x.w * x.h)[0];
+  const thrower = world.spawnPlayer('a', null, { id: 1, name: 'a', bank: 0, guest: false });
+  const victim = world.spawnPlayer('b', null, { id: 2, name: 'b', bank: 0, guest: false });
+  for (const pl of [thrower, victim]) pl.inventory = pl.inventory.map((s, i) => (i ? null : s));
+  thrower.inventory[1] = { type: 'molotov', ammo: 2, reloadTimer: 0 };
+  thrower.selected = 1;
+  // Somewhere clear: a straight run inside the bunker.
+  let spot = null;
+  for (let y = b.y + 60; y < b.y + b.h - 60 && !spot; y += 10) {
+    for (let x = b.x + 60; x < b.x + b.w - 260 && !spot; x += 10) {
+      let clear = true;
+      for (let d = 0; d <= 200 && clear; d += 10) clear = !world.isBlocked(x + d, y, 30);
+      if (clear) spot = { x, y };
+    }
+  }
+  assert.ok(spot, 'a clear run in the bunker');
+  Object.assign(thrower, { x: spot.x, y: spot.y });
+  Object.assign(victim, { x: spot.x + 200, y: spot.y });
+  const range = config.weapons.molotov.range;
+  config.weapons.molotov.range = 200 - thrower.radius; // (lands right on him)
+  try {
+    thrower.applyInput({ seq: 1, angle: 0, aim: 0, throttle: 0, fire: true });
+    world.step(1 / 30);
+    thrower.applyInput({ seq: 2, angle: 0, aim: 0, throttle: 0, fire: false });
+  } finally { config.weapons.molotov.range = range; }
+  assert.equal(world.molotovs.length, 1, 'in the air');
+  assert.equal(thrower.inventory[1].ammo, 1, 'one left');
+  const hp = victim.health;
+  for (let t = 0; t < 1; t += 1 / 30) world.step(1 / 30);
+  assert.equal(world.molotovs.length, 0);
+  assert.equal(world.fires.length, 1, 'burning');
+  assert.ok(victim.health < hp, 'he burns');
+  for (let t = 0; t < config.weapons.molotov.fire.sec + 1 && world.players.has(victim.id); t += 1 / 30) {
+    victim.health = victim.maxHealth; // (keep him alive to see it out)
+    world.step(1 / 30);
+  }
+  assert.equal(world.fires.length, 0, 'it burns out');
+});
+
+test('giant rats: one that sees you comes for you and bites, and dies to a few stabs (another turns up later)', () => {
+  config.giantRats.count = RATS;
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const rats = world.giantRats;
+  assert.equal(rats.list.length, config.giantRats.count);
+  const r = rats.list[0];
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  // Beside it, where it can see you.
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const x = r.x + Math.cos(a) * 120, y = r.y + Math.sin(a) * 120;
+    if (!world.isBlocked(x, y, p.radius) && world.lineOfSight(r.x, r.y, x, y)) { Object.assign(p, { x, y }); break; }
+  }
+  const hp = p.health;
+  for (let t = 0; t < 2; t += 1 / 30) { p.health = Math.max(p.health, 1); world.step(1 / 30); }
+  assert.equal(r.target, p, 'it comes for you');
+  assert.ok(p.health < hp, 'and bites');
+  p.health = p.maxHealth;
+  p.inventory[0] = makeWeapon('knife');
+  p.selected = 0;
+  let killed = false;
+  for (let i = 0; i < 10 && !killed; i++) killed = rats.damage(r, config.giantRats.health / 3 + 0.01, p);
+  assert.ok(killed && !rats.list.includes(r), 'three stabs kill it');
+  Object.assign(p, { x: -9999, y: -9999 });
+  rats.step(config.giantRats.respawnSec + 1);
+  assert.equal(rats.list.length, config.giantRats.count, 'another one turns up');
+});
+
+test('shoot a crate of dynamite in the mine and it goes off: it hurts whoever is close, sets off crates nearby, and a new one is left later', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  assert.ok(world.tnt.length > 0, 'some crates in the dead ends');
+  assert.ok(!world.blocks.some((b) => world.tnt.some((c) => c.x === b.x && c.y === b.y)), "(not sent as plain blocks: the client's told when one's gone)");
+  const c = world.tnt[0], cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+  assert.ok(world.isBlocked(cx, cy, 5), 'solid');
+  // Stand back from it where there's a clear shot, and shoot it.
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  let spot = null;
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    for (let d = 140; d >= 70 && !spot; d -= 10) {
+      const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+      if (!world.isBlocked(x, y, p.radius)) spot = { x, y, a: a + Math.PI };
+    }
+    if (spot) break;
+  }
+  assert.ok(spot);
+  Object.assign(p, { x: spot.x, y: spot.y });
+  p.inventory[1] = makeWeapon('pistol');
+  p.selected = 1;
+  p.applyInput({ seq: 1, angle: 0, aim: spot.a, throttle: 0, fire: true });
+  const hp = p.health;
+  let boom = false;
+  for (let t = 0; t < 0.5 && !boom; t += 1 / 30) {
+    const before = c.blown;
+    world.step(1 / 30);
+    boom = !before && c.blown;
+  }
+  assert.ok(c.blown, 'it went off');
+  assert.ok(!world.isBlocked(cx, cy, 5), 'and the crate is gone');
+  assert.ok(!world.players.has(p.id) || p.health < hp, 'standing that close hurts (or kills)');
+  for (const o of world.players.values()) Object.assign(o, { x: -9999, y: -9999 });
+  for (let t = 0; t < config.tnt.respawnSec + 1; t += 1) world.step(1);
+  assert.ok(!c.blown, 'a new crate later');
+});
+
+test('the homeless are solid: walk into one and you shove him aside, not through him', () => {
+  Object.assign(config.homeless, HOMELESS);
+  try {
+    const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+    const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+    const h = world.homeless.list.find((x) => x.kind === 'sit');
+    const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+    world.homeless.list = [h];
+    h.passing = { get: () => false, set() {}, delete() {} }; // (he stays put)
+    Object.assign(p, { x: h.x - 5, y: h.y });
+    world.step(1 / 30);
+    assert.ok(Math.hypot(p.x - h.x, p.y - h.y) >= p.radius + config.homeless.radius - 1, 'not overlapping');
   } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
 });

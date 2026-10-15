@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { Pickup, makeWeapon } from './entities.js';
 
 // The underground: old Soviet bunkers, joined up by abandoned metro lines and a maze of mine
 // shafts. It's laid out on a grid of square cells; anything that isn't floor is solid rock.
@@ -30,7 +31,7 @@ function seeded(seed) {
  *   { cell, cols, rows, grid (string of cell codes), lines (metro track centre lines), stations,
  *     bunkers, decor: [{ k, x, y, w, h, solid?, … }], cabinets: [{ x, y, w, h, rot }] (storage, in the bunkers), ladders: [{ x, y, entrance }],
  *     caves: [{ x, y, r }], lakes: [{ x, y, r }] (water circles, as in town), halls: [{ x, y, w, h, side }],
- *     gold: [{ x, y }] (gold rocks to mine, in the old miner's cave), miner: { x, y } | null,
+ *     gold: [{ x, y }] (gold rocks to mine, in the old miner's cave), miner: { x, y } | null, trader: { x, y } | null (swaps things for vodka),
  *     channels: [{ points: [[x, y], [x, y]], width }] (the sewers' water, as rivers), doors: [{ x, y, w, h, nx, ny, locked }] (real doors: nx, ny the way they swing; locked: picked open, locks again once shut) }
  */
 export function generateUnderground({ width, height, anchors = [], seed = 1937, caves: caveCount = 3, deadZones = 5 }) {
@@ -722,6 +723,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
       doorKeep.push({ x: wx - CELL, y: gap - CELL, w: CELL * 2, h: CELL * 2 });
       rooms.push({ x: b.x, y: b.y, w: wx - b.x, h: b.h }, { x: wx + 24, y: b.y, w: b.x + b.w - wx - 24, h: b.h });
     } else rooms.push({ x: b.x, y: b.y, w: b.w, h: b.h });
+    Object.assign(b, { rooms, solid, keep: doorKeep }); // (for the trader, below)
     const kinds = ['barracks', 'command', 'store', 'generator', 'infirmary'];
     rooms.forEach((r, i) => {
       const kind = b.entrance !== null && i === 0 ? 'command' : kinds[(ri(0, 99) + i) % kinds.length];
@@ -775,9 +777,29 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     }
   }
 
+  // ---- the trader: a man in a trench coat in the biggest bunker without a ladder, standing in the clear
+  // nearest the middle of one of its rooms (no random numbers here: the rest of the maze stays as it was).
+  let trader = null;
+  const quiet = bunkers.filter((b) => b.entrance === null).sort((a, b) => b.w * b.h - a.w * a.h);
+  for (const b of quiet.length ? quiet : bunkers) {
+    const near = (x, y, o, m) => x > o.x - m && x < o.x + o.w + m && y > o.y - m && y < o.y + o.h + m;
+    let bd = Infinity;
+    for (const r of b.rooms) {
+      for (let y = r.y + 80; y < r.y + r.h - 80; y += 20) {
+        for (let x = r.x + 80; x < r.x + r.w - 80; x += 20) {
+          if (b.solid.some((o) => near(x, y, o, 70)) || b.keep.some((o) => near(x, y, o, 0))) continue;
+          const d = Math.hypot(x - (r.x + r.w / 2), y - (r.y + r.h / 2));
+          if (d < bd) [trader, bd] = [{ x, y }, d];
+        }
+      }
+    }
+    if (trader) break;
+  }
+  if (trader) decor.push({ k: 'blocker', x: trader.x - 16, y: trader.y - 16, w: 32, h: 32, solid: true }); // (him: you can't walk through him)
+
   let grid = '';
   for (let i = 0; i < g.length; i++) grid += g[i];
-  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, cabinets, ladders, caves: caves.map(({ x, y, r, lake, gold: g2 }) => ({ x, y, r, lake: Boolean(lake), gold: Boolean(g2) })), gold, miner, lakes, halls, doors, channels };
+  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, cabinets, ladders, caves: caves.map(({ x, y, r, lake, gold: g2 }) => ({ x, y, r, lake: Boolean(lake), gold: Boolean(g2) })), gold, miner, trader, lakes, halls, doors, channels };
 }
 
 /** The solid rock as rectangles: runs along each row, merged down with identical runs below (at most 8 cells long, for the grids). */
@@ -819,7 +841,10 @@ export class Underground {
       const it = world.furnishings.addLoose('cabinet', r);
       this.#stock(it);
       return { it, wait: null };
-    });    for (const o of layout.gold ?? []) world.work.addNode('gold', o.x, o.y, config.work.goldR);
+    });
+    this.bottles = new Set(); // the loose bottles of vodka lying about (pickups)
+    this.bottleWait = config.underground.bottleRespawnSec;
+    for (let i = 0; i < config.underground.bottles; i++) this.#dropBottle(0);    for (const o of layout.gold ?? []) world.work.addNode('gold', o.x, o.y, config.work.goldR);
     // The albino bear's den: the biggest cave without the lake (or the old miner).
     const den = (layout.caves ?? []).filter((c) => !c.lake && !c.gold).sort((a, b) => b.r - a.r)[0] ?? (layout.caves ?? []).filter((c) => !c.lake)[0];
     if (den) {
@@ -879,8 +904,62 @@ export class Underground {
     return { borrowed: 'pickaxe' };
   }
 
+  /** A bottle of vodka on the floor somewhere (any open ground), at least `clearOf` from everyone. */
+  #dropBottle(clearOf) {
+    const { cols, rows, cell, grid } = this.layout, w = this.world;
+    for (let i = 0; i < 200; i++) {
+      const cx = Math.floor(Math.random() * cols), cy = Math.floor(Math.random() * rows);
+      if (grid.charCodeAt(cy * cols + cx) === 48) continue; // (rock)
+      const x = (cx + 0.15 + Math.random() * 0.7) * cell, y = (cy + 0.15 + Math.random() * 0.7) * cell;
+      if (w.isBlocked(x, y, 20) || w.isSwimming(x, y)) continue;
+      if (clearOf && [...w.players.values()].some((p) => Math.hypot(p.x - x, p.y - y) < clearOf)) continue;
+      if ([...this.bottles].some((b) => Math.hypot(b.x - x, b.y - y) < cell * 2)) continue; // (spread about)
+      const b = new Pickup(w.nextEntityId++, x, y, null, 0, { good: 'vodka', qty: 1 });
+      w.pickups.set(b.id, b);
+      this.bottles.add(b);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * E at the trader, then one of config.underground.trades: one bottle of vodka for bread, a bat, a knife,
+   * a Molotov cocktail or a fishing rod. Returns { item } or an error code.
+   */
+  trade(p, item) {
+    const t = this.layout.trader, cfg = config.underground;
+    if (!t || Math.hypot(t.x - p.x, t.y - p.y) > cfg.traderReach + p.radius) return 'too_far';
+    if (!cfg.trades.includes(item)) return 'bad_item';
+    if (item === 'molotov' && p.account?.cop) return 'cop_no_illegal';
+    if (item === 'rod' && p.inventory.some((s) => s?.type === 'rod')) return 'have_rod';
+    const vi = p.inventory.findIndex((s) => s?.good === 'vodka');
+    if (vi < 0) return 'no_vodka';
+    const vodka = p.inventory[vi];
+    if (--vodka.qty <= 0) p.inventory[vi] = null; // (paid first: the last bottle's slot is free for what he gives you)
+    let given = false;
+    if (item === 'bread') {
+      const stack = p.inventory.find((s) => s?.food === 'bread' && s.qty < config.economy.foodStack);
+      const free = p.inventory.indexOf(null);
+      if (stack) stack.qty++;
+      else if (free >= 0) p.inventory[free] = { food: 'bread', qty: 1 };
+      given = Boolean(stack) || free >= 0;
+    } else if (item === 'rod') given = p.addWeapon({ type: 'rod', tool: true }); // (a fishing rod: one each)
+    else given = p.addWeapon({ ...makeWeapon(item), ...(item === 'molotov' ? { ammo: 1, illegal: true } : {}) });
+    if (!given) { // no room: he gives you your bottle back
+      vodka.qty++;
+      p.inventory[vi] = vodka;
+      return 'no_room';
+    }
+    return { item };
+  }
+
   step(dt) {
     const cfg = config.underground;
+    for (const b of this.bottles) if (this.world.pickups.get(b.id) !== b) this.bottles.delete(b); // (picked up)
+    if (this.bottles.size < cfg.bottles && (this.bottleWait -= dt) <= 0) {
+      this.bottleWait = cfg.bottleRespawnSec;
+      this.#dropBottle(cfg.bottleClear);
+    }
     const m = this.layout.miner;
     if (m && (this.loanCheck = (this.loanCheck ?? 1) - dt) <= 0) { // his pickaxe, carried off too far: it's his, he wants it back
       this.loanCheck = 1;

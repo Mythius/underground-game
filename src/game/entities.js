@@ -97,6 +97,9 @@ export class Player {
 
   /** Puts a gun in the first free slot. Returns false if full. */
   addWeapon(weapon) {
+    const most = config.weapons[weapon.type]?.thrown ? config.weapons[weapon.type].magazineSize : 0; // (Molotovs stack)
+    const pile = most && this.inventory.find((s) => s?.type === weapon.type && s.ammo + weapon.ammo <= most);
+    if (pile) { pile.ammo += weapon.ammo; return true; }
     const slot = this.inventory.indexOf(null);
     if (slot === -1) return false;
     this.inventory[slot] = weapon;

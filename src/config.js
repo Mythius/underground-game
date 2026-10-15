@@ -117,6 +117,10 @@ export const config = Object.freeze({
     smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
     shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
     rifle: { name: 'Rifle', damage: 16, cooldownSec: 0.14, magazineSize: 15, reloadSec: 2, bulletSpeed: 1150, bulletLifetimeSec: 1.2, pellets: 1, spread: 0.03, barrel: 2.2, spawnWeight: 30 },
+    // A Molotov cocktail (from the trader underground): thrown, not fired. It flies `range` (or till it hits a wall),
+    // breaks and leaves a pool of fire `fire.radius` across that burns for fire.sec, fire.dps to anyone and
+    // anything in it (cars too; not on water). Up to magazineSize of them stack in one slot (ammo: how many).
+    molotov: { name: 'Molotov cocktail', thrown: true, range: 360, flightSec: 0.6, fire: { radius: 80, sec: 7, dps: 26 }, cooldownSec: 0.9, magazineSize: 3, reloadSec: 0, barrel: 1.0, spawnWeight: 0 },
     sniper: { name: 'Sniper', damage: 75, cooldownSec: 1.1, magazineSize: 3, reloadSec: 2.5, bulletSpeed: 1900, bulletLifetimeSec: 1.3, pellets: 1, spread: 0, barrel: 2.6, spawnWeight: 15 },
   },
 
@@ -734,6 +738,15 @@ export const config = Object.freeze({
     goodsChance: 0.5,
     food: ['bread', 'burger', 'drink'],
     goods: [['vodka', 2, 6], ['bread', 1, 3], ['scrap', 2, 6], ['coal', 3, 8], ['parts', 1, 3], ['guns', 1, 2], ['counterfeit', 1, 3]],
+    // Loose bottles of vodka lying about (tunnels, shafts, caves, bunkers): up to `bottles` at once; a taken
+    // one turns up again somewhere out of everyone's sight (bottleClear away) every bottleRespawnSec.
+    bottles: 30,
+    bottleRespawnSec: 45,
+    bottleClear: 700,
+    // The trader: a man in a trench coat in one of the bunkers (away from the ladders). E at him: one bottle
+    // of vodka for any one of these. (A Molotov is contraband in town, like an unregistered gun.)
+    traderReach: 100,
+    trades: ['bread', 'bat', 'knife', 'molotov', 'rod'],
   },
   // The albino bear, in the biggest cave underground (not the lake's). Blind: it hears you instead. Noises
   // carry out to `hear` (a gunshot; footsteps by how fast you're going: over sprintSpeed, over walkSpeed, or
@@ -745,6 +758,30 @@ export const config = Object.freeze({
   // (stalkSpeed), lunging when he's within lungeRange behind you; a wanderer who sees you (within sight)
   // attacks attackChance of the time. Each decides about a given player at most once per rejudgeSec. A stab
   // takes stabShare of your max health. They give up after giveUpSec out of sight or past `leash` from home.
+  // The crates of dynamite in the mine's dead ends: shoot one (or set it alight) and it goes off, hurting
+  // everything within `radius` (damage at the middle, less further out, nothing through rock) and setting
+  // off any other crate in reach. A new crate is left there respawnSec later, once nobody's near.
+  tnt: { radius: 230, damage: 160, respawnSec: 600, respawnClear: 900 },
+  // Giant rats underground (src/game/giantRats.js): three times the size of the ordinary ones, glowing eyes.
+  // One that sees you (within sight) comes for you at runSpeed (quicker than walking, slower than a
+  // sprint); each bite takes biteShare of your max health. It gives up after giveUpSec out of sight or past
+  // `leash` from home; a dead one is replaced respawnSec later, out of everyone's sight.
+  giantRats: {
+    count: 12,
+    health: 45,
+    radius: 26,
+    reach: 10,
+    biteShare: 0.07,
+    biteCooldownSec: 0.7,
+    walkSpeed: 90,
+    runSpeed: 265,
+    sight: 520,
+    giveUpSec: 5,
+    leash: 1800,
+    roam: 700,
+    spawnClear: 1000,
+    respawnSec: 150,
+  },
   homeless: {
     sitters: 10,
     wanderers: 10,
