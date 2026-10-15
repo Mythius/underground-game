@@ -16,7 +16,7 @@ export class Player {
     this.id = id;
     this.name = name;
     // Chosen look (indexes into config.looks); the shirt doubles as the player's colour in chat and the leaderboard.
-    this.look = look ?? { skin: id % config.looks.skins.length, shirt: id % config.looks.shirts.length, pants: 0, hat: id % config.looks.hats.length };
+    this.look = look ?? { skin: id % config.looks.skins.length, shirt: id % config.looks.shirts.length, pants: 0, hat: config.looks.hats.indexOf('cap') };
     this.color = config.looks.shirts[this.look.shirt] ?? COLORS[id % COLORS.length];
     this.x = x;
     this.y = y;

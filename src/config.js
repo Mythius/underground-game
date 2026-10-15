@@ -234,7 +234,7 @@ export const config = Object.freeze({
     skins: ['#ffdbac', '#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#5c3a1e'],
     shirts: ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#ffffff', '#222222'],
     pants: ['#34495e', '#2c3e50', '#5d4037', '#1b5e20', '#6d6d6d', '#111111', '#1e88e5', '#b0855b'],
-    hats: ['none', 'miner', 'cowboy', 'tophat', 'cap', 'beanie', 'crown', 'helmet', 'party', 'ushanka', 'furazhka'],
+    hats: ['none', 'miner', 'cowboy', 'tophat', 'cap', 'beanie', 'crown', 'helmet', 'party', 'ushanka', 'furazhka', 'wolfhat', 'papakha', 'bucket', 'kepka', 'kubanka', 'zek'], // (all but 'none' and 'cap' are won: see wardrobe.js)
   },
 
   // ---- goods, factories and markets (stage 2) ---------------------------------

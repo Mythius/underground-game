@@ -543,6 +543,7 @@ export class Prison {
       if (coal > 0 && Math.hypot(hop.x - p.x, hop.y - p.y) < c.hopperReach + p.radius) {
         hotbarOf(p).add('coal', -coal);
         p.jailed.coal += coal;
+        this.events.push({ player: p, kind: 'coal_mined', qty: coal }); // (all the coal they've ever dug counts for the prison outfit)
         if (p.jailed.coal >= p.jailed.quota) this.release(p, 'served');
         else {
           this.#saveSentence(p);

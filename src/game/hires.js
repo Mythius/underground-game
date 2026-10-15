@@ -391,6 +391,7 @@ export class Hires {
     if (h.oil && h.role === 'inspector') items.push({ type: 'cellkey', tool: true }); // the overseer: the key to the oil hall's cells
     this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items, cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     this.#tell(h, 'hire_died');
+    if (attacker?.kind === 'player' && !h.oil && (h.role === 'governor' || h.role === 'govguard')) this.events.push({ player: attacker, kind: `${h.role}_killed` }); // (the crown, the shades)
     this.#remove(h, true);
     return true;
   }

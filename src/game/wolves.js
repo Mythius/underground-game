@@ -164,7 +164,10 @@ export class Wolves {
   /** Hurt by `attacker` (a player or a hire): it may die; if not, the pack comes for a player who did it. */
   damage(w, amount, attacker) {
     w.health -= amount;
-    if (w.health <= 0) return void this.#remove(w);
+    if (w.health <= 0) {
+      if (attacker?.kind === 'player') this.events.push({ player: attacker, kind: 'wolf_killed' }); // (the wolf-fur hat)
+      return void this.#remove(w);
+    }
     if (attacker?.kind === 'player' && this.#prey(attacker) && !w.pack.target) {
       w.pack.target = attacker;
       this.events.push({ player: attacker, kind: 'wolves' });

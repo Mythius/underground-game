@@ -8,6 +8,7 @@ import { Teams } from './teams.js';
 import { World, createWorld } from './World.js';
 import { makeWeapon } from './entities.js';
 import { ACHIEVEMENTS, earn, fromMessage, fromState } from './achievements.js';
+import { WARDROBE, coalMined, drank, fitLook, fromMessage as wardrobeFromMessage, smuggled, unlock, wardrobeOf } from './wardrobe.js';
 
 /** Asleep, as far as skipping the night goes: in bed, or in a dumpster. */
 const asleep = (p) => Boolean(p.sleeping || p.hidden?.dumpster);
@@ -147,7 +148,11 @@ export class Room {
     this.world.onBankChange = this.onBankChange;
     const { deaths, doorChanges, explosions } = this.world.step(dt);
     this.#sleep(dt);
-    if (this.world.tick % config.tickRate === 0) for (const c of this.clients) if (c.player) for (const id of fromState(c.player)) this.#earn(c, id);
+    if (this.world.tick % config.tickRate === 0) for (const c of this.clients) if (c.player) {
+      for (const id of fromState(c.player)) this.#earn(c, id);
+      const types = new Set(this.world.homes.boughtBy(c.player.account).map((b) => b?.type));
+      if (types.has('panelka') && types.has('garages')) this.#unlock(c, 'kepka'); // a panelka and a row of lock-up garages, both bought
+    }
     // Tell players about arrests, releases, robberies and new stars.
     // Roadblock searches, raids on warehouses (to their owner) and on shops (everyone hears), the train.
     // Work sites: what changed at the rock face / in the fields, and what happened to whom.
@@ -479,7 +484,12 @@ export class Room {
   addClient(client) {
     this.clients.add(client);
     client.room = this;
-    client.onSend = (msg) => this.#earn(client, fromMessage(msg));
+    client.onSend = (msg) => {
+      this.#earn(client, fromMessage(msg));
+      this.#unlock(client, wardrobeFromMessage(msg));
+      if (msg.t === ServerMsg.DONE && msg.what === 'black_sell') this.#unlock(client, smuggled(this.#accountOf(client), msg.paid ?? 0), true);
+      if (msg.t === ServerMsg.POLICE && msg.kind === 'coal_mined') for (const id of coalMined(this.#accountOf(client), msg.qty ?? 0)) this.#unlock(client, id, true);
+    };
     client.send({
       t: ServerMsg.WELCOME,
       clientId: client.id,
@@ -505,6 +515,7 @@ export class Room {
       fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
       achievements: ACHIEVEMENTS,
+      wardrobe: WARDROBE,
       rainGrip: config.environment.rainGrip,
       gravelGrip: config.vehicles.gravelGrip,
       looks: config.looks,
@@ -658,6 +669,7 @@ export class Room {
   spawn(client, name, look, { travel = false } = {}) {
     if (client.player?.alive) return;
     const account = client.account;
+    look = fitLook(look, account); // (only what they've won)
     client.look = look; // (kept for going between worlds)
     if (account?.id && !account.guest && name !== 'Player' && this.store?.setName) {
       // My things are labelled with the name I play under (if nobody else has it).
@@ -690,6 +702,7 @@ export class Room {
       account: client.account?.guest ? null : client.account?.name ?? null, // to tell which warehouses are mine
       players: [...this.world.players.values()].map((p) => p.publicInfo),
       achievements: client.account?.achievements ?? [],
+      wardrobe: client.account ? wardrobeOf(client.account).have : [],
     });
     this.broadcast({ t: ServerMsg.PLAYER_JOINED, ...player.publicInfo }, client);
     for (const c of [client, ...this.teams.mates(client)]) this.teams.changed.add(c); // my new player id, for their maps
@@ -725,9 +738,13 @@ export class Room {
   eat(client) {
     const p = client.player;
     if (!p?.alive) return;
+    const good = p.inventory[p.selected]?.good;
     const error = this.world.eat(p);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
-    else this.#earn(client, 'eat');
+    else {
+      this.#earn(client, 'eat');
+      for (const id of drank(this.#accountOf(client), good)) this.#unlock(client, id, true); // vodka: the party hat; every kind: the kubanka
+    }
   }
 
   /** Achievement `id` earned (if it's new: saved, and they're told). */
@@ -736,6 +753,19 @@ export class Room {
     if (!id || !earn(account, id)) return;
     if (account.id && !account.guest) this.#store('setAchievements', account.id, account.achievements);
     client.send({ t: ServerMsg.ACHIEVE, id });
+  }
+
+  #accountOf(client) {
+    return client.player?.account ?? client.account ?? null;
+  }
+
+  /** A hat, coat or shades `id` won (if it's new: saved, and they're told). save: progress changed either way. */
+  #unlock(client, id, save = false) {
+    const account = this.#accountOf(client);
+    if (!account) return;
+    const won = Boolean(id) && unlock(account, id);
+    if ((won || save) && account.id && !account.guest) this.#store('setWardrobe', account.id, account.wardrobe);
+    if (won) client.send({ t: ServerMsg.UNLOCK, id });
   }
 
   /** Markets and factories: describe, trade, factory actions and refuelling. */
@@ -872,6 +902,7 @@ export class Room {
     if (!p?.alive) return;
     const error = this.world.feedCrows(p);
     if (error) client.send({ t: ServerMsg.ERROR, code: error });
+    else this.#unlock(client, 'cowboy');
   }
 
   /** The car radio: on/off, next song. */

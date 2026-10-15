@@ -307,7 +307,7 @@ const server = http.createServer(async (req, res) => {
     const account = accounts.accountForToken(bearer(req));
     const cas = { url: config.cas.url, clientId: config.cas.clientId };
     if (!account) return json(401, { error: 'not logged in', cas });
-    return json(200, { account: { id: account.id, name: account.name, bank: account.bank }, linked: accounts.linkedLogin(account.id), admin: isAdminToken(bearer(req)), cas });
+    return json(200, { account: { id: account.id, name: account.name, bank: account.bank, wardrobe: account.wardrobe?.have ?? [] }, linked: accounts.linkedLogin(account.id), admin: isAdminToken(bearer(req)), cas });
   }
   if (req.method === 'POST' && req.url === '/auth/cas') {
     // Finishing Google sign-in: check the CAS token, then link or switch this browser's account.

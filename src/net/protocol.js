@@ -92,6 +92,7 @@ export const ServerMsg = Object.freeze({
   TEAM_INVITE: 'team_invite', // { t, id (client), name } someone invited you
   ENV: 'env', // { t, clock, daySec, nightSec, rain, fog } every couple of seconds
   ACHIEVE: 'achieve', // { t, id } you earned an achievement (the full list comes with SPAWNED)
+  UNLOCK: 'unlock', // { t, id } you won a hat, coat or shades (the full list comes with WELCOME; yours with SPAWNED)
   ERROR: 'error', // { t, code, message }
 });
 
