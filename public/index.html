@@ -6355,7 +6355,7 @@
     const ACTION_FADE_IN = 2, SWITCH_FADE = 3; // fight/chase music comes in quicker; a song cut short fades over this
     const MUSIC_GAP = [60, 360]; // silence between background / prison songs, seconds (random in this range)
     const FIGHT_HOLD = 15, CHASE_HOLD = 8; // seconds the action music keeps going after the last shot / siren
-    const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] } }; // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
+    const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] }, none: { songs: [] } }; // (none: underground, where it's quiet) // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
     const ACTION_MUSIC = new Set(['fight', 'chase']);
     const REPEAT_MUSIC = new Set(['fight', 'chase', 'prison']); // songs follow one another with no silence until the event is over
     const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null, fightUntil: 0, chaseUntil: 0 }; // now: { id, el, g }; times on the audio clock
@@ -6411,7 +6411,8 @@
         }
       }
       const has = (k) => musicLists[k].songs.length > 0;
-      const kind = now < music.chaseUntil && has('chase') ? 'chase'
+      const kind = under ? 'none' // (no music down in the underground)
+        : now < music.chaseUntil && has('chase') ? 'chase'
         : now < music.fightUntil && has('fight') ? 'fight'
         : prisonState && has('prison') ? 'prison' : 'music';
       if (kind !== music.kind) {
@@ -8030,7 +8031,7 @@
     }
     const onRoad = (x, y) => terrain.roads.some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
     // In winter the lakes are frozen: walkable (and slippery). Same rule as the server: season.cur, no blending.
-    const lakesFrozen = () => season.cur === 'winter';
+    const lakesFrozen = () => !under && season.cur === 'winter'; // (the lake underground never freezes)
     const isSwimming = (x, y) => waterDistance(x, y, !lakesFrozen()).d < 0 && !onRoad(x, y);
     const isOnIce = (x, y) => lakesFrozen() && terrain.water.lakes.some((l) => Math.hypot(x - l.x, y - l.y) < l.r);
 
@@ -8705,6 +8706,7 @@
 
     // Sandy banks, deep and shallow water, and a slow drifting shimmer.
     function drawWater(now) {
+      if (under) return; // (the underground lake is drawn with the caves)
       const { rivers, lakes } = terrain.water;
       // Sandy banks (snowy in winter, with a rim of shelf ice), then the water, colder and darker in winter.
       const sn = snowAmount;
@@ -11644,12 +11646,12 @@
 
     // ---- the underground: old Soviet bunkers, metro tunnels and mine shafts (the second world) ----------
 
-    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5 };
+    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6 };
     const UG_SPAN = 8; // cells per side of a decor bucket
     const ugHash = (x, y, k = 0) => {
       let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(k + 1, 83492791)) >>> 0;
       h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-      return (h ^ (h >>> 16)) / 4294967296;
+      return ((h ^ (h >>> 16)) >>> 0) / 4294967296; // (0 to 1: unsigned, or sizes made from it can come out negative and stop the frame)
     };
 
     /** The solid rock as rectangles (same as src/game/underground.js rockRects). */
@@ -11703,13 +11705,14 @@
     const ugCell = (cx, cy) => (cx < 0 || cy < 0 || cx >= under.cols || cy >= under.rows ? UGC.ROCK : under.g[cy * under.cols + cx]);
 
     // Floors, and the wall each kind of place has where it meets the rock.
-    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f' };
+    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f', [UGC.CAVE]: '#2c2b2d' };
     const UG_WALL = {
       [UGC.MINE]: { t: 16, c: '#55483a', edge: '#2a221b' },
       [UGC.TUNNEL]: { t: 24, c: '#4e4d49', edge: '#22211f' },
       [UGC.PLATFORM]: { t: 20, c: '#d4cab3', edge: '#8c8169' },
       [UGC.BUNKER]: { t: 26, c: '#6a6d65', edge: '#3c3e39' },
       [UGC.PASSAGE]: { t: 18, c: '#5c5d56', edge: '#2f302c' },
+      [UGC.CAVE]: { t: 20, c: '#3d3b3e', edge: '#19181b' },
     };
 
     function drawUnderground(now) {
@@ -11734,6 +11737,7 @@
           drawUnderFloor(code, cx, cy, X, Y, C);
         }
       }
+      drawUnderLakes(now);
       // Soft shadow along the foot of every wall, and the platform edges.
       for (let cy = y0; cy <= y1; cy++) {
         for (let cx = x0; cx <= x1; cx++) {
@@ -11794,6 +11798,17 @@
             ctx.fillStyle = wall.c;
             ctx.fillRect(dx < 0 ? X - t : X + C, dy < 0 ? Y - t : Y + C, t, t);
           }
+          // Caves: the rock rounds off the inside corners (a lumpy fillet where two walls meet).
+          if (code === UGC.CAVE) {
+            for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+              if (ugCell(cx + dx, cy) !== UGC.ROCK || ugCell(cx, cy + dy) !== UGC.ROCK) continue;
+              const ox = dx < 0 ? X : X + C, oy = dy < 0 ? Y : Y + C, s = 34 + ugHash(cx, cy, dx * 2 + dy + 40) * 18;
+              ctx.fillStyle = wall.c;
+              ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox - dx * s, oy); ctx.quadraticCurveTo(ox - dx * s * 0.35, oy - dy * s * 0.35, ox, oy - dy * s); ctx.closePath(); ctx.fill();
+              ctx.strokeStyle = wall.edge; ctx.lineWidth = 3;
+              ctx.beginPath(); ctx.moveTo(ox - dx * s, oy); ctx.quadraticCurveTo(ox - dx * s * 0.35, oy - dy * s * 0.35, ox, oy - dy * s); ctx.stroke();
+            }
+          }
         }
       }
       // Signs and posters hung on the walls.
@@ -11808,6 +11823,36 @@
         }
       }
       revealUnderground();
+    }
+
+    /** The underground lake: a wet dark shore, then black-green water, lighter at the edge, with slow rings spreading where it drips. */
+    function drawUnderLakes(now) {
+      const lakes = under.lakes ?? [];
+      const vb = viewBox, seen = lakes.filter((l) => l.x + l.r + 40 > vb.l && l.x - l.r - 40 < vb.r && l.y + l.r + 40 > vb.t && l.y - l.r - 40 < vb.b);
+      if (!seen.length) return;
+      for (const [color, grow] of [['#1c1d20', 34], ['#25343c', 12], ['#1a3340', 0]]) {
+        ctx.fillStyle = color;
+        for (const l of seen) { ctx.beginPath(); ctx.arc(l.x, l.y, l.r + grow, 0, Math.PI * 2); ctx.fill(); }
+      }
+      for (const l of seen) {
+        const g = ctx.createRadialGradient(l.x, l.y, 0, l.x, l.y, l.r - 10);
+        g.addColorStop(0, 'rgba(4, 12, 16, .95)');
+        g.addColorStop(0.75, 'rgba(10, 30, 38, .7)');
+        g.addColorStop(1, 'rgba(26, 51, 64, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(l.x, l.y, l.r - 10, 0, Math.PI * 2); ctx.fill();
+      }
+      // Drips from the roof: a ring opens out and fades, here and there, every few seconds.
+      const t = now / 1000;
+      ctx.lineWidth = 2;
+      for (const [i, l] of seen.entries()) {
+        for (let k = 0; k < 5; k++) {
+          const period = 3 + ugHash(i, k, 7) * 4, phase = (t / period + ugHash(i, k, 8)) % 1, cycle = Math.floor(t / period + ugHash(i, k, 8));
+          const a = ugHash(i, k, cycle) * Math.PI * 2, d = Math.sqrt(ugHash(i, k + 9, cycle)) * (l.r - 70);
+          ctx.strokeStyle = `rgba(150, 190, 200, ${0.35 * (1 - phase)})`;
+          ctx.beginPath(); ctx.arc(l.x + Math.cos(a) * d, l.y + Math.sin(a) * d, 6 + phase * 46, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
     }
 
     function drawUnderFloor(code, cx, cy, X, Y, C) {
@@ -11849,6 +11894,20 @@
           ctx.fillStyle = 'rgba(30, 28, 20, .25)';
           ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, 4) * C, Y + ugHash(cx, cy, 5) * C, 30, 18, ugHash(cx, cy, 6) * 3, 0, Math.PI * 2); ctx.fill();
         }
+      } else if (code === UGC.CAVE) { // cold wet stone: grit, pale flowstone streaks, a sheen here and there
+        for (let k = 0; k < 7; k++) {
+          const r = ugHash(cx, cy, k + 100);
+          ctx.fillStyle = r < 0.5 ? '#242326' : '#38363a';
+          ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, k + 110) * C, Y + r * C, 6 + r * 14, 4 + r * 8, ugHash(cx, cy, k + 120) * 3, 0, Math.PI * 2); ctx.fill();
+        }
+        if (ugHash(cx, cy, 130) < 0.3) {
+          ctx.strokeStyle = 'rgba(170, 160, 140, .12)'; ctx.lineWidth = 6;
+          ctx.beginPath(); ctx.moveTo(X + ugHash(cx, cy, 131) * C, Y); ctx.quadraticCurveTo(X + C / 2, Y + C / 2, X + ugHash(cx, cy, 132) * C, Y + C); ctx.stroke();
+        }
+        if (ugHash(cx, cy, 133) < 0.12) {
+          ctx.fillStyle = 'rgba(90, 110, 130, .18)';
+          ctx.beginPath(); ctx.ellipse(X + C / 2, Y + C / 2, 50, 28, ugHash(cx, cy, 134) * 3, 0, Math.PI * 2); ctx.fill();
+        }
       } else if (code === UGC.PASSAGE) { // a service passage: concrete, with a drain down the middle
         const horiz = ugCell(cx - 1, cy) !== UGC.ROCK || ugCell(cx + 1, cy) !== UGC.ROCK;
         ctx.fillStyle = '#2d2e2a';
@@ -11887,6 +11946,13 @@
         for (let a = 20; a < along; a += 54) dy ? ctx.fillRect(r.x + a, r.y + 4, 2, r.h - 8) : ctx.fillRect(r.x + 4, r.y + a, r.w - 8, 2);
         ctx.fillStyle = '#7b7e75';
         dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y + 3, r.w, 3) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x + 3, r.y, 3, r.h);
+      } else if (code === UGC.CAVE) { // natural rock: boulders bulging out of the wall a little
+        for (let k = 0; k < 4; k++) {
+          const a = 14 + ugHash(cx, cy, k + dx * 5 + dy * 11 + 140) * (along - 28), s = 9 + ugHash(cx, cy, k + 150 + dx + dy * 3) * 13;
+          const bx = dy ? r.x + a : dx < 0 ? r.x + r.w - 4 : r.x + 4, by = dy ? (dy < 0 ? r.y + r.h - 4 : r.y + 4) : r.y + a;
+          ctx.fillStyle = k % 2 ? '#47444a' : '#353337';
+          ctx.beginPath(); ctx.ellipse(bx, by, dy ? s * 1.3 : s, dy ? s : s * 1.3, 0, 0, Math.PI * 2); ctx.fill();
+        }
       } else { // a passage: a pipe along the wall
         ctx.fillStyle = '#3f4a52';
         dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 10 : r.y + 4, r.w, 6) : ctx.fillRect(dx < 0 ? r.x + r.w - 10 : r.x + 4, r.y, 6, r.h);
@@ -12166,6 +12232,42 @@
           ctx.fillText(['СЛАВА ТРУДУ', 'БУДЬ ГОТОВ!', 'НЕ БОЛТАЙ!', 'ГРАЖДАНСКАЯ ОБОРОНА'][d.n ?? 0], x + w / 2, y + h / 2 + 1, w - 6);
           break;
         }
+        case 'stalagmite': { // a stone cone grown up from the floor: ringed, pale at the tip
+          const cx = x + w / 2, cy = y + h / 2, R = w / 2;
+          ctx.fillStyle = 'rgba(0, 0, 0, .4)'; ctx.beginPath(); ctx.ellipse(cx + 6, cy + 7, R, R * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+          for (const [f, c] of [[1, '#4b4740'], [0.72, '#5e5950'], [0.45, '#777164'], [0.2, '#9a9282']]) {
+            ctx.fillStyle = c;
+            ctx.beginPath(); ctx.arc(cx - (1 - f) * R * 0.25, cy - (1 - f) * R * 0.25, R * f, 0, Math.PI * 2); ctx.fill();
+          }
+          break;
+        }
+        case 'puddle': { // still water on the stone
+          ctx.fillStyle = 'rgba(30, 50, 62, .75)';
+          ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, ugHash(d.seed, 1, 1) * 3, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = 'rgba(160, 190, 200, .12)';
+          ctx.beginPath(); ctx.ellipse(x + w * 0.4, y + h * 0.4, w * 0.2, h * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'bones': { // somebody's, long ago
+          ctx.strokeStyle = '#cfc7b0'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+          for (let k = 0; k < 3; k++) {
+            const a = ugHash(d.seed, k, 5) * Math.PI, px = x + ugHash(d.seed, k, 6) * w, py = y + ugHash(d.seed, k, 7) * h;
+            ctx.beginPath(); ctx.moveTo(px - Math.cos(a) * 12, py - Math.sin(a) * 12); ctx.lineTo(px + Math.cos(a) * 12, py + Math.sin(a) * 12); ctx.stroke();
+          }
+          ctx.fillStyle = '#ddd5bd'; ctx.beginPath(); ctx.arc(x + w * 0.75, y + h * 0.4, 8, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#1a1816'; ctx.fillRect(x + w * 0.75 - 4, y + h * 0.4 - 2, 3, 3); ctx.fillRect(x + w * 0.75 + 1, y + h * 0.4 - 2, 3, 3);
+          break;
+        }
+        case 'boat': { // a rowboat pulled up on the shore, its paint long gone
+          ctx.translate(x + w / 2, y + h / 2); ctx.rotate(d.a ?? 0);
+          const hull = () => { ctx.beginPath(); ctx.moveTo(0, -h / 2); ctx.quadraticCurveTo(w / 2, -h / 4, w / 2 - 4, h / 2 - 8); ctx.lineTo(-w / 2 + 4, h / 2 - 8); ctx.quadraticCurveTo(-w / 2, -h / 4, 0, -h / 2); ctx.closePath(); };
+          ctx.fillStyle = 'rgba(0, 0, 0, .4)'; ctx.save(); ctx.translate(5, 6); hull(); ctx.fill(); ctx.restore();
+          ctx.fillStyle = '#5a4630'; hull(); ctx.fill();
+          ctx.fillStyle = '#3a2d1f'; ctx.save(); ctx.scale(0.8, 0.88); hull(); ctx.fill(); ctx.restore();
+          ctx.fillStyle = '#6e5639'; for (const sy of [-h * 0.12, h * 0.18]) ctx.fillRect(-w / 2 + 10, sy, w - 20, 9); // the seats
+          ctx.strokeStyle = '#7d6a4c'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(-w * 0.3, -h * 0.05); ctx.lineTo(w * 0.55, h * 0.45); ctx.stroke(); // an oar
+          break;
+        }
         case 'stencil': { // the bunker's name painted on the floor
           ctx.globalAlpha = 0.6; ctx.fillStyle = '#c9b458'; ctx.font = '800 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(d.text, x + w / 2, y + h / 2);
@@ -12290,7 +12392,7 @@
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
-    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d' };
+    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d', [UGC.CAVE]: '#5a5862' };
     function revealUnderground() {
       if (!me || !playing) return;
       const u = under, C = u.cell, R = 5;
@@ -12311,7 +12413,8 @@
 
     function paintMapCell(g, cx, cy) {
       const code = ugCell(cx, cy), C = under.cell;
-      g.fillStyle = code === UGC.ROCK ? '#24201b' : UG_MAP[code];
+      const wet = code === UGC.CAVE && under.lakes?.some((l) => Math.hypot((cx + 0.5) * C - l.x, (cy + 0.5) * C - l.y) < l.r);
+      g.fillStyle = code === UGC.ROCK ? '#24201b' : wet ? '#2f5f80' : UG_MAP[code];
       g.fillRect(cx * C - 1, cy * C - 1, C + 2, C + 2);
       for (const l of under.ladders) if (Math.floor(l.x / C) === cx && Math.floor(l.y / C) === cy) { g.fillStyle = '#f4c430'; g.fillRect(l.x - 120, l.y - 120, 240, 240); }
     }

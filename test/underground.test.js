@@ -33,6 +33,18 @@ test('the underground is dug the same every time, and every bit of it can be wal
   assert.equal(rock, [...grid].filter((c) => c === '0').length * CELL * CELL);
 });
 
+test('caves wind through the rock, one round a lake with a shore all the way round it; nothing to pick up lies in the water', () => {
+  const u = generateUnderground({ width: 13500, height: 13500, anchors: [{ x: 3000, y: 3000 }, { x: 10000, y: 9000 }] });
+  assert.ok(u.caves.length >= 3, 'a few caves');
+  assert.equal(u.caves.filter((c) => c.lake).length, 1, 'one of them has the lake');
+  assert.ok(u.lakes.length >= 1 && u.lakes[0].r >= 400, 'a good-sized lake');
+  const cellAt = (x, y) => u.grid[Math.floor(y / CELL) * u.cols + Math.floor(x / CELL)];
+  for (const l of u.lakes) {
+    for (let a = 0; a < Math.PI * 2; a += 0.1) for (const d of [0, l.r / 2, l.r + 60]) assert.equal(cellAt(l.x + Math.cos(a) * d, l.y + Math.sin(a) * d), String(UG.CAVE), 'water (and its shore) is all cave floor');
+  }
+  for (const s of u.loot) assert.ok(!u.lakes.some((l) => Math.hypot(s.x - l.x, s.y - l.y) < l.r), 'loot on dry ground');
+});
+
 // A town with two bunkers (trapdoors in their floors) along a road.
 const { map } = validateMap({
   width: 12000,
@@ -79,6 +91,8 @@ test('down an opened trapdoor into the underground with what you carry, and back
     assert.equal(q.inventory[1].type, 'rifle');
     assert.deepEqual(q.inventory[2], { good: 'vodka', qty: 4 });
     assert.ok(!under.world.isBlocked(q.x, q.y, q.radius), 'standing on open floor');
+    const lake = under.world.underground.layout.lakes[0];
+    if (lake) assert.ok(under.world.isSwimming(lake.x, lake.y) && !under.world.isBlocked(lake.x, lake.y, 20), 'you swim in the underground lake');
     const ladder = under.world.underground.ladderNear(q);
     assert.ok(ladder, 'at the foot of a ladder');
     assert.equal(store.account(account.id).cash, 300, 'what they carry is saved down there too');

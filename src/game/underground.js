@@ -6,7 +6,7 @@ import { Pickup, makeWeapon } from './entities.js';
 // The same seed (and the same town bunkers) always digs out the same maze.
 
 export const CELL = 160;
-export const UG = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5 };
+export const UG = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6 };
 
 const STATIONS = ['Площадь Ильича', 'Заводская', 'Партизанская', 'Октябрьская', 'Пролетарская', 'Шахтёрская', 'Комсомольская', 'Красный Октябрь', 'Спутник', 'Гагаринская', 'Дружба народов', 'Победа'];
 const BUNKER_NAMES = ['ОБЪЕКТ 17', 'ОБЪЕКТ 42', 'ГО-3', 'ОБЪЕКТ 9', 'УЗЕЛ СВЯЗИ', 'ОБЪЕКТ 101', 'ГО-11', 'СКЛАД №6', 'ОБЪЕКТ 23', 'ГО-7', 'ПУНКТ УПРАВЛЕНИЯ', 'ОБЪЕКТ 55', 'ГО-15', 'ОБЪЕКТ 8', 'СКЛАД №2', 'ОБЪЕКТ 31'];
@@ -27,9 +27,10 @@ function seeded(seed) {
  * Digs out the underground. `anchors` are points (in this map's coordinates) where the entrance
  * bunkers go, one per bunker trapdoor in town. Returns a plain object the World and the client share:
  *   { cell, cols, rows, grid (string of cell codes), lines (metro track centre lines), stations,
- *     bunkers, decor: [{ k, x, y, w, h, solid?, … }], loot: [{ x, y }], ladders: [{ x, y, entrance }] }
+ *     bunkers, decor: [{ k, x, y, w, h, solid?, … }], loot: [{ x, y }], ladders: [{ x, y, entrance }],
+ *     caves: [{ x, y, r }], lakes: [{ x, y, r }] (water circles, as in town) }
  */
-export function generateUnderground({ width, height, anchors = [], seed = 1937 }) {
+export function generateUnderground({ width, height, anchors = [], seed = 1937, caves: caveCount = 3, deadZones = 5 }) {
   const rnd = seeded(seed);
   const ri = (lo, hi) => lo + Math.floor(rnd() * (hi - lo + 1));
   const cols = Math.floor(width / CELL), rows = Math.floor(height / CELL);
@@ -178,8 +179,139 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937 }
   }
   // Placed before the stations' passages and the maze, so they get first pick of the rock.
   const entranceBunkers = anchors.map((a, i) => placeBunker(Math.round(a.x / CELL), Math.round(a.y / CELL), i)).filter(Boolean);
-  for (let tries = 0; bunkers.length < Math.max(14, entranceBunkers.length + 6) && tries < 30; tries++) placeBunker(0, 0, null);
   if (!entranceBunkers.length) entranceBunkers.push(placeBunker(cols >> 1, rows >> 1, 0)); // (always one way in and out)
+
+  // ---- natural caves: grown like a cellular automaton inside a rough disc of the rock that's left ----------
+  // One of them is a great chamber round an underground lake. And here and there a big chunk of solid
+  // rock nothing was ever dug through (the maze goes round it).
+  const caves = [], lakes = [];
+  const sz = Math.min(1, Math.min(cols, rows) / 84); // (sized for the real underground, 84 cells across; smaller on a smaller map)
+  const disc = (cx, cy, R) => { // the free cells within R of (cx, cy)
+    const cells = [];
+    for (let y = Math.floor(cy - R); y <= Math.ceil(cy + R); y++) for (let x = Math.floor(cx - R); x <= Math.ceil(cx + R); x++) {
+      if (inside(x, y) && !keep[at(x, y)] && !g[at(x, y)] && (x - cx) ** 2 + (y - cy) ** 2 <= R * R) cells.push([x, y]);
+    }
+    return cells;
+  };
+  /** The best of `tries` random spots for a disc of radius R: the most free rock (null if under `need` of it is). */
+  const bestSpot = (R, tries, need) => {
+    let best = null;
+    for (let i = 0; i < tries; i++) {
+      const cx = ri(Math.ceil(R) + 1, cols - Math.ceil(R) - 2), cy = ri(Math.ceil(R) + 1, rows - Math.ceil(R) - 2);
+      const cells = disc(cx, cy, R);
+      if (!best || cells.length > best.cells.length) best = { cx, cy, cells };
+    }
+    return best && best.cells.length >= need * Math.PI * R * R ? best : null;
+  };
+  function growCave(cx, cy, R, core = 0) {
+    const cells = disc(cx, cy, R);
+    if (!cells.length) return null;
+    const inDisc = new Uint8Array(cols * rows), open = new Uint8Array(cols * rows);
+    for (const [x, y] of cells) {
+      inDisc[at(x, y)] = 1;
+      if (Math.hypot(x - cx, y - cy) < core * R) open[at(x, y)] = 1; // (the lake's chamber)
+    }
+    // Water wore it out: a few wandering channels from the middle, widening here and there into a grotto.
+    const carve = (x, y, b) => {
+      for (let dy = -b; dy <= b; dy++) for (let dx = -b; dx <= b; dx++) if (dx * dx + dy * dy <= b * b + 1 && inside(x + dx, y + dy) && inDisc[at(x + dx, y + dy)]) open[at(x + dx, y + dy)] = 1;
+    };
+    for (let w = 0, n = 3 + Math.round(R / 5); w < n; w++) {
+      let x = cx, y = cy, a = rnd() * Math.PI * 2;
+      for (let s = 0; s < R * 3; s++) {
+        carve(x, y, rnd() < 0.06 ? 2 : rnd() < 0.3 ? 1 : 0);
+        a += (rnd() - 0.5) * 0.9;
+        const [nx, ny] = rnd() < Math.abs(Math.cos(a)) ** 2 ? [x + Math.sign(Math.cos(a)), y] : [x, y + Math.sign(Math.sin(a))];
+        if (!inside(nx, ny) || !inDisc[at(nx, ny)]) { a += Math.PI * (0.7 + rnd() * 0.6); continue; } // (turned back by the rock)
+        [x, y] = [nx, ny];
+      }
+    }
+    // Smoothed a little: pinholes filled, stray single cells closed up.
+    const next = open.slice();
+    for (const [x, y] of cells) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && inside(x + dx, y + dy) && open[at(x + dx, y + dy)]) n++;
+      if (!open[at(x, y)] && n >= 7) next[at(x, y)] = 1;
+      else if (open[at(x, y)] && n <= 1) next[at(x, y)] = 0;
+    }
+    open.set(next);
+    // Only the biggest open part (side to side, so it can all be walked), from the middle out.
+    let bestPart = [];
+    const done = new Uint8Array(cols * rows);
+    for (const [sx, sy] of cells) {
+      if (!open[at(sx, sy)] || done[at(sx, sy)]) continue;
+      const part = [], q = [[sx, sy]];
+      done[at(sx, sy)] = 1;
+      while (q.length) {
+        const [x, y] = q.pop();
+        part.push([x, y]);
+        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) if (inside(nx, ny) && inDisc[at(nx, ny)] && open[at(nx, ny)] && !done[at(nx, ny)]) { done[at(nx, ny)] = 1; q.push([nx, ny]); }
+      }
+      if (part.length > bestPart.length) bestPart = part;
+    }
+    if (bestPart.length < 12) return null;
+    for (const [x, y] of bestPart) set(x, y, UG.CAVE);
+    for (const [x, y] of cells) keep[at(x, y)] = 1; // (the maze keeps out of the whole disc: the rest stays rock)
+    const cave = { x: (cx + 0.5) * CELL, y: (cy + 0.5) * CELL, r: R * CELL, cx, cy, R, cells: bestPart };
+    caves.push(cave);
+    return cave;
+  }
+  // The lake's chamber first, while there's most room.
+  // (its middle, where the water goes, must be clear rock; then the more room round it the better)
+  const core = 0.55;
+  let lakeSpot = null, R = 0;
+  for (const r of [12, 10, 8].map((k) => Math.max(5, Math.round(k * sz)))) {
+    const mid = Math.ceil(r * core);
+    for (let i = 0; i < 150; i++) {
+      const cx = ri(r + 1, cols - r - 2), cy = ri(r + 1, rows - r - 2);
+      if (disc(cx, cy, mid).length < Math.PI * mid * mid * 0.97) continue;
+      const cells = disc(cx, cy, r);
+      if (!lakeSpot || cells.length > lakeSpot.cells.length) lakeSpot = { cx, cy, cells };
+    }
+    if (lakeSpot) { R = r; break; }
+  }
+  if (lakeSpot) {
+    const cave = growCave(lakeSpot.cx, lakeSpot.cy, R, core);
+    if (cave) {
+      cave.lake = true;
+      const isCave = (x, y) => inside(x, y) && g[at(x, y)] === UG.CAVE;
+      // A circle of water, shrunk until there's cave floor (a shore) all the way round it.
+      const fit = (x, y, r) => {
+        for (; r >= 200; r -= 30) {
+          let ok = true;
+          const m = r + CELL * 1.2;
+          for (let cy = Math.floor((y - m) / CELL); cy <= Math.floor((y + m) / CELL) && ok; cy++) {
+            for (let cx = Math.floor((x - m) / CELL); cx <= Math.floor((x + m) / CELL) && ok; cx++) {
+              if (Math.hypot((cx + 0.5) * CELL - x, (cy + 0.5) * CELL - y) < m && !isCave(cx, cy)) ok = false;
+            }
+          }
+          if (ok) return { x: Math.round(x), y: Math.round(y), r };
+        }
+        return null;
+      };
+      // The water: a big round pool and two or three more overlapping it, so the shore wanders.
+      const room = R * core * CELL;
+      const main = fit(cave.x, cave.y, Math.round(room * 0.7));
+      if (main) {
+        lakes.push(main);
+        for (let i = 0, n = ri(2, 3); i < n; i++) {
+          const a = rnd() * Math.PI * 2, r = Math.round(main.r * (0.5 + rnd() * 0.25)), off = main.r * 0.75;
+          const more = fit(main.x + Math.cos(a) * off, main.y + Math.sin(a) * off, r);
+          if (more) lakes.push(more);
+        }
+      }
+    }
+  }
+  // The other bunkers, after the lake but before the rest of the caves.
+  for (let tries = 0; bunkers.length < Math.max(14, entranceBunkers.length + 6) && tries < 60; tries++) placeBunker(0, 0, null);
+  for (let i = 0; i < caveCount; i++) {
+    const R = Math.max(4, Math.round(ri(7, 10) * sz)), spot = bestSpot(R, 60, 0.4);
+    if (spot) growCave(spot.cx, spot.cy, R);
+  }
+  for (let i = 0; i < deadZones; i++) {
+    const R = Math.max(3, Math.round(ri(4, 7) * sz)), spot = bestSpot(R, 30, 0.7);
+    if (spot) for (const [x, y] of spot.cells) keep[at(x, y)] = 1;
+  }
+
   for (const b of bunkers) bunkerDecor(b);
 
   // ---- the mine: a maze of shafts on the odd cells, through all the rock that's left ------------------
@@ -224,6 +356,34 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937 }
     if (!ok) continue;
     fill(x - 1, y - 1, 3, 3, UG.MINE);
     galleries.push({ x: x * CELL + CELL / 2, y: y * CELL + CELL / 2 });
+  }
+
+  // ---- ways into the caves: two to four shafts broken through from the cave to whatever's nearest -------
+  for (const cave of caves) {
+    const own = new Set(cave.cells.map(([x, y]) => at(x, y)));
+    const turns = ri(2, cave.lake ? 4 : 3), a0 = rnd() * Math.PI * 2;
+    for (let k = 0; k < turns; k++) {
+      const a = a0 + (k / turns) * Math.PI * 2 + (rnd() - 0.5) * 0.6, ux = Math.cos(a), uy = Math.sin(a);
+      // From the middle, out along the heading, cell by cell (a corner step where it goes diagonally, so it can be walked).
+      const path = [];
+      let px = cave.cx, py = cave.cy;
+      for (let t = 0; t < cave.R * 2 + 16; t += 0.25) {
+        const x = Math.floor(cave.cx + 0.5 + ux * t), y = Math.floor(cave.cy + 0.5 + uy * t);
+        if (x === px && y === py) continue;
+        if (x !== px && y !== py) path.push([x, py]);
+        path.push([x, y]);
+        [px, py] = [x, y];
+      }
+      const dug = [];
+      let hit = false;
+      for (const [x, y] of path) {
+        if (!inside(x, y) || zone[at(x, y)] >= 0) break; // (never through a station's or a bunker's walls)
+        if (own.has(at(x, y))) { dug.length = 0; continue; } // (still in the cave)
+        if (g[at(x, y)]) { hit = true; break; } // into a shaft, a tunnel or another cave
+        dug.push([x, y]);
+      }
+      if (hit && dug.length <= 16) for (const [px, py] of dug) set(px, py, UG.MINE);
+    }
   }
 
   // ---- ways out of the stations and bunkers: a concrete passage straight out until it meets something ----
@@ -333,6 +493,36 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937 }
     decor.push({ k: 'lantern', x: gl.x - 12, y: gl.y - CELL * 1.5 + 4, w: 24, h: 24 });
   }
 
+  // ---- the caves' furnishings: stalagmites, fallen rock and puddles; a rowboat and a few finds by the lake ----
+  const inLake = (px, py, m = 0) => lakes.some((l) => Math.hypot(px - l.x, py - l.y) < l.r + m);
+  for (const cave of caves) {
+    for (const [x, y] of cave.cells) {
+      const px = x * CELL + 30 + rnd() * (CELL - 60), py = y * CELL + 30 + rnd() * (CELL - 60);
+      if (inLake(px, py, 90)) continue;
+      const walls = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => !floor(x + dx, y + dy)).length;
+      const r = rnd();
+      if (walls >= 1 && r < 0.22) { const s = ri(26, 46); decor.push({ k: 'stalagmite', x: px - s / 2, y: py - s / 2, w: s, h: s, solid: true, seed: ri(0, 9999) }); }
+      else if (r < 0.3) decor.push({ k: 'rubble', x: px - 40, y: py - 40, w: 80, h: 80, seed: ri(0, 9999) });
+      else if (r < 0.36) decor.push({ k: 'puddle', x: px - 50, y: py - 30, w: 100, h: 60, seed: ri(0, 9999) });
+      else if (r < 0.39) decor.push({ k: 'bones', x: px - 24, y: py - 16, w: 48, h: 32, seed: ri(0, 9999) });
+    }
+    for (let i = 0, n = cave.lake ? 5 : 2; i < n; i++) {
+      const [x, y] = cave.cells[ri(0, cave.cells.length - 1)];
+      const px = x * CELL + CELL / 2, py = y * CELL + CELL / 2;
+      if (!inLake(px, py, 60)) loot.push({ x: px, y: py });
+    }
+    if (cave.lake && lakes.length) { // pulled up on the shore, long ago
+      const l = lakes[0], a = rnd() * Math.PI * 2;
+      for (let d = l.r + 60; d < l.r + CELL * 3; d += 20) {
+        const bx = l.x + Math.cos(a) * d, by = l.y + Math.sin(a) * d;
+        if (inLake(bx, by, 50)) continue;
+        if (g[at(Math.floor(bx / CELL), Math.floor(by / CELL))] !== UG.CAVE) break;
+        decor.push({ k: 'boat', x: bx - 40, y: by - 80, w: 80, h: 160, a: a + Math.PI / 2 });
+        break;
+      }
+    }
+  }
+
   // ---- bunker interiors -----------------------------------------------------------------------------
   function bunkerDecor(b) {
     const solid = [];
@@ -407,7 +597,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937 }
 
   let grid = '';
   for (let i = 0; i < g.length; i++) grid += g[i];
-  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, loot, ladders };
+  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, loot, ladders, caves: caves.map(({ x, y, r, lake }) => ({ x, y, r, lake: Boolean(lake) })), lakes };
 }
 
 /** The solid rock as rectangles: runs along each row, merged down with identical runs below (at most 8 cells long, for the grids). */
@@ -513,5 +703,5 @@ export function undergroundMap(town) {
     anchors.push(best);
   }
   const layout = generateUnderground({ width, height, anchors, seed: config.underground.seed });
-  return { version: 1, width, height, roads: [], rivers: [], lakes: [], trails: [], buildings: [], trees: [], forests: [], lamps: [], vehicles: [], npcs: [], atms: [], lots: [], underground: layout };
+  return { version: 1, width, height, roads: [], rivers: [], lakes: layout.lakes, trails: [], buildings: [], trees: [], forests: [], lamps: [], vehicles: [], npcs: [], atms: [], lots: [], underground: layout };
 }

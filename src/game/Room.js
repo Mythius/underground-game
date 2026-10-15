@@ -133,8 +133,9 @@ export class Room {
 
   #step(dt) {
     if (this.ownEnv) this.env.step(dt);
-    this.world.gripScale = 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain');
-    this.world.frozen = this.env.season.name === 'winter';
+    const town = this.kind === 'town'; // (no rain underground, and its lake never freezes)
+    this.world.gripScale = town ? 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain') : 1;
+    this.world.frozen = town && this.env.season.name === 'winter';
     this.world.night = this.env.isNight;
     this.world.dayClock = this.env.clock; // seconds into the day (meal times at the prison)
     this.world.dayNumber = Math.floor(this.env.time / this.env.cycle);
