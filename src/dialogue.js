@@ -53,7 +53,7 @@ export const DIALOGUE = [
     { id: 'homelessFight', name: 'Homeless — attacking (Russian only)', note: 'A homeless man coming at you with his knife.', lines: [
       'Стой, сука!', 'Зарежу!', 'Куда собрался?!', 'Иди сюда!', 'Кошелёк давай!', 'Убью, гад!', 'Не уйдёшь!', 'Моё! Всё моё!',
     ] },
-    { id: 'trader', name: 'Trader — hello', note: 'The man in the trench coat in a bunker underground, as you walk up (E: one bottle of vodka for bread, a bat, a knife or a Molotov).', lines: [
+    { id: 'trader', name: 'Trader — hello', note: 'The man in the trench coat in a bunker underground, as you walk up (E: one bottle of vodka for 3 bread, a bat, a knife or a Molotov).', lines: [
       'Psst. Vodka? I have things. You have vodka?', 'One bottle, one thing. Simple business.', 'Don\'t look so surprised. Everybody needs something down here.',
       'Bread, bat, knife, cocktail. All for vodka, nothing for roubles.', 'Roubles? Paper. Vodka is money down here.', 'Quiet, quiet. The walls have ears. Rats have ears.',
     ] },

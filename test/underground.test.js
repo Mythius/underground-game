@@ -410,7 +410,7 @@ test('bottles of vodka lie about the underground, and turn up again somewhere el
   assert.equal(world.pickups.size, config.underground.bottles, 'another one somewhere');
 });
 
-test('the trader in a bunker swaps one bottle of vodka for bread, a bat, a knife or a Molotov', () => {
+test('the trader in a bunker swaps one bottle of vodka for 3 bread, a bat, a knife or a Molotov', () => {
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
   const u = world.underground.layout, t = u.traders[0];
@@ -429,9 +429,10 @@ test('the trader in a bunker swaps one bottle of vodka for bread, a bat, a knife
   assert.ok(config.underground.trades.includes('rod'), 'he has fishing rods too');
   assert.deepEqual(world.underground.trade(p, 'bread'), { item: 'bread' });
   assert.deepEqual(world.underground.trade(p, 'bread'), { item: 'bread' });
-  assert.deepEqual(p.inventory[2], { food: 'bread', qty: 2 }, 'bread stacks');
+  assert.deepEqual(p.inventory[2], { food: 'bread', qty: 5 }, 'three loaves a bottle, stacked');
+  assert.deepEqual(p.inventory[3], { food: 'bread', qty: 1 }, 'the rest in the next free slot');
   assert.deepEqual(world.underground.trade(p, 'bat'), { item: 'bat' });
-  assert.equal(p.inventory[3].type, 'bat');
+  assert.equal(p.inventory[4].type, 'bat');
   assert.deepEqual(world.underground.trade(p, 'molotov'), { item: 'molotov' });
   assert.ok(!p.inventory.some((s) => s?.good === 'vodka'), 'four bottles spent');
   assert.equal(p.inventory[1].type, 'molotov', "in the last bottle's slot");

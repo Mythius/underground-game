@@ -799,10 +799,14 @@ export class Hires {
 
   #shoot(h, angle) {
     const gun = config.weapons[h.weapon];
-    h.fireCooldown = Math.max(config.hires.fireEverySec, gun.cooldownSec);
+    const rapid = h.side === 'state' && config.governor[h.role]?.rapid; // (the governor and the inspector: as fast as a player could)
+    h.fireCooldown = rapid ? gun.cooldownSec : Math.max(config.hires.fireEverySec, gun.cooldownSec);
     const off = h.radius + 14;
-    const b = new Bullet(this.world.nextEntityId++, h, h.x + Math.cos(angle) * off, h.y + Math.sin(angle) * off, angle, h.weapon);
-    this.world.bullets.set(b.id, b);
+    for (let i = 0; i < (rapid ? gun.pellets : 1); i++) {
+      const a = angle + (i ? (Math.random() - 0.5) * gun.spread : 0);
+      const b = new Bullet(this.world.nextEntityId++, h, h.x + Math.cos(a) * off, h.y + Math.sin(a) * off, a, h.weapon);
+      this.world.bullets.set(b.id, b);
+    }
     if (--h.ammo <= 0) h.reload = gun.reloadSec;
     if (h.side !== 'state' && (h.nextFireCrime ?? 0) <= this.time) {
       h.nextFireCrime = this.time + 1;

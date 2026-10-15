@@ -677,16 +677,17 @@ export const config = Object.freeze({
   //   They also buy any vodka (and the mixes) for vodkaPrice × base. The Militsiya only go after them
   //   for crimes they're seen doing.
   // The governor's residence, just outside town. The governor (who takes armor less damage) potters about
-  // his house with a pistol; two big guards stand outside the gate; the tax inspector lives there too.
+  // his house with a shotgun; two big guards stand outside the gate; the tax inspector lives there too.
   // Hurt any of them and all of them come for you. Each is replaced respawnSec after being killed.
   // The inspector drives out to one of your factories (picked at random) when, in one game day, you
   // abandon abandonLimit delivery jobs. Only if it has illegal
   // machines or contraband does he fine you `fine` (from your bank) and seize the contraband.
   // The laundry shed on a panelka banks your cash without the inspector noticing (only for the panelka's owner).
   governor: {
-    governor: { health: 200, armor: 0.9, weapon: 'pistol', radius: 19, cash: 10000 }, // (kill him and it's on his body)
+    // rapid: fires as fast as the gun lets a player (not the hires' usual fireEverySec), every pellet of a shotgun
+    governor: { health: 200, armor: 0.9, weapon: 'shotgun', rapid: true, radius: 19, cash: 10000 }, // (kill him and it's on his body)
     govguard: { health: 220, armor: 0.5, weapon: 'rifle', radius: 27 },
-    inspector: { health: 160, armor: 0.7, weapon: 'smg', radius: 18 },
+    inspector: { health: 160, armor: 0.7, weapon: 'smg', rapid: true, radius: 18 },
     respawnSec: 300,
     fightRange: 650,
     guardLeash: 700, // guards don't chase further than this from their post
@@ -747,6 +748,7 @@ export const config = Object.freeze({
     // of vodka for any one of these. (A Molotov is contraband in town, like an unregistered gun.)
     traderReach: 100,
     trades: ['bread', 'bat', 'knife', 'molotov', 'rod'],
+    breadPerVodka: 3, // (bread comes three loaves to the bottle)
   },
   // The albino bear, in the biggest cave underground (not the lake's). Blind: it hears you instead. Noises
   // carry out to `hear` (a gunshot; footsteps by how fast you're going: over sprintSpeed, over walkSpeed, or

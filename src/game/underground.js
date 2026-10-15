@@ -987,7 +987,7 @@ export class Underground {
   }
 
   /**
-   * E at the trader, then one of config.underground.trades: one bottle of vodka for bread, a bat, a knife,
+   * E at the trader, then one of config.underground.trades: one bottle of vodka for 3 bread, a bat, a knife,
    * a Molotov cocktail or a fishing rod. Returns { item } or an error code.
    */
   trade(p, item) {
@@ -1002,12 +1002,14 @@ export class Underground {
     const vodka = p.inventory[vi];
     if (--vodka.qty <= 0) p.inventory[vi] = null; // (paid first: the last bottle's slot is free for what he gives you)
     let given = false;
-    if (item === 'bread') {
-      const stack = p.inventory.find((s) => s?.food === 'bread' && s.qty < config.economy.foodStack);
-      const free = p.inventory.indexOf(null);
-      if (stack) stack.qty++;
-      else if (free >= 0) p.inventory[free] = { food: 'bread', qty: 1 };
-      given = Boolean(stack) || free >= 0;
+    if (item === 'bread') { // breadPerVodka loaves: topping up your bread stacks first, then free slots (all of them or none)
+      const max = config.economy.foodStack;
+      const room = p.inventory.reduce((n, s) => n + (s === null ? max : s?.food === 'bread' ? Math.max(0, max - s.qty) : 0), 0);
+      if ((given = room >= cfg.breadPerVodka)) {
+        let left = cfg.breadPerVodka;
+        for (const s of p.inventory) if (left > 0 && s?.food === 'bread' && s.qty < max) { const n = Math.min(left, max - s.qty); s.qty += n; left -= n; }
+        for (let i = 0; left > 0 && i < p.inventory.length; i++) if (p.inventory[i] === null) { const n = Math.min(left, max); p.inventory[i] = { food: 'bread', qty: n }; left -= n; }
+      }
     } else if (item === 'rod') given = p.addWeapon({ type: 'rod', tool: true }); // (a fishing rod: one each)
     else given = p.addWeapon({ ...makeWeapon(item), ...(item === 'molotov' ? { ammo: 1, illegal: true } : {}) });
     if (!given) { // no room: he gives you your bottle back
