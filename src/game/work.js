@@ -11,7 +11,7 @@ import { hotbarOf } from './cargo.js';
 // Anyone can work any site. A player can buy a site: then the foreman's wages come out of their bank,
 // and whatever the site sells goes into it.
 
-const KIND_OF_TOOL = { pickaxe: ['rock', 'vein', 'coal'], axe: ['tree'], scythe: ['wheat'] };
+const KIND_OF_TOOL = { pickaxe: ['rock', 'vein', 'coal', 'gold'], axe: ['tree'], scythe: ['wheat'] };
 
 export class Work {
   constructor(world) {
@@ -40,6 +40,14 @@ export class Work {
         }
       }
     }
+  }
+
+  /** A node out on its own (no work site): the gold in the underground's cave. */
+  addNode(kind, x, y, r) {
+    const id = Math.max(0, ...this.nodes.keys()) + 1, max = config.work.hp[kind];
+    const n = { id, site: 0, kind, x, y, r, hp: max, max, readyAt: 0 };
+    this.nodes.set(id, n);
+    return n;
   }
 
   get time() {

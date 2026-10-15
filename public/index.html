@@ -932,7 +932,8 @@
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
-      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] }))];
+      rats.list = []; // (the last world's rats)
+      solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))];
       doorReach = msg.doorReach ?? doorReach;
       if (msg.vehicles) ({ types: vehicleTypes, reach: vehicleReach, boost: carBoost = carBoost, knockDecay = knockDecay } = msg.vehicles);
       if (msg.homes) homesCfg = msg.homes;
@@ -967,6 +968,7 @@
       buildMinimap();
       doorById.clear();
       for (const b of buildings) for (const d of b.doors) { d.anim = d.open ? 1 : 0; doorById.set(d.id, d); }
+      for (const d of under?.doors ?? []) { d.anim = d.open ? 1 : 0; doorById.set(d.id, d); } // (the underground's, ids after any buildings')
       tickMs = 1000 / msg.tickRate;
       if (msg.player) playerParams = msg.player;
       if (msg.weapons) weapons = msg.weapons;
@@ -1135,13 +1137,16 @@
           }
           if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
+          if (msg.kind === 'bear') { sfx('bearRoar'); addShake(4); toast('🐻 It heard you. It can\'t see — stand still, or run'); }
+          if (msg.kind === 'bear_killed') toast('🐻 The albino bear is down. Whatever it ate is lying there.');
           if (msg.kind === 'wolves') { sfx('growl'); addShake(2); toast('🐺 Wolves! They\'re faster than you — get in a car, or fight them off'); }
           if (msg.kind === 'hooked_by') { sfx('hooked'); toast(`🪝 ${msg.name} has hooked you with a fishing line! Walk away to snap it before they reel something in`); }
           if (msg.kind === 'hook_free') toast(msg.escaped ? '🪝 You pulled free of the line' : '🪝 The line came off you');
           if (msg.kind === 'hooked_robbed') { sfx('error'); toast(`🪝 ${msg.name} reeled in your ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!`); }
           if (msg.kind === 'fish_reeled' && msg.why === 'moved') toast('The line came in');
           if (msg.kind === 'fish_reeled' && msg.why === 'frozen') toast('🧊 The lake froze over — the line came in');
-          if (msg.kind === 'tool_returned') toast(`${TOOL_ICONS[msg.tool] ?? ''} You left the site — the ${TOOL_NAMES[msg.tool]?.toLowerCase() ?? 'tool'} went back to the foreman`);
+          if (msg.kind === 'tool_returned' && msg.miner) toast('⛏ Too far from the old miner — he wants his pickaxe back. Somehow it\'s gone.');
+          else if (msg.kind === 'tool_returned') toast(`${TOOL_ICONS[msg.tool] ?? ''} You left the site — the ${TOOL_NAMES[msg.tool]?.toLowerCase() ?? 'tool'} went back to the foreman`);
           if (msg.kind === 'gathered') { sfx('pickup', null, 0.6); toast(`+ ${Object.entries(msg.items).map(([g, q]) => `${q} ${gi(g)}`).join(' ')}`); }
           if (msg.kind === 'body_found') toast('⚠️ Someone found a body you left — keep away from it');
           if (msg.kind === 'roadblock_clean') toast('👮 Checkpoint: they searched you — clean. Move along.');
@@ -1289,6 +1294,7 @@
           if (msg.what === 'wh_take' || msg.what === 'wh_mtake') toast('📤 Loaded into your cargo');
           if (msg.what === 'wh_mload') toast('📥 Loaded into the machine');
           if (msg.what === 'wh_place') sfx('build');
+          if (msg.what === 'miner_tool') { toast(msg.borrowed ? '⛏ The old miner\'s pickaxe — swing it at the gold in the walls. Don\'t take it far.' : '⛏ You give him his pickaxe back. He sniffs it.'); if (msg.borrowed) minerSays(pick(SPEECH.minerLend)); }
           if (msg.what === 'work_tool') toast(msg.borrowed ? `${TOOL_ICONS[msg.borrowed]} ${TOOL_NAMES[msg.borrowed]} borrowed — click to work. It goes back when you leave.` : 'Tool handed back');
           if (msg.what === 'work_haul') { sfx('coin'); toast(`💰 The foreman paid ${money(msg.paid)} for ${msg.qty}`); }
           if (msg.what === 'work_buy') toast('🏞 The site is yours');
@@ -2757,6 +2763,10 @@
     function lockTarget() {
       if (!me) return null;
       const r = radiusOf(me.mass);
+      for (const d of under?.doors ?? []) { // the oil hall's, underground
+        const x = d.x + d.w / 2, y = d.y + d.h / 2;
+        if (d.locked && !d.open && Math.hypot(x - me.x, y - me.y) < 90 + r) return { x, y, kind: 'lockpick' };
+      }
       for (const l of wh.layouts.values()) {
         if (!l.owner || whMine(l)) continue;
         for (const d of whBuilding(l)?.doors ?? []) {
@@ -3302,6 +3312,24 @@
         if (n.x < viewBox.l - 60 || n.x > viewBox.r + 60 || n.y < viewBox.t - 60 || n.y > viewBox.b + 60) continue;
         const done = n.hp <= 0;
         const rnd = seeded(Math.round(n.x * 13 + n.y * 7) % 2147483646 + 1);
+        if (n.kind === 'gold') { // like the coal face, but gold: a faceted lump of rock shot through with it, glinting
+          if (done) { for (let i = 0; i < 5; i++) circle(n.x + (rnd() - 0.5) * n.r * 1.2, n.y + (rnd() - 0.5) * n.r * 1.2, 3 + rnd() * 3, '#5a4a2a'); continue; }
+          const size = n.r * (0.55 + 0.45 * (n.hp / n.max));
+          circle(n.x + 4, n.y + 5, size, 'rgba(0, 0, 0, .35)');
+          ctx.fillStyle = '#b8861f';
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + rnd() * 0.4, rr = size * (0.72 + rnd() * 0.32);
+            ctx.lineTo(n.x + Math.cos(a) * rr, n.y + Math.sin(a) * rr);
+          }
+          ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = '#6e4f10'; ctx.lineWidth = 1.5; ctx.stroke();
+          ctx.fillStyle = 'rgba(255, 236, 150, .55)'; // facets catching the lamp
+          for (let i = 0; i < 3; i++) { const fx = n.x + (rnd() - 0.6) * size, fy = n.y + (rnd() - 0.6) * size; ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx + 6, fy + 2); ctx.lineTo(fx + 2, fy + 6); ctx.fill(); }
+          const tw = 0.5 + 0.5 * Math.sin(performance.now() / 300 + n.id * 2); // a glint now and then
+          ctx.fillStyle = `rgba(255, 250, 220, ${0.8 * tw * tw})`; ctx.beginPath(); ctx.arc(n.x - size * 0.3, n.y - size * 0.25, 2.2, 0, Math.PI * 2); ctx.fill();
+          continue;
+        }
         if (n.kind === 'coal') { // a lump of coal face: black, glossy, faceted
           if (done) { for (let i = 0; i < 5; i++) circle(n.x + (rnd() - 0.5) * n.r * 1.2, n.y + (rnd() - 0.5) * n.r * 1.2, 3 + rnd() * 3, '#2a2826'); continue; }
           const size = n.r * (0.55 + 0.45 * (n.hp / n.max));
@@ -5507,6 +5535,8 @@
       whistle: (o) => { tone(o, { dur: 0.35, freq: 2500, endFreq: 2700, vol: 0.12 }); tone(o, { at: 0.45, dur: 0.8, freq: 2600, endFreq: 2500, vol: 0.12 }); },
       meow: (o) => { tone(o, { dur: 0.45, type: 'triangle', freq: 520, endFreq: 760, vol: 0.12, attack: 0.08 }); tone(o, { at: 0.3, dur: 0.35, type: 'triangle', freq: 760, endFreq: 430, vol: 0.1 }); },
       purr: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.22, dur: 0.18, type: 'sawtooth', freq: 26, endFreq: 24, vol: 0.12, attack: 0.05 }); },
+      rat: (o) => { for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) tone(o, { at: i * 0.09, dur: 0.06, type: 'triangle', freq: 3400 + Math.random() * 900, endFreq: 2600, vol: 0.06 }); },
+      bearRoar: (o) => { noiseBurst(o, { dur: 1.6, filter: 'lowpass', freq: 380, q: 1.5, vol: 1.2 }); tone(o, { dur: 1.5, type: 'sawtooth', freq: 95, endFreq: 70, vol: 0.18, attack: 0.15 }); tone(o, { dur: 1.2, type: 'sawtooth', freq: 140, endFreq: 90, vol: 0.08, attack: 0.2 }); },
       howl: (o) => { tone(o, { dur: 1.1, freq: 330, endFreq: 610, vol: 0.22, attack: 0.35 }); tone(o, { at: 1.0, dur: 1.7, freq: 610, endFreq: 370, vol: 0.22, attack: 0.1 }); tone(o, { dur: 2.6, type: 'triangle', freq: 660, endFreq: 760, vol: 0.03, attack: 0.6 }); },
       growl: (o) => { noiseBurst(o, { dur: 0.7, filter: 'lowpass', freq: 380, vol: 0.7 }); tone(o, { dur: 0.7, type: 'sawtooth', freq: 85, endFreq: 62, vol: 0.18, attack: 0.08 }); },
       caw: (o) => { for (const at of [0, 0.26]) { tone(o, { at, dur: 0.17, type: 'sawtooth', freq: 820, endFreq: 560, vol: 0.12, attack: 0.01 }); noiseBurst(o, { at, dur: 0.15, freq: 1300, q: 3, vol: 0.25 }); } },
@@ -5579,6 +5609,8 @@
       boost: (o) => { noiseBurst(o, { dur: 1.5, filter: 'lowpass', freq: 700, q: 1, vol: 0.9 }); noiseBurst(o, { dur: 1.5, freq: 2600, q: 0.7, vol: 0.25 }); },
       caveDrip: (o) => { for (let i = 0; i < 6; i++) dripSound(o, audio.ctx.currentTime + i * 0.45 + Math.random() * 0.3, 2.5); },
       ugWind: (o) => noiseBurst(o, { dur: 3, freq: 380, q: 0.8, vol: 0.6 }),
+      sewer: (o) => { noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 650, q: 0.7, vol: 0.7 }); noiseBurst(o, { dur: 2.5, freq: 2200, q: 3, vol: 0.2 }); },
+      bearBreath: (o) => { for (let i = 0; i < 2; i++) { noiseBurst(o, { at: i * 2.4, dur: 0.9, freq: 700, q: 1.2, vol: 0.35 }); noiseBurst(o, { at: i * 2.4 + 1, dur: 1.2, filter: 'lowpass', freq: 520, q: 1, vol: 0.6 }); } },
       fluoro: (o) => { tone(o, { dur: 2.5, type: 'sawtooth', freq: 100, vol: 0.05 }); tone(o, { dur: 2.5, type: 'sine', freq: 200, vol: 0.06 }); },
     };
     /** One drop of water into a puddle: a quick falling plink, and its fainter echo off the rock. */
@@ -6534,6 +6566,103 @@
       return Math.min(1, n / 12);
     }
 
+    let shownBears = new Map();
+    // The old miner: he turns to look at you (more or less) when you're close, pick in hand, his helmet lamp
+    // throwing a yellow cone; a grey beard; he rocks on his heels.
+    const OLD_MINER_LOOK = { skin: '#d6b08a', shirt: '#4a4238', pants: '#2e2a24', hat: 'miner' };
+    const oldMiner = { aim: Math.PI / 2, say: null };
+    function drawOldMiner(m, now) {
+      if (m.x < viewBox.l - 300 || m.x > viewBox.r + 300 || m.y < viewBox.t - 300 || m.y > viewBox.b + 300) return;
+      const near = me && playing && Math.hypot(me.x - m.x, me.y - m.y) < 400;
+      const want = near ? Math.atan2(me.y - m.y, me.x - m.x) + Math.sin(now / 900) * 0.5 : Math.sin(now / 2300) * 1.4 + Math.PI / 2; // (never quite looking at you)
+      oldMiner.aim += Math.atan2(Math.sin(want - oldMiner.aim), Math.cos(want - oldMiner.aim)) * 0.04;
+      ctx.save(); // the lamp's cone
+      ctx.globalCompositeOperation = 'lighter';
+      const a = oldMiner.aim, g = ctx.createRadialGradient(m.x, m.y, 10, m.x, m.y, 260);
+      g.addColorStop(0, 'rgba(255, 220, 140, .22)'); g.addColorStop(1, 'rgba(255, 200, 120, 0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.arc(m.x, m.y, 260, a - 0.4, a + 0.4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      const rock = Math.sin(now / 500) * 2;
+      drawPerson({ x: m.x + Math.cos(a) * rock, y: m.y + Math.sin(a) * rock, r: 18, aim: a, weapon: 'pickaxe', thrust: 0 }, OLD_MINER_LOOK);
+      ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(a); // the beard, down his front
+      ctx.fillStyle = '#c9c6bd'; ctx.beginPath(); ctx.ellipse(14, 0, 7, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#a9a69c'; for (let k = -1; k <= 1; k++) ctx.fillRect(16, k * 4 - 1, 5, 1.6);
+      ctx.restore();
+    }
+    /** Make the old miner say something right now (lending you his pick). */
+    function minerSays(text) { oldMiner.say = text; }
+
+    /** Where a bear is in its breath, 0–1 (in, then out): about every 3 s, every 1.3 s while it charges. */
+    function bearPhase(bf, now) {
+      const period = bf?.state === 2 ? 1300 : bf?.state === 1 || bf?.state === 3 ? 2000 : 3000;
+      return (now % period) / period;
+    }
+
+    /**
+     * The albino bear from above: a great slab of yellowish-white fur, its head swinging as it walks, milky
+     * blind eyes, a pink nose; its breath smoking in the cold on every out-breath. A health bar while it's hurting.
+     */
+    function drawBear(bf, id, now) {
+      const charging = bf.state === 2, moving = bf.state !== 3, R = 42;
+      const t = now / 1000, gait = Math.sin(t * (charging ? 11 : bf.state === 0 ? 3.5 : 6)), sniff = bf.state === 3 ? Math.sin(t * 5) * 0.35 : 0;
+      ctx.save();
+      ctx.translate(bf.x, bf.y); ctx.rotate(bf.angle);
+      ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.ellipse(6, 8, R * 1.25, R * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+      // Paws, the claws dark against the fur.
+      for (const [px, py, s] of [[22, -24, 1], [22, 24, -1], [-24, -26, -1], [-24, 26, 1]]) {
+        const step = moving ? gait * s * 9 : 0;
+        ctx.fillStyle = '#e9e2cf'; ctx.beginPath(); ctx.ellipse(px + step, py, 12, 10, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#3a342c'; for (let k = -1; k <= 1; k++) ctx.fillRect(px + step + 10, py + k * 4 - 1, 5, 2);
+      }
+      // The body, fur in streaks.
+      const g = ctx.createRadialGradient(-6, -8, 6, 0, 0, R * 1.3);
+      g.addColorStop(0, '#fbf8ee'); g.addColorStop(0.7, '#ece4cd'); g.addColorStop(1, '#d6ccb0');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 0, R * 1.15, R * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(190, 178, 150, .55)'; ctx.lineWidth = 1.5;
+      for (let k = 0; k < 14; k++) {
+        const fx = -R + ugHash(id, k, 1) * R * 1.8, fy = (ugHash(id, k, 2) - 0.5) * R * 1.2;
+        ctx.beginPath(); ctx.moveTo(fx, fy); ctx.lineTo(fx - 8, fy + (ugHash(id, k, 3) - 0.5) * 4); ctx.stroke();
+      }
+      ctx.fillStyle = '#e6dcc2'; ctx.beginPath(); ctx.ellipse(18, 0, 16, 22, 0, 0, Math.PI * 2); ctx.fill(); // the hump of the shoulders
+      // The head, swinging: blind milky eyes, small round ears, a long pink muzzle.
+      ctx.save(); ctx.translate(R + 4, 0); ctx.rotate(sniff + (moving ? gait * 0.06 : 0));
+      ctx.fillStyle = '#f3eedf'; ctx.beginPath(); ctx.ellipse(0, 0, 20, 17, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#e4dac0'; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(-8, s * 15, 6, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = '#e8b9b4'; for (const s of [-1, 1]) { ctx.beginPath(); ctx.arc(-8, s * 15, 3, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = '#eee7d6'; ctx.beginPath(); ctx.ellipse(16, 0, 12, 9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#d98b8e'; ctx.beginPath(); ctx.ellipse(26, 0, 5, 6, 0, 0, Math.PI * 2); ctx.fill(); // the nose
+      for (const s of [-1, 1]) { // eyes: no pupils, a milky blue-white film
+        ctx.fillStyle = '#c9d3d6'; ctx.beginPath(); ctx.arc(6, s * 8, 3.6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, .7)'; ctx.beginPath(); ctx.arc(5.2, s * 8 - 1, 1.3, 0, Math.PI * 2); ctx.fill();
+      }
+      if (charging) { ctx.fillStyle = '#7a2e33'; ctx.beginPath(); ctx.ellipse(20, 0, 5, 7, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#f5f1e4'; ctx.fillRect(16, -6, 2, 4); ctx.fillRect(16, 2, 2, 4); } // jaws open, fangs
+      ctx.restore();
+      // Its breath smoking on the way out, in puffs from the nose.
+      const phase = bearPhase(bf, performance.now());
+      if (phase > 0.5) {
+        const k = (phase - 0.5) / 0.5;
+        for (let i = 0; i < 3; i++) {
+          const d = 34 + k * (30 + i * 12), spread = (i - 1) * 7 * k;
+          ctx.fillStyle = `rgba(230, 236, 240, ${0.28 * (1 - k)})`;
+          ctx.beginPath(); ctx.arc(R + 4 + d, spread, 6 + k * 10 + i * 2, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      ctx.restore();
+      if (bf.hurt || bf.health < 0.999) { // how much there's still to go
+        const w = 110, x = bf.x - w / 2, y = bf.y - R - 30;
+        ctx.fillStyle = 'rgba(0, 0, 0, .6)'; ctx.fillRect(x - 2, y - 2, w + 4, 9);
+        ctx.fillStyle = '#c0392b'; ctx.fillRect(x, y, w * Math.max(0, bf.health), 5);
+      }
+    }
+
+    /** How much sewer round (x, y): 0 none near, 1 right in one. */
+    function sewerNearness(x, y) {
+      const C = under.cell, cx = Math.floor(x / C), cy = Math.floor(y / C);
+      let n = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (ugCell(cx + dx, cy + dy) === UGC.SEWER) n += dx === 0 && dy === 0 ? 4 : 1;
+      return Math.min(1, n / 7);
+    }
+
     /** 1 inside the oil hall, fading to 0 within 500 of it (for its lights' hum). */
     function hallNearness(x, y) {
       let best = 0;
@@ -6590,6 +6719,22 @@
         o1.connect(f); o2.connect(f); f.connect(g); g.connect(audio.master); o1.start(); o2.start();
         return { o: o1, o2, g, stop: (t) => o2.stop(t) };
       });
+      const sewer = loop('sewer', () => { // running water: low rushing noise, and a higher trickle over it
+        const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+        const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 0.7;
+        const f2 = a.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 2200; f2.Q.value = 3;
+        const g = a.createGain(); g.gain.value = 0;
+        const g2 = a.createGain(); g2.gain.value = 0.25;
+        src.connect(f); f.connect(g); src.connect(f2); f2.connect(g2); g2.connect(g); g.connect(audio.master); src.start();
+        return { src, f2, g };
+      });
+      const bearBreath = loop('bearBreath', () => { // rasping breath: noise through a throaty filter, swelled in and out below
+        const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+        const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 520; f.Q.value = 1.1;
+        const g = a.createGain(); g.gain.value = 0;
+        src.connect(f); f.connect(g); g.connect(audio.master); src.start();
+        return { src, f, g };
+      });
       const ugWind = loop('ugWind', () => {
         const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
         const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 380; f.Q.value = 0.8;
@@ -6640,8 +6785,21 @@
         dripSound(drip.g, drip.next);
       }
       loopGain(drip, 'caveDrip', cave * (drip?.file ? 0.25 : 0.35), now, 0.6);
+      // The bear's breathing: in and out (the out-breath louder), quicker when it's after someone; louder closer.
+      let bearNear = null, bearD = Infinity;
+      if (under && me && playing) for (const bf of shownBears.values()) { const d = Math.hypot(bf.x - me.x, bf.y - me.y); if (d < bearD) [bearNear, bearD] = [bf, d]; }
+      const bearVol = bearNear ? Math.max(0, 1 - bearD / 1100) ** 1.5 : 0;
+      if (bearBreath?.file) loopGain(bearBreath, 'bearBreath', bearVol * 0.7, now, 0.2);
+      else if (bearBreath) {
+        const phase = bearPhase(bearNear, performance.now()), env = phase < 0.4 ? Math.sin(phase / 0.4 * Math.PI) * 0.55 : phase < 0.5 ? 0 : Math.sin((phase - 0.5) / 0.5 * Math.PI);
+        bearBreath.f.frequency.setTargetAtTime(phase < 0.45 ? 760 : 460, now, 0.08); // (in: a higher wheeze; out: a low huff)
+        loopGain(bearBreath, 'bearBreath', bearVol * env * 0.5, now, 0.06);
+      }
+      const sewerNear = under && me && playing ? sewerNearness(me.x, me.y) : 0;
+      if (sewer?.f2) sewer.f2.frequency.setTargetAtTime(1900 + 600 * Math.sin(now * 1.7) * Math.sin(now * 0.6), now, 0.2); // (the gurgle wandering)
+      loopGain(sewer, 'sewer', sewerNear * (sewer?.file ? 0.35 : 0.12), now, 0.5);
       const hall = under && me && playing ? hallNearness(me.x, me.y) : 0;
-      loopGain(fluoro, 'fluoro', hall * (fluoro?.file ? 0.3 : 0.05), now, 0.4);
+      loopGain(fluoro, 'fluoro', hall * (fluoro?.file ? 0.08 : 0.012), now, 0.4);
       const gust = under && playing ? undergroundGust(now) * (1 - hall * 0.8) : 0;
       if (ugWind?.f) ugWind.f.frequency.setTargetAtTime(300 + gust * 260, now, 0.8); // (higher as it blows harder)
       loopGain(ugWind, 'ugWind', gust * (1 - cave * 0.7) * (ugWind?.file ? 0.18 : 0.07), now, 1.2);
@@ -7763,6 +7921,7 @@
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
           else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
           else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked (or open: down the ladder)
+          else if (t?.kind === 'miner') send({ t: 'miner' }); // the old miner: his pickaxe, lent (or back)
           else if (t?.kind === 'ladder') { sfx('furnish'); send({ t: 'trapdoor', id: 0, action: 'up' }); } // underground: back up to town
           else if (!t && placeableHere()) placeFurniture(); // a cabinet, bed or sofa in hand: put it down
           else useRequested = true; // door, vehicle, dumpster, climbing out, leaving the car
@@ -8328,6 +8487,8 @@
       for (const [id, x, y, angle, guard] of msg.cops ?? []) cops.set(id, { x, y, angle, guard: guard === 1 || guard === 2, mike: guard === 2 });
       const wolves = new Map();
       for (const [id, x, y, angle, running] of msg.wolves ?? []) wolves.set(id, { x, y, angle, running: running === 1 });
+      const bears = new Map();
+      for (const [id, x, y, angle, state, health, hurt] of msg.bears ?? []) bears.set(id, { x, y, angle, state, health, hurt: hurt === 1 });
       otherLines = msg.lines ?? [];
       const crew = new Map(); // hired muscle: goons, guards, hitmen
       for (const [id, x, y, angle, role, mine, hp, aiming] of msg.crew ?? []) crew.set(id, { x, y, angle, role, mine: mine === 1, hp, aiming: aiming === 1 });
@@ -8338,7 +8499,7 @@
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       const cats = new Map();
       for (const [id, x, y, angle, move, look, petted, knows, heldBy] of msg.cats ?? []) cats.set(id, { x, y, angle, move, look, petted: petted === 1, knows: knows === 1, heldBy });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, cats, bodies: corpses });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, cats, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -8490,12 +8651,17 @@
         const wa = a.wolves?.get(id);
         wolves.set(id, wa ? { ...wb, x: lerp(wa.x, wb.x, t), y: lerp(wa.y, wb.y, t), angle: lerpAngle(wa.angle, wb.angle, t) } : wb);
       }
+      const bears = new Map();
+      for (const [id, bb] of b.bears ?? []) {
+        const ba = a.bears?.get(id);
+        bears.set(id, ba ? { ...bb, x: lerp(ba.x, bb.x, t), y: lerp(ba.y, bb.y, t), angle: lerpAngle(ba.angle, bb.angle, t) } : bb);
+      }
       const cats = new Map();
       for (const [id, cb] of b.cats ?? []) {
         const ca = a.cats?.get(id);
         cats.set(id, ca ? { ...cb, x: lerp(ca.x, cb.x, t), y: lerp(ca.y, cb.y, t), angle: lerpAngle(ca.angle, cb.angle, t) } : cb);
       }
-      return { players, bullets, vehicles, npcs, cops, crew, wolves, cats, bodies: b.bodies };
+      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, cats, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -10886,6 +11052,7 @@
       if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
+      if (under?.miner && Math.hypot(under.miner.x - me.x, under.miner.y - me.y) < 90 + radiusOf(me.mass)) options.push({ kind: 'miner', dist: d(under.miner) - 10, x: under.miner.x, y: under.miner.y - 56 });
       const ladder = nearestLadder();
       if (ladder) options.push({ kind: 'ladder', dist: ladder.d, x: ladder.x, y: ladder.y - 70 });
       const trap = nearestTrapdoor();
@@ -11305,6 +11472,17 @@
       for (const k of shop.shopkeepers) speaker(`k${k.x},${k.y}`, k.x, k.y, 52, either(robbedLines(SPEECH.robShop, 'shop'), keeperLines(SPEECH.shop)));
       for (const k of bankData.tellers) speaker(`t${k.x},${k.y}`, k.x, k.y, 36, either(robbedLines(SPEECH.robBank, 'bank'), keeperLines(SPEECH.teller)));
       for (const p of econ.places) speaker(`p${p.id}`, p.x, p.y, 36, keeperLines(SPEECH[p.role] ?? SPEECH.market));
+      if (under?.miner) speaker('oldminer', under.miner.x, under.miner.y, 40, (s, d) => { // muttering nonsense; now and then screaming about the flood
+        if (oldMiner.say) { const text = oldMiner.say; oldMiner.say = null; s.next = t + 6; return { text, urgent: true }; }
+        const edge = approach(s, d, 260, 340);
+        if (edge === 'in') { s.next = t + 5 + Math.random() * 3; return { text: pick(SPEECH.miner), urgent: true }; }
+        if (d < 700 && t > (s.next ?? 0)) {
+          s.next = t + 5 + Math.random() * 5;
+          if (Math.random() < 0.18) { addShake(1); return { text: pick(SPEECH.minerFlood), urgent: true }; }
+          if (d < 450) return { text: pick(SPEECH.miner) };
+        }
+        return null;
+      });
       for (const [id, o] of v.cops ?? []) {
         speaker(`c${id}`, o.x, o.y, 36, (s, d) => {
           const edge = approach(s, d, 260, 340);
@@ -11724,8 +11902,7 @@
 
     // ---- the underground: old Soviet bunkers, metro tunnels and mine shafts (the second world) ----------
 
-    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6, HALL: 7 };
-    const UG_SHAFT = 120; // mine shafts are this wide (same as src/game/underground.js SHAFT)
+    const UGC = { ROCK: 0, MINE: 1, TUNNEL: 2, PLATFORM: 3, BUNKER: 4, PASSAGE: 5, CAVE: 6, HALL: 7, SEWER: 8 };
     const UG_SPAN = 8; // cells per side of a decor bucket
     const ugHash = (x, y, k = 0) => {
       let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(k + 1, 83492791)) >>> 0;
@@ -11756,51 +11933,7 @@
         }
       }
       out.push({ x: cols * cell, y: 0, w: cell, h: rows * cell + cell }, { x: 0, y: rows * cell, w: cols * cell, h: cell });
-      for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (u.g[y * cols + x] === UGC.MINE) out.push(...shaftRock(u, x, y));
       return out;
-    }
-
-    /** The rock either side of a mine shaft in cell (x, y), and in its corners (same as src/game/underground.js shaftRects). */
-    function shaftRock(u, x, y) {
-      const C = u.cell, B = (C - UG_SHAFT) / 2, X = x * C, Y = y * C, out = [];
-      const rock = (cx, cy) => cx < 0 || cy < 0 || cx >= u.cols || cy >= u.rows || u.g[cy * u.cols + cx] === UGC.ROCK;
-      const n = rock(x, y - 1), s = rock(x, y + 1), w = rock(x - 1, y), e = rock(x + 1, y);
-      if (n) out.push({ x: X, y: Y, w: C, h: B });
-      if (s) out.push({ x: X, y: Y + C - B, w: C, h: B });
-      if (w) out.push({ x: X, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
-      if (e) out.push({ x: X + C - B, y: Y + (n ? B : 0), w: B, h: C - (n ? B : 0) - (s ? B : 0) });
-      if (!n && !w) out.push({ x: X, y: Y, w: B, h: B });
-      if (!n && !e) out.push({ x: X + C - B, y: Y, w: B, h: B });
-      if (!s && !w) out.push({ x: X, y: Y + C - B, w: B, h: B });
-      if (!s && !e) out.push({ x: X + C - B, y: Y + C - B, w: B, h: B });
-      return out;
-    }
-
-    /** A mine shaft's rock sides and corners, lined with rough-hewn rock, the pit props' posts against them. */
-    function drawShaft(cx, cy) {
-      const C = under.cell, B = (C - UG_SHAFT) / 2, X = cx * C, Y = cy * C, wall = UG_WALL[UGC.MINE];
-      for (const r of shaftRock(under, cx, cy)) {
-        ctx.fillStyle = '#15120f'; ctx.fillRect(r.x, r.y, r.w, r.h);
-      }
-      // The lining: wherever floor meets the rock inside this cell.
-      const rock = (dx, dy) => ugCell(cx + dx, cy + dy) === UGC.ROCK;
-      const n = rock(0, -1), s = rock(0, 1), w = rock(-1, 0), e = rock(1, 0), t = 7;
-      const segs = []; // [x, y, w, h] of lining, on the rock's side of the line
-      if (n) segs.push([X + (w ? B : 0), Y + B - t, C - (w ? B : 0) - (e ? B : 0), t]); else { segs.push([X + B - t, Y, t, B]); segs.push([X + C - B, Y, t, B]); }
-      if (s) segs.push([X + (w ? B : 0), Y + C - B, C - (w ? B : 0) - (e ? B : 0), t]); else { segs.push([X + B - t, Y + C - B, t, B]); segs.push([X + C - B, Y + C - B, t, B]); }
-      if (w) segs.push([X + B - t, Y + (n ? B : 0), t, C - (n ? B : 0) - (s ? B : 0)]); else { segs.push([X, Y + B - t, B, t]); segs.push([X, Y + C - B, B, t]); }
-      if (e) segs.push([X + C - B, Y + (n ? B : 0), t, C - (n ? B : 0) - (s ? B : 0)]); else { segs.push([X + C - B, Y + B - t, B, t]); segs.push([X + C - B, Y + C - B, B, t]); }
-      for (const [sx, sy, sw, sh] of segs) {
-        ctx.fillStyle = wall.c; ctx.fillRect(sx, sy, sw, sh);
-        ctx.fillStyle = '#463b30';
-        for (let k = 0; k < Math.max(sw, sh); k += 22) if (ugHash(cx * 7 + k, cy, Math.round(sx + sy)) < 0.5) sw > sh ? ctx.fillRect(sx + k, sy, 12, sh) : ctx.fillRect(sx, sy + k, sw, 12);
-      }
-      const prop = mineProp(cx, cy);
-      if (prop) { // the timber set's two posts, either side of the shaft
-        ctx.fillStyle = '#6b4a28';
-        if (prop === 1) { ctx.fillRect(X + C / 2 - 8, Y + B - 6, 16, 14); ctx.fillRect(X + C / 2 - 8, Y + C - B - 8, 16, 14); }
-        else { ctx.fillRect(X + B - 6, Y + C / 2 - 8, 14, 16); ctx.fillRect(X + C - B - 8, Y + C / 2 - 8, 14, 16); }
-      }
     }
 
     /** Ready the underground's layout for drawing and bumping into (and the minimap: only where you've been). */
@@ -11828,7 +11961,7 @@
     const ugCell = (cx, cy) => (cx < 0 || cy < 0 || cx >= under.cols || cy >= under.rows ? UGC.ROCK : under.g[cy * under.cols + cx]);
 
     // Floors, and the wall each kind of place has where it meets the rock.
-    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f', [UGC.CAVE]: '#2c2b2d', [UGC.HALL]: '#4b4f49' };
+    const UG_FLOOR = { [UGC.MINE]: '#3a3027', [UGC.TUNNEL]: '#2b2926', [UGC.PLATFORM]: '#958d7f', [UGC.BUNKER]: '#4d5049', [UGC.PASSAGE]: '#45463f', [UGC.CAVE]: '#2c2b2d', [UGC.HALL]: '#4b4f49', [UGC.SEWER]: '#3a3932' };
     const UG_WALL = {
       [UGC.MINE]: { t: 16, c: '#55483a', edge: '#2a221b' },
       [UGC.TUNNEL]: { t: 24, c: '#4e4d49', edge: '#22211f' },
@@ -11837,6 +11970,7 @@
       [UGC.PASSAGE]: { t: 18, c: '#5c5d56', edge: '#2f302c' },
       [UGC.CAVE]: { t: 20, c: '#3d3b3e', edge: '#19181b' },
       [UGC.HALL]: { t: 26, c: '#7d8a7c', edge: '#3e463d' },
+      [UGC.SEWER]: { t: 22, c: '#5e3b2b', edge: '#24160f' },
     };
 
     function drawUnderground(now) {
@@ -11862,11 +11996,12 @@
         }
       }
       drawUnderLakes(now);
+      drawSewerChannels(now);
       // Soft shadow along the foot of every wall, and the platform edges.
       for (let cy = y0; cy <= y1; cy++) {
         for (let cx = x0; cx <= x1; cx++) {
           const code = ugCell(cx, cy);
-          if (code === UGC.ROCK || code === UGC.MINE) continue; // (a shaft's sides are drawn by drawShaft)
+          if (code === UGC.ROCK) continue;
           const X = cx * C, Y = cy * C;
           for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             const n = ugCell(cx + dx, cy + dy);
@@ -11887,7 +12022,6 @@
           }
         }
       }
-      for (let cy = y0; cy <= y1; cy++) for (let cx = x0; cx <= x1; cx++) if (ugCell(cx, cy) === UGC.MINE) drawShaft(cx, cy);
       drawMetroTracks();
       // What's lying about, bolted down or left behind.
       u.mark++;
@@ -11906,7 +12040,7 @@
       for (let cy = y0; cy <= y1; cy++) {
         for (let cx = x0; cx <= x1; cx++) {
           const code = ugCell(cx, cy);
-          if (code === UGC.ROCK || code === UGC.MINE) continue;
+          if (code === UGC.ROCK) continue;
           const wall = UG_WALL[code], X = cx * C, Y = cy * C, t = wall.t;
           for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
             if (ugCell(cx + dx, cy + dy) !== UGC.ROCK) continue;
@@ -11936,6 +12070,8 @@
           }
         }
       }
+      drawUnderDoors(now);
+      drawRats(now);
       // Signs and posters hung on the walls.
       u.mark++;
       for (let by = Math.floor(viewBox.t / span); by <= Math.floor(viewBox.b / span); by++) {
@@ -11948,6 +12084,29 @@
         }
       }
       revealUnderground();
+    }
+
+    /** The sewers' channels: a stone kerb, the filthy water in it, scum and streaks drifting along with the flow. */
+    function drawSewerChannels(now) {
+      const vb = viewBox, list = (under.channels ?? []).filter(({ points: [[ax, ay], [bx, by]] }) => Math.max(ax, bx) + 80 > vb.l && Math.min(ax, bx) - 80 < vb.r && Math.max(ay, by) + 80 > vb.t && Math.min(ay, by) - 80 < vb.b);
+      if (!list.length) return;
+      ctx.save();
+      ctx.lineCap = 'round';
+      const pass = (color, width, dash = null, offset = 0) => {
+        ctx.strokeStyle = color; ctx.lineWidth = width; ctx.setLineDash(dash ?? []); ctx.lineDashOffset = offset;
+        ctx.beginPath();
+        for (const { points: [[ax, ay], [bx, by]] } of list) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+        ctx.stroke();
+      };
+      const W = list[0].width;
+      pass('#4f4c43', W + 16); // the kerb
+      pass('#2b2a24', W + 4);
+      pass('#3a3f24', W); // the water: brown-green
+      pass('rgba(90, 100, 45, .5)', W * 0.55);
+      const t = now / 1000;
+      pass('rgba(150, 160, 90, .25)', 3, [14, 30], -t * 45); // streaks going with the flow
+      pass('rgba(170, 170, 120, .18)', 6, [4, 61], -t * 38); // scum
+      ctx.restore();
     }
 
     /** The underground lake: a wet dark shore, then black-green water, lighter at the edge, with slow rings spreading where it drips. */
@@ -11976,6 +12135,116 @@
           const a = ugHash(i, k, cycle) * Math.PI * 2, d = Math.sqrt(ugHash(i, k + 9, cycle)) * (l.r - 70);
           ctx.strokeStyle = `rgba(150, 190, 200, ${0.35 * (1 - phase)})`;
           ctx.beginPath(); ctx.arc(l.x + Math.cos(a) * d, l.y + Math.sin(a) * d, 6 + phase * 46, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+
+    // ---- rats: on this screen only (like the crows up top). They run along the walls and stop to sniff, paying
+    // you no mind at all (squeaking now and then); ones left behind go, and new ones turn up near wherever you are.
+    const rats = { list: [], last: 0 };
+    const RAT_MAX = 14, RAT_NEAR = 1500;
+    const ratFloor = (x, y) => ugCell(Math.floor(x / under.cell), Math.floor(y / under.cell)) !== UGC.ROCK && !isSwimming(x, y); // (not in the lake or a sewer's channel)
+    /** A spot close to a wall (where a rat would run) somewhere round (x, y), not on screen if it can help it. */
+    function ratSpot(x, y, near, far) {
+      const C = under.cell;
+      for (let tries = 0; tries < 30; tries++) {
+        const a = Math.random() * Math.PI * 2, d = near + Math.random() * (far - near);
+        const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d, cx = Math.floor(px / C), cy = Math.floor(py / C);
+        if (!ratFloor(px, py)) continue;
+        // Hug a wall: slide to whichever side of the cell has rock.
+        const sides = [[0, -1], [0, 1], [-1, 0], [1, 0]].filter(([dx, dy]) => ugCell(cx + dx, cy + dy) === UGC.ROCK);
+        if (!sides.length) { if (Math.random() < 0.7) continue; return { x: px, y: py }; }
+        const [dx, dy] = sides[Math.floor(Math.random() * sides.length)];
+        return { x: dx ? (cx + (dx > 0 ? 1 : 0)) * C - dx * 14 : px, y: dy ? (cy + (dy > 0 ? 1 : 0)) * C - dy * 14 : py };
+      }
+      return null;
+    }
+    function stepRats(now) {
+      const dt = Math.min(0.1, (now - rats.last) / 1000);
+      rats.last = now;
+      if (!me || !playing) return;
+      rats.list = rats.list.filter((r) => Math.hypot(r.x - me.x, r.y - me.y) < RAT_NEAR + 200);
+      while (rats.list.length < RAT_MAX) {
+        const s = ratSpot(me.x, me.y, 500, RAT_NEAR);
+        if (!s) break;
+        rats.list.push({ ...s, a: Math.random() * Math.PI * 2, state: 'sniff', until: now + Math.random() * 3000, to: null, size: 0.8 + Math.random() * 0.5, step: 0 });
+      }
+      for (const r of rats.list) {
+        if (r.state === 'sniff') {
+          if (now > r.until) {
+            const t = ratSpot(r.x, r.y, 80, 420);
+            if (t) {
+              Object.assign(r, { state: 'run', to: t, until: now + 4000 });
+              if (Math.random() < 0.08 && Math.hypot(r.x - me.x, r.y - me.y) < 600) sfx('rat', { x: r.x, y: r.y }, 0.6); // (a squeak now and then)
+            } else r.until = now + 1000;
+          }
+          continue;
+        }
+        const speed = 200 * dt, dx = r.to.x - r.x, dy = r.to.y - r.y, d = Math.hypot(dx, dy);
+        if (d < speed || now > r.until) { Object.assign(r, { state: 'sniff', until: now + 400 + Math.random() * 2600, to: null }); continue; }
+        const nx = r.x + dx / d * speed, ny = r.y + dy / d * speed;
+        if (!ratFloor(nx, ny)) { Object.assign(r, { state: 'sniff', until: now + 300, to: null }); continue; } // (rock in the way: think again)
+        r.a = Math.atan2(dy, dx);
+        Object.assign(r, { x: nx, y: ny });
+        r.step += speed;
+      }
+    }
+    /** A brown rat seen from above: a long pink tail swishing behind, quick little legs when it runs. */
+    function drawRats(now) {
+      stepRats(now);
+      const vb = viewBox;
+      for (const r of rats.list) {
+        if (r.x < vb.l || r.x > vb.r || r.y < vb.t || r.y > vb.b) continue;
+        const moving = r.state !== 'sniff', k = r.size;
+        ctx.save();
+        ctx.translate(r.x, r.y); ctx.rotate(r.a); ctx.scale(k, k);
+        const sw = Math.sin(now / (moving ? 60 : 260) + r.x) * (moving ? 0.5 : 0.25);
+        ctx.strokeStyle = '#c99a8f'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-9, 0); ctx.quadraticCurveTo(-18, sw * 10, -27, sw * -6); ctx.stroke(); // the tail
+        if (moving) { ctx.fillStyle = '#3a2e26'; const l = Math.sin(r.step / 6) * 3; for (const [fx, s] of [[5, 1], [-4, -1]]) { ctx.fillRect(fx + l * s, -6, 3, 2); ctx.fillRect(fx - l * s, 4, 3, 2); } }
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.beginPath(); ctx.ellipse(1, 2, 11, 6, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#5b4a3e'; ctx.beginPath(); ctx.ellipse(0, 0, 10, 5.5, 0, 0, Math.PI * 2); ctx.fill(); // the body
+        ctx.fillStyle = '#6b594b'; ctx.beginPath(); ctx.ellipse(9, 0, 5, 3.5, 0, 0, Math.PI * 2); ctx.fill(); // the head
+        ctx.fillStyle = '#c99a8f'; ctx.beginPath(); ctx.arc(7, -3.5, 1.8, 0, Math.PI * 2); ctx.arc(7, 3.5, 1.8, 0, Math.PI * 2); ctx.fill(); // ears
+        ctx.fillStyle = '#d8a8a0'; ctx.beginPath(); ctx.arc(14, 0, 1.2, 0, Math.PI * 2); ctx.fill(); // nose
+        ctx.restore();
+      }
+    }
+
+    /** The underground's doors: steel, in a frame; the oil hall's locked ones padlocked with a red lamp. */
+    let ugDoorClock = 0;
+    function drawUnderDoors(now) {
+      const dt = Math.min(0.1, Math.max(0, (now - ugDoorClock) / 1000));
+      ugDoorClock = now;
+      const vb = viewBox;
+      for (const d of under.doors ?? []) {
+        d.anim += ((d.open ? 1 : 0) - d.anim) * (1 - Math.exp(-dt * 12));
+        if (d.x > vb.r || d.x + d.w < vb.l || d.y > vb.b || d.y + d.h < vb.t) continue;
+        const along = d.w > d.h, len = along ? d.w : d.h, T = along ? d.h : d.w;
+        const [ax, ay] = along ? [1, 0] : [0, 1];
+        // The frame: a steel post at each end, the threshold between.
+        ctx.fillStyle = '#2a2b2c';
+        ctx.fillRect(d.x - (along ? 6 : 0), d.y - (along ? 0 : 6), along ? 6 : T, along ? T : 6);
+        ctx.fillRect(d.x + (along ? d.w : 0), d.y + (along ? 0 : d.h), along ? 6 : T, along ? T : 6);
+        ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(d.x, d.y, d.w, d.h);
+        // The leaf, hinged at the near end, swinging away from the wall into the passage.
+        const a = d.anim * Math.PI * 0.5, hx = d.x + (along ? 0 : T / 2), hy = d.y + (along ? T / 2 : 0);
+        const ux = ax * Math.cos(a) + d.nx * Math.sin(a), uy = ay * Math.cos(a) + d.ny * Math.sin(a);
+        ctx.save();
+        ctx.translate(hx, hy); ctx.rotate(Math.atan2(uy, ux));
+        ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(3, -T / 2 + 4, len, T - 2);
+        ctx.fillStyle = d.locked ? '#5e4a3c' : '#55595b'; ctx.fillRect(0, -T / 2 + 1, len, T - 2);
+        ctx.fillStyle = d.locked ? '#7a6150' : '#6e7375'; ctx.fillRect(3, -T / 2 + 3, len - 6, 3);
+        ctx.fillStyle = '#2e3031'; for (let k = 10; k < len - 6; k += 18) ctx.fillRect(k, -1.5, 3, 3); // rivets
+        if (d.locked) { ctx.fillStyle = '#c9a227'; for (let k = 6; k < len - 10; k += 20) ctx.fillRect(k, T / 2 - 4, 10, 2); } // a hazard edge
+        ctx.fillStyle = '#c9b458'; ctx.fillRect(len - 12, -3, 6, 6); // the handle
+        ctx.restore();
+        if (d.locked && !d.open && d.anim < 0.05) {
+          drawPadlock(d);
+          const lx = d.x + d.w / 2 + d.nx * 20 + ax * (len / 2 - 14), ly = d.y + d.h / 2 + d.ny * 20 + ay * (len / 2 - 14);
+          const on = Math.sin(now / 500) > -0.2;
+          ctx.fillStyle = on ? '#e2382c' : '#5a1a16'; ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fill(); // a red lamp over it
+          if (on) { ctx.fillStyle = 'rgba(226, 56, 44, .18)'; ctx.beginPath(); ctx.arc(lx, ly, 16, 0, Math.PI * 2); ctx.fill(); }
         }
       }
     }
@@ -12041,6 +12310,12 @@
           ctx.fillStyle = 'rgba(12, 10, 8, .35)';
           ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, k + 161) * C, Y + ugHash(cx, cy, k + 162) * C, 14 + ugHash(cx, cy, k + 163) * 30, 8 + ugHash(cx, cy, k + 164) * 16, ugHash(cx, cy, k + 165) * 3, 0, Math.PI * 2); ctx.fill();
         }
+      } else if (code === UGC.SEWER) { // wet concrete walkways, slimy green at the edges of the channel
+        for (let k = 0; k < 5; k++) {
+          const r = ugHash(cx, cy, k + 170);
+          ctx.fillStyle = r < 0.5 ? 'rgba(70, 90, 50, .25)' : 'rgba(20, 20, 15, .3)';
+          ctx.beginPath(); ctx.ellipse(X + ugHash(cx, cy, k + 171) * C, Y + r * C, 10 + r * 16, 6 + r * 8, 0, 0, Math.PI * 2); ctx.fill();
+        }
       } else if (code === UGC.PASSAGE) { // a service passage: concrete, with a drain down the middle
         const horiz = ugCell(cx - 1, cy) !== UGC.ROCK || ugCell(cx + 1, cy) !== UGC.ROCK;
         ctx.fillStyle = '#2d2e2a';
@@ -12079,6 +12354,16 @@
         for (let a = 20; a < along; a += 54) dy ? ctx.fillRect(r.x + a, r.y + 4, 2, r.h - 8) : ctx.fillRect(r.x + 4, r.y + a, r.w - 8, 2);
         ctx.fillStyle = '#7b7e75';
         dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y + 3, r.w, 3) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x + 3, r.y, 3, r.h);
+      } else if (code === UGC.SEWER) { // old red brick, courses staggered, black with damp low down
+        ctx.fillStyle = '#4a2d20';
+        const course = 9;
+        for (let o = 0; o < (dy ? r.h : r.w); o += course) {
+          if (dy) ctx.fillRect(r.x, r.y + o, r.w, 1.5); else ctx.fillRect(r.x + o, r.y, 1.5, r.h);
+          const shift = (o / course) % 2 ? 9 : 0;
+          for (let a = shift; a < along; a += 18) dy ? ctx.fillRect(r.x + a, r.y + o, 1.5, course) : ctx.fillRect(r.x + o, r.y + a, course, 1.5);
+        }
+        ctx.fillStyle = 'rgba(15, 20, 10, .45)';
+        dy ? ctx.fillRect(r.x, dy < 0 ? r.y + r.h - 6 : r.y, r.w, 6) : ctx.fillRect(dx < 0 ? r.x + r.w - 6 : r.x, r.y, 6, r.h);
       } else if (code === UGC.HALL) { // glazed tiles (a sick hospital green) gone grimy, a black stripe at the foot
         ctx.fillStyle = '#6f7b6e';
         for (let a = 0; a < along; a += 20) dy ? ctx.fillRect(r.x + a, r.y, 1.5, r.h) : ctx.fillRect(r.x, r.y + a, r.w, 1.5);
@@ -12442,6 +12727,49 @@
           for (let k = 0; k < 4; k++) { ctx.beginPath(); ctx.ellipse(x + w * (0.25 + 0.5 * ugHash(d.seed, k, 1)), y + h * (0.25 + 0.5 * ugHash(d.seed, k, 2)), w * (0.15 + 0.2 * ugHash(d.seed, k, 3)), h * (0.15 + 0.2 * ugHash(d.seed, k, 4)), ugHash(d.seed, k, 5) * 3, 0, Math.PI * 2); ctx.fill(); }
           break;
         }
+        case 'campfire': { // a ring of stones, embers, a dented kettle on top
+          const cx = x + w / 2, cy = y + h / 2;
+          for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; circle(cx + Math.cos(a) * 17, cy + Math.sin(a) * 17, 5, k % 2 ? '#5a554d' : '#6c665c'); }
+          const fl = 0.6 + 0.4 * Math.sin(now / 90) * Math.sin(now / 37);
+          circle(cx, cy, 11, '#2a1a10'); circle(cx, cy, 8, `rgba(230, ${110 + 50 * fl}, 40, ${0.6 + 0.3 * fl})`);
+          ctx.save(); ctx.globalCompositeOperation = 'lighter';
+          const g = ctx.createRadialGradient(cx, cy, 5, cx, cy, 160); g.addColorStop(0, `rgba(255, 150, 60, ${0.18 * fl})`); g.addColorStop(1, 'rgba(255, 120, 40, 0)');
+          ctx.fillStyle = g; ctx.fillRect(cx - 160, cy - 160, 320, 320); ctx.restore();
+          ctx.fillStyle = '#4a4e52'; ctx.beginPath(); ctx.ellipse(cx + 3, cy - 2, 9, 7, 0, 0, Math.PI * 2); ctx.fill(); // the kettle
+          ctx.fillStyle = '#5c6166'; ctx.fillRect(cx + 10, cy - 4, 6, 3);
+          break;
+        }
+        case 'bedroll': { // a filthy bedroll and a rolled coat for a pillow
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 3, y + 4, w, h);
+          ctx.fillStyle = '#5a5236'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#6e6544'; for (let k = 8; k < w; k += 14) ctx.fillRect(x + k, y + 2, 3, h - 4);
+          ctx.fillStyle = '#3e3a2c'; ctx.beginPath(); ctx.ellipse(x + 12, y + h / 2, 10, h / 2 - 3, 0, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'picks': { // two spare picks leaning together
+          ctx.lineCap = 'round';
+          for (const [ax, ay, bx, by] of [[x + 6, y + h, x + w - 6, y + 4], [x + w - 6, y + h, x + 8, y + 6]]) {
+            ctx.strokeStyle = '#7a5a34'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+            ctx.strokeStyle = '#8d9196'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(bx - 8, by + 4); ctx.lineTo(bx + 8, by - 4); ctx.stroke();
+          }
+          break;
+        }
+        case 'outfall': { // a pipe end out of the wall, something dribbling out of it down to the channel
+          const cx = x + w / 2, cy = y + h / 2, ox = -(d.dx ?? 0), oy = -(d.dy ?? 0), len = 66 + ugHash(d.seed, 1, 1) * 10;
+          ctx.strokeStyle = 'rgba(110, 120, 60, .55)'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+          const wob = Math.sin(now / 200 + d.seed) * 2;
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.quadraticCurveTo(cx + ox * len / 2 + oy * wob, cy + oy * len / 2 + ox * wob, cx + ox * len, cy + oy * len); ctx.stroke();
+          ctx.fillStyle = '#3b3d3e'; ctx.beginPath(); ctx.arc(cx, cy, 13, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#6a3f22'; ctx.beginPath(); ctx.arc(cx, cy, 13, 0, Math.PI * 2); ctx.lineWidth = 3; ctx.strokeStyle = '#6a3f22'; ctx.stroke(); // rust round the rim
+          ctx.fillStyle = '#0f0f0d'; ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'grate': { // an iron drain grate in the walkway
+          ctx.fillStyle = '#1a1a18'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#5a564c'; ctx.fillRect(x, y, w, 3); ctx.fillRect(x, y + h - 3, w, 3); ctx.fillRect(x, y, 3, h); ctx.fillRect(x + w - 3, y, 3, h);
+          for (let k = 7; k < w - 4; k += 6) ctx.fillRect(x + k, y + 3, 2, h - 6);
+          break;
+        }
         case 'stalagmite': { // a stone cone grown up from the floor: ringed, pale at the tip
           const cx = x + w / 2, cy = y + h / 2, R = w / 2;
           ctx.fillStyle = 'rgba(0, 0, 0, .4)'; ctx.beginPath(); ctx.ellipse(cx + 6, cy + 7, R, R * 0.8, 0, 0, Math.PI * 2); ctx.fill();
@@ -12466,6 +12794,56 @@
           }
           ctx.fillStyle = '#ddd5bd'; ctx.beginPath(); ctx.arc(x + w * 0.75, y + h * 0.4, 8, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = '#1a1816'; ctx.fillRect(x + w * 0.75 - 4, y + h * 0.4 - 2, 3, 3); ctx.fillRect(x + w * 0.75 + 1, y + h * 0.4 - 2, 3, 3);
+          break;
+        }
+        case 'steelcab': { // a grey-green steel cabinet: two doors with handles on the side facing the room (E: open it)
+          ctx.fillStyle = 'rgba(0, 0, 0, .4)'; ctx.fillRect(x + 4, y + 5, w, h);
+          ctx.fillStyle = '#4f5a4c'; ctx.fillRect(x, y, w, h);
+          ctx.fillStyle = '#5f6b5b'; ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+          const face = d.face ?? 'w', tall = h > w;
+          ctx.fillStyle = '#3a4238'; tall ? ctx.fillRect(x, y + h / 2 - 1, w, 2) : ctx.fillRect(x + w / 2 - 1, y, 2, h); // between the doors
+          ctx.fillStyle = '#b8b29a';
+          if (tall) { const hx = face === 'w' ? x + 3 : x + w - 6; ctx.fillRect(hx, y + h / 2 - 9, 3, 6); ctx.fillRect(hx, y + h / 2 + 3, 3, 6); }
+          else { const hy = face === 'n' ? y + 3 : y + h - 6; ctx.fillRect(x + w / 2 - 9, hy, 6, 3); ctx.fillRect(x + w / 2 + 3, hy, 6, 3); }
+          break;
+        }
+        case 'skeleton': { // somebody who never got out: lying sprawled, head away from the water, each a little differently
+          const s = d.seed, j = (k) => (ugHash(s, k, 31) - 0.5); // (a little crookedness, the same every frame)
+          ctx.translate(x + w / 2, y + h / 2); ctx.rotate(d.a ?? 0);
+          const bone = (ax, ay, bx, by, wdt = 4) => {
+            for (const [c, lw] of [['rgba(0, 0, 0, .35)', wdt + 3], ['#d8d0b6', wdt]]) {
+              ctx.strokeStyle = c; ctx.lineWidth = lw; ctx.lineCap = 'round';
+              ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+            }
+            ctx.fillStyle = '#e6dfc8'; ctx.beginPath(); ctx.arc(ax, ay, wdt * 0.6, 0, Math.PI * 2); ctx.arc(bx, by, wdt * 0.6, 0, Math.PI * 2); ctx.fill(); // knobbly ends
+          };
+          // Legs: thigh then shin, splayed.
+          for (const side of [-1, 1]) {
+            const kx = -30 + j(side + 2) * 8, ky = side * (9 + Math.abs(j(side + 4)) * 10), fx = -50 + j(side + 6) * 10, fy = side * (8 + Math.abs(j(side + 8)) * 18);
+            bone(-12, side * 5, kx, ky, 5); bone(kx, ky, fx, fy, 4);
+          }
+          // Pelvis, spine, ribs.
+          ctx.fillStyle = '#cfc6aa'; ctx.beginPath(); ctx.ellipse(-12, 0, 6, 11, 0, 0, Math.PI * 2); ctx.fill();
+          bone(-10, 0, 22, j(10) * 4, 3);
+          ctx.strokeStyle = '#d8d0b6'; ctx.lineWidth = 2.2;
+          for (let r = 0; r < 5; r++) {
+            const rx = 2 + r * 4.5, span = 13 - Math.abs(r - 2) * 1.2;
+            for (const side of [-1, 1]) { ctx.beginPath(); ctx.moveTo(rx, 0); ctx.quadraticCurveTo(rx - 3, side * span, rx - 7, side * (span - 2)); ctx.stroke(); }
+          }
+          // Arms from the shoulders: one flung out, one along the side (or reaching).
+          for (const side of [-1, 1]) {
+            const ex = 14 + j(side + 12) * 22, ey = side * (18 + Math.abs(j(side + 14)) * 14), hx = ex + j(side + 16) * 30, hy = ey + side * (6 + Math.abs(j(side + 18)) * 16);
+            bone(20, side * 8, ex, ey, 3.5); bone(ex, ey, hx, hy, 3);
+            ctx.fillStyle = '#d8d0b6'; for (let f = 0; f < 3; f++) ctx.fillRect(hx + f * 2 - 2, hy + side * 2, 1.6, side * 4 || 4); // finger bones
+          }
+          // The skull, turned a little, dark sockets.
+          const turn = j(20) * 0.8;
+          ctx.save(); ctx.translate(33, j(21) * 5); ctx.rotate(turn);
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.beginPath(); ctx.ellipse(1.5, 2, 10, 9, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#e4ddc6'; ctx.beginPath(); ctx.ellipse(0, 0, 10, 9, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#cfc6aa'; ctx.fillRect(-9, -4, 4, 8); // the jaw end
+          ctx.fillStyle = '#1b1915'; ctx.beginPath(); ctx.arc(2, -3.5, 2.6, 0, Math.PI * 2); ctx.arc(2, 3.5, 2.6, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
           break;
         }
         case 'boat': { // a rowboat pulled up on the shore, its paint long gone
@@ -12560,8 +12938,7 @@
           const prop = mineProp(cx, cy);
           if (!prop) continue;
           ctx.fillStyle = 'rgba(80, 56, 30, .85)';
-          const B = (C - UG_SHAFT) / 2;
-          if (prop === 1) ctx.fillRect(cx * C + C / 2 - 7, cy * C + B - 6, 14, UG_SHAFT + 12); else ctx.fillRect(cx * C + B - 6, cy * C + C / 2 - 7, UG_SHAFT + 12, 14);
+          if (prop === 1) ctx.fillRect(cx * C + C / 2 - 7, cy * C - 6, 14, C + 12); else ctx.fillRect(cx * C - 6, cy * C + C / 2 - 7, C + 12, 14);
         }
       }
       u.mark++;
@@ -12648,7 +13025,7 @@
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
-    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d', [UGC.CAVE]: '#5a5862', [UGC.HALL]: '#9aa88f' };
+    const UG_MAP = { [UGC.MINE]: '#6a5842', [UGC.TUNNEL]: '#8a8a90', [UGC.PLATFORM]: '#d8cfb8', [UGC.BUNKER]: '#7d8f68', [UGC.PASSAGE]: '#77776d', [UGC.CAVE]: '#5a5862', [UGC.HALL]: '#9aa88f', [UGC.SEWER]: '#5d6e4c' };
     function revealUnderground() {
       if (!me || !playing) return;
       const u = under, C = u.cell, R = 5;
@@ -12981,6 +13358,12 @@
         drawWolf(wf, id, frameTime);
       }
       wolfSounds(frameTime);
+      if (under?.miner) drawOldMiner(under.miner, frameTime);
+      shownBears = view.bears ?? new Map();
+      for (const [id, bf] of shownBears) {
+        if (bf.x < viewBox.l - 100 || bf.x > viewBox.r + 100 || bf.y < viewBox.t - 100 || bf.y > viewBox.b + 100) continue;
+        drawBear(bf, id, frameTime);
+      }
       updateCrows(dt, view, frameTime);
       drawCrows(false, frameTime);
       for (const t of bankData.tellers) {

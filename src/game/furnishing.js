@@ -173,6 +173,11 @@ export class Furnishings {
     return it;
   }
 
+  /** A cabinet (or anything) in no building, nobody's: the underground's. */
+  addLoose(kind, r) {
+    return this.#add({ id: 0 }, kind, r, null);
+  }
+
   #touched(it) {
     this.changed = true;
     if (this.world.warehouses.all.has(it.building)) this.world.warehouses.changed = true;
@@ -188,6 +193,7 @@ export class Furnishings {
 
   /** May p open this cabinet? Its owner and their team always (a rented room's: its tenant); anyone else only after a break-in. */
   mayOpen(p, it) {
+    if (!it.building) return true; // (out in the open, underground: anyone's)
     const w = this.world;
     const tenant = w.homes.tenantOf(it);
     const holder = tenant ?? it.owner; // (renting a room, the cabinet in it is the tenant's, not the landlord's)
@@ -430,7 +436,7 @@ export class Furnishings {
 
   /** Now and then: empty cabinets nobody owns may have something left in them again. */
   restock() {
-    for (const it of this.items.values()) if (it.slots && !it.owner && !this.world.homes.tenantOf(it) && !it.slots.some(Boolean)) this.#stock(it);
+    for (const it of this.items.values()) if (it.slots && it.building && !it.owner && !this.world.homes.tenantOf(it) && !it.slots.some(Boolean)) this.#stock(it);
   }
 
   /** Maybe a few things in a cabinet nobody owns: food, a fishing rod, a bat, an old pistol (config.furnishing.loot). */

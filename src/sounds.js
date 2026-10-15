@@ -16,6 +16,7 @@ export const SOUND_SLOTS = [
     { id: 'night', name: 'Night ambience', loop: true, note: 'Crickets / night noises after dark. No default.' },
     { id: 'caveDrip', name: 'Cave drips (underground)', loop: true, note: 'Faint dripping water while you are in the caves. Built-in default: random drips.' },
     { id: 'fluoro', name: 'Fluorescent hum (oil hall)', loop: true, note: 'The buzz of the strip lights, in and near the oil hall underground. Built-in default: a mains hum.' },
+    { id: 'sewer', name: 'Sewer water (underground)', loop: true, note: 'The trickle and gurgle of the channel in the sewers, louder the more sewer round you. Built-in default: running water.' },
     { id: 'ugWind', name: 'Underground wind', loop: true, note: 'A faint draught through the tunnels, shafts and bunkers; it comes in gusts and now and then dies away to nothing.' },
   ] },
   { group: 'Guns', slots: [
@@ -78,6 +79,9 @@ export const SOUND_SLOTS = [
   ] },
   { group: 'Animals', slots: [
     { id: 'howl', name: 'A wolf howling (at night, in the woods)' },
+    { id: 'rat', name: 'A rat squeaking (underground, now and then)' },
+    { id: 'bearBreath', name: "The albino bear's heavy breathing", loop: true, note: 'Plays near the bear underground, louder the closer; faster while it charges. Built-in default: slow rasping breaths.' },
+    { id: 'bearRoar', name: 'The albino bear roars (it heard you, close)' },
     { id: 'growl', name: 'Wolves snarling as they run at you' },
     { id: 'caw', name: 'A crow cawing' },
     { id: 'meow', name: 'A cat meowing (fed, or wriggling free)' },

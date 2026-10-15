@@ -277,9 +277,9 @@ export class Police {
       const door = w.lockedDoorNear(p);
       if (door) {
         const prison = w.prison.isPrisonDoor(door); // breaking someone out
-        const sec = prison ? config.prison.lockpickSec : w.warehouses.all.has(door.building) ? config.warehouses.lockpickSec : config.homes.lockpickSec;
+        const sec = door.underground ? config.underground.lockpickSec : prison ? config.prison.lockpickSec : w.warehouses.all.has(door.building) ? config.warehouses.lockpickSec : config.homes.lockpickSec;
         p.robbing = { kind: 'lockpick', door, prison, x: door.x + door.w / 2, y: door.y + door.h / 2, elapsed: 0, sec };
-        this.crime(p, 'break_in');
+        if (!door.underground) this.crime(p, 'break_in'); // (nobody down there to see)
         return null;
       }
       const car = w.lockedCarNear(p);
@@ -334,7 +334,8 @@ export class Police {
         continue;
       }
       if (r.kind === 'lockpick') {
-        if (this.world.warehouses.all.has(r.door.building)) this.world.warehouses.unlock(r.door);
+        if (r.door.underground) {} // (open now; it locks itself again once it's shut)
+        else if (this.world.warehouses.all.has(r.door.building)) this.world.warehouses.unlock(r.door);
         else this.world.homes.unlock(r.door);
         r.door.open = true;
         this.world.pendingDoors.push(r.door);

@@ -24,10 +24,11 @@ import { Fishing } from './fishing.js';
 import { Labour } from './labour.js';
 import { Cats } from './cats.js';
 import { Wolves } from './wolves.js';
+import { Bears } from './bear.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
-import { Underground, rockRects, shaftRects } from './underground.js';
+import { Underground, rockRects } from './underground.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -158,7 +159,7 @@ export class World {
     // Underground: the rock is solid, and so are the pillars, bunks, crates and carts down there.
     if (map?.underground) this.blocks.push(...map.underground.decor.filter((d) => d.solid).map(({ x, y, w, h }) => ({ x, y, w, h })));
     this.wallGrid = new SpatialGrid(opts.width, opts.height, opts.gridCellSize);
-    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? [...rockRects(map.underground), ...shaftRects(map.underground)] : [])];
+    const solids = [...this.buildings.flatMap((b) => b.walls), ...this.trees.map((t) => t.trunk), ...this.blocks, ...(map?.underground ? rockRects(map.underground) : [])];
     for (const w of solids) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: Boolean(w.low) }); // (barbed wire: low, see-through)
     for (const w of this.rails) this.wallGrid.insert({ x: w.x + w.w / 2, y: w.y + w.h / 2, radius: Math.max(w.w, w.h) / 2, rect: w, low: true });
 
@@ -174,6 +175,7 @@ export class World {
 
     // Doors fill their doorway and are solid while closed. They start closed.
     this.doors = this.buildings.flatMap((b) => b.doors.map((d) => Object.assign(d, { building: b.id })));
+    for (const d of map?.underground?.doors ?? []) this.doors.push(Object.assign(d, { building: 0, underground: true })); // (shared with the layout the client gets, so it sees which are open)
     this.doors.forEach((d, i) => {
       d.id = i + 1;
       d.open = false;
@@ -209,6 +211,7 @@ export class World {
     this.hires = new Hires(this); // goons, guards and hitmen from the БАР
     this.fishing = new Fishing(this);
     this.wolves = new Wolves(this);
+    this.bears = new Bears(this); // (the underground's albino bear)
     this.night = false; // set by the room each tick (wolves come out at night)
     this.furnishings = new Furnishings(this); // cabinets, beds and sofas placed in homes and warehouses
     this.prison = new Prison(this); // where every arrest ends up (its guards join the police)
@@ -1010,6 +1013,12 @@ export class World {
     }
     this.labour.step(dt);
     this.cats.step(dt);
+    this.bears.step(dt);
+    for (const p of this.bears.kills.splice(0)) {
+      if (!this.players.has(p.id)) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'the albino bear' } });
+    }
     this.wolves.step(dt);
     for (const p of this.wolves.kills.splice(0)) {
       if (!p.alive) continue;
@@ -1045,6 +1054,7 @@ export class World {
 
   /** Is `door` locked to p: someone else's warehouse or a home that isn't theirs (lock not picked)? */
   lockedFor(door, p) {
+    if (door.underground) return door.locked && !door.open; // (the oil hall's: until picked; shut again, it's locked again)
     return this.warehouses.lockedFor(door, p) || this.homes.lockedFor(door, p) || this.prison.lockedFor(door);
   }
 
@@ -1595,6 +1605,7 @@ export class World {
     for (const u of this.police.units) if (u.officer.onFoot && u.officer.health > 0) consider('officer', u.officer, 20);
     for (const h of this.hires.list) if (!h.vehicle && h.employer !== p.account) consider('hire', h, h.radius);
     for (const w of this.wolves.list) consider('wolf', w, config.wolves.radius);
+    for (const b of this.bears.list) consider('bear', b, config.bear.radius);
     if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
       const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
       if (atm) this.#smashAtm(p, atm);
@@ -1605,6 +1616,7 @@ export class World {
     if (best.kind === 'officer') return this.police.damageOfficer(t, config.police.officerHealth * stats.share, p);
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
     if (best.kind === 'wolf') return this.wolves.damage(t, config.wolves.health * stats.share + 0.01, p);
+    if (best.kind === 'bear') return this.bears.damage(t, 60 * stats.share, p); // (a knife: 20 a stab. It hardly notices.)
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
     t.hurt(t.maxHealth * stats.share + 0.01); // (+ a hair, so three stabs always do it)
@@ -1648,6 +1660,12 @@ export class World {
       if (hire) {
         this.bullets.delete(b.id);
         this.hires.damage(hire, b.damage, shooter);
+        continue;
+      }
+      const bear = this.bears.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);
+      if (bear) {
+        this.bullets.delete(b.id);
+        this.bears.damage(bear, b.damage, shooter);
         continue;
       }
       const wolf = this.wolves.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);

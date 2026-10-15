@@ -162,6 +162,14 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.underground?.events.splice(0) ?? []) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest, miner: true });
+    }
+    for (const e of this.world.bears.events.splice(0)) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.wolves.events.splice(0)) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -610,7 +618,7 @@ export class Room {
   takeOut(client) {
     const p = client.player;
     if (!p?.alive || p.vehicle || p.carrying || p.holdingCat || p.jailed || p.hidden) return null;
-    const carry = { cash: p.cash, inventory: p.inventory, selected: p.selected, health: p.health, mass: p.mass, stamina: p.stamina };
+    const carry = { cash: p.cash, inventory: p.inventory.map((s) => (s?.minerLoan ? null : s)), selected: p.selected, health: p.health, mass: p.mass, stamina: p.stamina }; // (the old miner's pickaxe stays down there with him)
     p.cash = 0;
     p.inventory = p.inventory.map(() => null); // (so nothing drops here)
     this.removeClient(client, { travel: true });
@@ -899,6 +907,15 @@ export class Room {
     if (hires.bar) this.inspect(client, hires.bar.id);
   }
 
+  /** E on the old miner underground: borrow his pickaxe, or give it back. */
+  minerAction(client) {
+    const p = client.player;
+    if (!p?.alive || !this.world.underground) return;
+    const r = this.world.underground.lend(p);
+    if (typeof r === 'string') return client.send({ t: ServerMsg.ERROR, code: r });
+    client.send({ t: ServerMsg.DONE, what: 'miner_tool', ...r });
+  }
+
   /** A bunker's trapdoor: a guard's key opens it; once it's open, down the ladder. Underground: up a ladder. */
   trapdoorAction(client, msg) {
     const p = client.player;
@@ -1144,6 +1161,7 @@ export class Room {
           bodies: this.world.bodies.near(cx, cy, config.world.viewDistance),
           cops: this.world.police.visible(cx, cy, config.world.viewDistance),
           wolves: this.world.wolves.visible(cx, cy, config.world.viewDistance),
+          bears: this.world.bears.visible(cx, cy, config.world.viewDistance),
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),
           // Teammates wherever they are, for the map: [player id, x, y, driving].

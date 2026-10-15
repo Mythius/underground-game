@@ -34,6 +34,19 @@ export const DIALOGUE = [
     { id: 'robShop', name: 'Shopkeeper — being robbed', note: 'While you empty their till (hold F).', lines: ['Take it, take it! Just don\'t shoot!', 'Please, I have a family!', 'The Militsiya will hear of this!', 'Here — it\'s all there is!'] },
     { id: 'robBank', name: 'Bank teller — being robbed', note: 'While you rob the bank (hold F).', lines: ['Don\'t hurt anyone!', 'The alarm is already ringing!', 'Take the money and go!', 'You won\'t get far.'] },
   ] },
+  { group: 'Underground', kinds: [
+    { id: 'miner', name: 'Old miner — muttering', note: 'The old miner in his cave underground, as you walk up and every so often while you stay near: mostly nonsense.', lines: [
+      'Mrrh… the seam, the seam goes sideways, sideways under the bread…', 'Kha-kha-kha. Tuesday. It was a Tuesday down here once.', 'Brrm brrm, little cart, where do you go, nowhere, nowhere…',
+      'Zhh. Zhhhh. The rock hums if you listen. You don\'t listen.', 'Shhh, the canary\'s asleep. Canary\'s been asleep since \'71.', 'Glub. Glub glub. Hehe.',
+      'Ninety-four… ninety-five… lost count of the props again.', 'Mmh, gold, gold, the colour of soup, the colour of soup…', 'Krr-tak, krr-tak, that\'s the pick talking, not me.',
+      'They took the lift up and never sent it down. Rude.', 'Hnnh? Who\'s that? You\'re not Kolya. Kolya had a moustache.', 'Lamp oil, lamp oil, lamp oil…',
+    ] },
+    { id: 'minerFlood', name: 'Old miner — screaming about the flood', note: 'Now and then, out of nowhere, he screams about the flood.', lines: [
+      'THE WATER! THE WATER\'S COMING UP THE SHAFT!', 'SHUT THE BULKHEAD! SHUT IT! THEY\'RE STILL DOWN THERE!', 'IT\'S IN THE LOWER GALLERY! RUN! RUN!',
+      'I HEARD THEM KNOCKING ON THE OTHER SIDE! FOR THREE DAYS!', 'THE PUMPS! WHO TURNED OFF THE PUMPS?!', 'DON\'T GO DOWN TO NINE! NINE IS UNDER WATER!',
+    ] },
+    { id: 'minerLend', name: 'Old miner — lending his pickaxe', note: 'When he hands you his pickaxe (E).', lines: ['Take it, take it. Bring it back. BRING IT BACK.', 'Hit the shiny bits. Not your foot. Hehe.', 'My pick. Mine. Yours a little while.', 'Gold sleeps in the walls. Wake it gently.'] },
+  ] },
   { group: 'Militsiya', kinds: [
     { id: 'police', name: 'Front desk — hello', note: 'You walk up to the desk officer at a МИЛИЦИЯ station (apply to join here).', lines: ['Want to serve? Fill in the form.', 'Documents?', 'The Militsiya is hiring.', 'Next.'] },
     { id: 'prisonGuard', name: 'Prison guard', note: 'You walk past a guard patrolling inside the wire.', lines: ['Keep moving, zek.', 'Back to the coal face.', 'The coal won\'t dig itself.', 'Eyes down.', 'Hands where I can see them.'] },

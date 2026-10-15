@@ -469,6 +469,9 @@ function handleMessage(client, msg) {
     case ClientMsg.HIRE:
       client.room?.hireAction(client, msg);
       break;
+    case ClientMsg.MINER:
+      client.room?.minerAction(client);
+      break;
     case ClientMsg.TRAPDOOR:
       client.room?.trapdoorAction(client, msg);
       break;

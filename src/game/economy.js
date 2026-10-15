@@ -51,7 +51,7 @@ export class Economy {
         for (const g of Object.keys(config.goods)) {
           if (config.goods[g].illegal) continue; // contraband goes under the table or to the black market
           const target = DEPOT_TARGETS[g] ?? m.depotTarget;
-          goods[g] = { stock: Math.round(target * 0.6), target };
+          goods[g] = { stock: config.goods[g].unstocked ? 0 : Math.round(target * 0.6), target }; // (gold: only what's been mined and sold here)
         }
         this.markets.set(b.id, { ...at, kind: 'depot', goods });
       } else if (b.type === 'gas') {

@@ -244,6 +244,7 @@ export const config = Object.freeze({
     sand: { name: 'Sand', icon: '🏖️', base: 4, weight: 1, tier: 'raw' },
     coal: { name: 'Coal', icon: '🪨', base: 9, weight: 1, tier: 'raw' }, // mined by convicts at the prison, for its power plant
     fish: { name: 'Fish', icon: '🐟', base: 18, weight: 1, tier: 'raw' }, // caught with a rod (see config.fishing); it eats too
+    gold: { name: 'Gold nugget', icon: '🪙', base: 160, weight: 1, tier: 'raw', unstocked: true }, // mined in the old miner's cave underground
     planks: { name: 'Planks', icon: '🪚', base: 20, weight: 1, tier: 'processed' },
     flour: { name: 'Flour', icon: '🥡', base: 15, weight: 1, tier: 'processed' },
     steel: { name: 'Steel', icon: '🔗', base: 40, weight: 1, tier: 'processed' },
@@ -597,9 +598,10 @@ export const config = Object.freeze({
     leaveRange: 400, // walk this far off the site and the tool goes back to the foreman
     veinChance: 0.22, // share of the mine's rocks that are rich ore veins
     extraSand: 0.25, extraScrap: 0.12, // a worked-out rock sometimes gives sand or scrap too
-    hp: { rock: 3, vein: 4, tree: 4, wheat: 1, coal: 3 }, // hits to work one out
-    yield: { vein: { ore: 2 }, tree: { logs: 3 }, wheat: { wheat: 2 }, coal: { coal: 2 } }, // (a rock: 1 ore)
-    regrowSec: { rock: 150, vein: 200, tree: 180, wheat: 90, coal: 60 },
+    hp: { rock: 3, vein: 4, tree: 4, wheat: 1, coal: 3, gold: 6 }, // hits to work one out
+    yield: { vein: { ore: 2 }, tree: { logs: 3 }, wheat: { wheat: 2 }, coal: { coal: 2 }, gold: { gold: 1 } }, // (a rock: 1 ore)
+    regrowSec: { rock: 150, vein: 200, tree: 180, wheat: 90, coal: 60, gold: 900 }, // (gold: in the underground's cave, slow to show again)
+    goldR: 22,
     nodes: {
       mine: { gap: 100, density: 0.85, r: 26, kind: 'rock' },
       logging: { gap: 120, density: 0.9, r: 30, kind: 'tree' },
@@ -717,17 +719,45 @@ export const config = Object.freeze({
   // The underground: a second world (old bunkers, metro tunnels and mine shafts) under the town, a quarter
   // its size (half as wide and half as high). It only runs while someone's down there (down an opened
   // bunker trapdoor; up the ladder in an entrance bunker), and stops idleSec after the last one leaves.
-  // Loot lies about at fixed spots and comes back lootRespawnSec (±25%) after it's taken.
+  // What's worth having is in the bunkers' cabinets; an emptied one fills again lootRespawnSec (±25%) later.
   underground: {
     scale: 0.5,
     seed: 1937,
     entrances: 12, // entrance bunkers (with a ladder up), spread out under the town's trapdoors
     idleSec: 120,
     lootRespawnSec: 240,
+    lockpickSec: 8, // the oil hall's doors: F picks one open; it locks again once it's shut
+    minerReach: 90, // the old miner lends you a pickaxe (E); it goes back to him past minerLeash from him, or up the ladder
+    minerLeash: 3200,
+    cabinetMost: 3, // a bunker cabinet holds 1 to this many things: a gun (gunChance), goods (goodsChance) or food
     gunChance: 0.2,
-    goodsChance: 0.45,
-    cash: [20, 150],
+    goodsChance: 0.5,
+    food: ['bread', 'burger', 'drink'],
     goods: [['vodka', 2, 6], ['bread', 1, 3], ['scrap', 2, 6], ['coal', 3, 8], ['parts', 1, 3], ['guns', 1, 2], ['counterfeit', 1, 3]],
+  },
+  // The albino bear, in the biggest cave underground (not the lake's). Blind: it hears you instead. Noises
+  // carry out to `hear` (a gunshot; footsteps by how fast you're going: over sprintSpeed, over walkSpeed, or
+  // creeping; standing still is silent). A noise within chargeWithin and it charges at it; further off, it
+  // lumbers over to listen. A swipe takes swipeShare of your max health. It won't go past `leash` from its
+  // cave. Killed, it drops `cash`, and another moves in respawnSec later.
+  bear: {
+    health: 6000,
+    radius: 42,
+    reach: 16,
+    swipeShare: 0.45,
+    swipeCooldownSec: 1.3,
+    roamSpeed: 45,
+    listenSpeed: 130,
+    chargeSpeed: 300,
+    chargeWithin: 450,
+    leash: 2400,
+    wanderSec: [4, 10],
+    searchSec: [3, 6],
+    walkSpeed: 120,
+    sprintSpeed: 280,
+    hear: { gunshot: 2200, sprint: 700, walk: 300, creep: 80 },
+    respawnSec: 600,
+    cash: 1500,
   },
   // Wolves: at nightfall packsPerNight packs come out of forests in the country (never in town), each
   // packSize strong, and pad about their den. Come within `sight` of one on foot and the pack runs you
