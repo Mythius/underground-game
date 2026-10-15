@@ -640,3 +640,9 @@ test("the ladder in the oil hall's office comes out of a sewer vent in town", ()
   assert.ok(l && l.x > u.oil.office.x && l.x < u.oil.office.x + u.oil.office.w && l.y > u.oil.office.y && l.y < u.oil.office.y + u.oil.office.h, 'in the office');
   assert.ok(u.doors.some((d) => d.office && d.locked && !d.cell), 'behind a locked (pickable) door');
 });
+
+test("the trader's message gets through to the server (every trade, nothing else)", async () => {
+  const { decodeClientMessage } = await import('../src/net/protocol.js');
+  for (const item of config.underground.trades) assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'trader', item })), { ok: true, msg: { t: 'trader', item } });
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'trader', item: 'sniper' })).ok, false);
+});

@@ -236,6 +236,7 @@ const validators = {
 
   [ClientMsg.TRAPDOOR]: (m) => (Number.isInteger(m.id) && [undefined, 'down', 'up'].includes(m.action) ? { t: m.t, id: m.id, action: m.action ?? null } : null),
   [ClientMsg.MINER]: (m) => ({ t: m.t }),
+  [ClientMsg.TRADER]: (m) => (config.underground.trades.includes(m.item) ? { t: m.t, item: m.item } : null),
   [ClientMsg.WORLD]: (m) => (['town', 'underground'].includes(m.to) && typeof m.token === 'string' && m.token.length <= 100 ? { t: m.t, to: m.to, token: m.token } : null),
 
   [ClientMsg.CREW]: (m) =>

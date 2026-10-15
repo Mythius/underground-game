@@ -790,7 +790,7 @@ export const config = Object.freeze({
     health: 135, // (three times what it was: nine knife stabs, ~7 pistol shots)
     radius: 26,
     reach: 10,
-    biteShare: 0.07,
+    biteShare: 0.14, // (twice what it was)
     biteCooldownSec: 0.7,
     walkSpeed: 90,
     runSpeed: 265,
