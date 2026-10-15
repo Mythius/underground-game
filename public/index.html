@@ -9648,6 +9648,109 @@
       return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
     };
 
+    // ---- rain: puddles here and there, filling as it rains (ripples while it does) and drying up after. Walk or
+    // drive through one and it splashes. Snow (winter) leaves the ground dry. Drawn over the ground and roads,
+    // under everything else (so no puddles indoors). ----
+    let wet = 0; // 0..1: fills over ~20 s of rain, dries over a couple of minutes
+    const PUDDLE_GRID = 240; // one chance of a puddle per square this size
+    const puddles = new Map(); // grid square -> its puddle (or null), worked out once
+    const splashes = []; // drops flying up out of a puddle: { x, y, vx, vy, z, vz, born }
+    const wading = new Map(); // player / car key -> in a puddle last frame (a splash sound on the way in)
+    function puddleAt(gx, gy) {
+      const key = gx * 100003 + gy;
+      if (puddles.has(key)) return puddles.get(key);
+      const h1 = hash(gx, gy), h2 = hash(gy + 7, gx - 3), h3 = hash(gx * 3 + 1, gy * 5 + 2);
+      let p = null;
+      if (h1 < 0.6) {
+        const x = (gx + 0.15 + 0.7 * h2) * PUDDLE_GRID, y = (gy + 0.15 + 0.7 * h3) * PUDDLE_GRID, rx = 26 + 90 * h1;
+        if (waterDistance(x, y).d > rx + 20) p = { x, y, rx, ry: rx * (0.4 + 0.45 * h2), rot: h3 * Math.PI }; // (not in a river or lake)
+      }
+      puddles.set(key, p);
+      return p;
+    }
+    /** The puddle (as big as it is just now) that (x, y) is standing in, or null. */
+    function puddleUnder(x, y) {
+      const k = Math.min(1, wet * 1.3), gx = Math.floor(x / PUDDLE_GRID), gy = Math.floor(y / PUDDLE_GRID);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const p = puddleAt(gx + dx, gy + dy);
+        if (!p) continue;
+        const c = Math.cos(-p.rot), s = Math.sin(-p.rot), lx = (x - p.x) * c - (y - p.y) * s, ly = (x - p.x) * s + (y - p.y) * c;
+        if ((lx / (p.rx * k)) ** 2 + (ly / (p.ry * k)) ** 2 < 1) return p;
+      }
+      return null;
+    }
+    /** Whoever's moving through a puddle kicks up drops (a car a spray): `key` for the splash on the way in. */
+    function wade(key, x, y, vx, vy, car, now, dt) {
+      const speed = Math.hypot(vx, vy), inside = speed > 25 && puddleUnder(x, y);
+      if (inside && !wading.get(key)) sfx('splash', { x, y }, car ? 0.5 : 0.25);
+      wading.set(key, Boolean(inside));
+      if (!inside || splashes.length > 400) return;
+      for (let n = speed * dt * (car ? 0.25 : 0.12); n > 0; n--) {
+        if (n < 1 && Math.random() > n) break;
+        const side = car ? (Math.random() < 0.5 ? -1 : 1) : 0, a = Math.atan2(vy, vx) + Math.PI + side * (1 + Math.random() * 0.6) + (Math.random() - 0.5) * (car ? 0.6 : 2.4);
+        const out = (car ? 0.3 : 0.15) * speed * (0.4 + Math.random() * 0.8);
+        splashes.push({ x, y, vx: Math.cos(a) * out, vy: Math.sin(a) * out, z: 0, vz: (car ? 160 : 90) * (0.5 + Math.random()), born: now });
+      }
+    }
+    function drawWetGround(now, dt, shown, cars) {
+      const raining = under ? 0 : sky.rain * (1 - snowAmount);
+      wet += (raining - wet) * Math.min(1, dt * (raining > wet ? 0.08 : 0.012));
+      if (wet >= 0.02) {
+        const { l, t, r, b } = viewBox;
+        const k = Math.min(1, wet * 1.3);
+        for (let gy = Math.floor(t / PUDDLE_GRID) - 1; gy <= Math.floor(b / PUDDLE_GRID); gy++) {
+          for (let gx = Math.floor(l / PUDDLE_GRID) - 1; gx <= Math.floor(r / PUDDLE_GRID); gx++) {
+            const p = puddleAt(gx, gy);
+            if (!p) continue;
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rot);
+            ctx.scale(k, k); // (they spread as it rains, and shrink as they dry)
+            ctx.fillStyle = `rgba(105, 135, 165, ${0.4 * k})`;
+            ctx.strokeStyle = `rgba(205, 222, 240, ${0.22 * k})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.ellipse(0, 0, p.rx, p.ry, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            if (raining > 0.1) { // drops landing: rings spreading out
+              ctx.strokeStyle = `rgba(225, 235, 245, ${0.45 * raining})`;
+              ctx.lineWidth = 1;
+              for (let i = 0; i < 3; i++) {
+                const run = now / 800 + hash(gx * 7 + i, gy * 13 - i), n = Math.floor(run), age = run - n; // each ring: its own spot every cycle
+                const a = hash(n, gx * 31 + gy + i * 101) * Math.PI * 2, d = Math.sqrt(hash(gx + n, gy - n + i)) * 0.7;
+                ctx.globalAlpha = 1 - age;
+                ctx.beginPath(); ctx.ellipse(Math.cos(a) * p.rx * d, Math.sin(a) * p.ry * d, 2 + 13 * age, 2 + 13 * age, 0, 0, Math.PI * 2); ctx.stroke();
+              }
+              ctx.globalAlpha = 1;
+            }
+            ctx.restore();
+          }
+        }
+        // Splashing through them: me (where I'm drawn), everyone else, and the cars.
+        if (dt > 0) {
+          if (me && playing && !me.car && !riding) wade('me', me.x, me.y, me.vx ?? 0, me.vy ?? 0, false, now, dt);
+          for (const [id, p] of shown) {
+            if (id === myId) continue;
+            const last = wading.get(`p${id}xy`);
+            wading.set(`p${id}xy`, [p.x, p.y]);
+            if (last) wade(`p${id}`, p.x, p.y, (p.x - last[0]) / dt, (p.y - last[1]) / dt, false, now, dt);
+          }
+          for (const [id, v] of cars) {
+            const mine = me?.car?.id === id, x = mine ? me.car.x : v.x, y = mine ? me.car.y : v.y;
+            const last = wading.get(`c${id}xy`);
+            wading.set(`c${id}xy`, [x, y]);
+            if (last) wade(`c${id}`, x, y, (x - last[0]) / dt, (y - last[1]) / dt, true, now, dt);
+          }
+        }
+      }
+      // The drops: up, over and down, gone in half a second.
+      ctx.fillStyle = 'rgba(200, 220, 240, .75)';
+      for (let i = splashes.length - 1; i >= 0; i--) {
+        const d = splashes[i];
+        d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.vz -= 520 * dt;
+        if (d.z < 0 || now - d.born > 700) { splashes.splice(i, 1); continue; }
+        ctx.beginPath(); ctx.arc(d.x, d.y - d.z * 0.35, 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
     function drawGravelRoads() {
       const roads = terrain.roads;
       const visible = roads.filter((r) => r.x < viewBox.r && r.x + r.w > viewBox.l && r.y < viewBox.b && r.y + r.h > viewBox.t);
@@ -13803,6 +13906,7 @@
       drawRails();
       drawLamps(1 - daylight(clockNow(frameTime)));
       drawSkids(frameTime);
+      drawWetGround(frameTime, dt, shown, view.vehicles ?? new Map());
 
       const viewL = camera.x - vw / 2, viewT = camera.y - vh / 2, viewR = camera.x + vw / 2, viewB = camera.y + vh / 2;
       // Canopies go see-through over me, and stay a little see-through otherwise. Only the trees on screen
