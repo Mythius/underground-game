@@ -591,15 +591,14 @@ function adminCommand(admin, text) {
       return;
     }
     case 'rain':
-    case 'flood': { // weather for testing: rain in town for a few minutes (/flood: and the underground floods, even in winter)
+    case 'flood': { // weather for testing: rain (snow in winter) in town for a few minutes, and the underground floods
       const env = rooms.town?.env;
       if (!env) return reply('No town running');
       const min = Math.min(60, Math.max(1, Number(arg) || 10));
       env.events = env.events.filter((e) => e.kind !== 'rain' || e.end < env.time); // (whatever rain there was, replaced)
       env.events.push({ kind: 'rain', start: env.time - config.environment.weatherFadeSec, end: env.time + min * 60 }); // (already at full strength)
-      env.floodUntil = cmd.toLowerCase() === 'flood' ? env.time + min * 60 : 0;
       logger.info('admin weather', { cmd, min });
-      return reply(`🌧 Raining in town for ${min} min${cmd.toLowerCase() === 'flood' ? ' — the underground floods (even in winter)' : env.season.name === 'winter' ? " (it's winter: snow — /flood floods the underground anyway)" : ''}`);
+      return reply(`🌧 ${env.season.name === 'winter' ? 'Snowing' : 'Raining'} in town for ${min} min — the underground floods`);
     }
     case 'bans':
       return reply(bans.bans.length ? `Banned: ${bans.bans.map((b) => `${b.name} (${b.ip ?? 'no IP'})`).join(', ')}` : 'Nobody is banned');

@@ -269,8 +269,9 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
       decor.push({ k: 'handpump', x: c.x - 14, y: c.y - 14, w: 28, h: 28, solid: true, nx: fx, ny: fy }); // (nx, ny: toward the oil)
       oil.pumps.push({ x: stand.x, y: stand.y, a: Math.atan2(c.y - stand.y, c.x - stand.x) });
     }
-    // The guard by the main way in; the overseer strolling the floor in front of the cells.
+    // Two governor's guards by the main way in; the overseer strolling the floor in front of the cells.
     oil.guard = { ...at2(LU * 0.3, DV - CELL * 1.2), a: Math.atan2(-iy, -ix) };
+    oil.guard2 = { ...at2(LU * 0.7, DV - CELL * 1.2), a: Math.atan2(-iy, -ix) };
     oil.inspector = { ...at2(LU * 0.5, cellD + CELL * 0.7), a: Math.atan2(iy, ix) };
     // Strip lights in rows across the ceiling (a few of them flicker), hooks on chains hanging between.
     for (const v of [cellD + CELL * 0.8, cellD + CELL * 1.6 + 300, DV - CELL * 0.9]) {

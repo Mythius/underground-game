@@ -7,7 +7,7 @@ test('hats and outfits: won by what you do, and a look only wears what you have 
   const account = {};
   const hat = (id) => config.looks.hats.indexOf(id);
   // Nothing won yet: the cap (or no hat) only; a crown asked for comes back as the cap, no coat, no shades.
-  assert.deepEqual(fitLook({ skin: 1, shirt: 2, pants: 3, hat: hat('crown'), coat: 'trench', shades: true }, account), { skin: 1, shirt: 2, pants: 3, hat: hat('cap'), coat: null, shades: false });
+  assert.deepEqual(fitLook({ skin: 1, shirt: 2, pants: 3, hat: hat('crown'), coat: 'trench', shades: true }, account), { skin: 1, shirt: 2, pants: 3, hat: hat('cap'), coat: null, shades: false, goggles: false });
   assert.equal(fitLook({ hat: hat('none') }, account).hat, hat('none'));
   // What messages win.
   assert.equal(fromMessage({ t: 'done', what: 'wh_buy' }), 'tophat');
@@ -19,7 +19,12 @@ test('hats and outfits: won by what you do, and a look only wears what you have 
   assert.ok(!unlock(account, 'crown')); // (once)
   assert.ok(!unlock(account, 'cap')); // (everyone's already)
   assert.ok(unlock(account, 'shades'));
-  assert.deepEqual(fitLook({ hat: hat('crown'), shades: true }, account), { skin: 0, shirt: 0, pants: 0, hat: hat('crown'), coat: null, shades: true });
+  assert.deepEqual(fitLook({ hat: hat('crown'), shades: true }, account), { skin: 0, shirt: 0, pants: 0, hat: hat('crown'), coat: null, shades: true, goggles: false });
+  // Through a flood wave: the swimming goggles, worn instead of the shades.
+  assert.equal(fromMessage({ t: 'police', kind: 'flood_survived' }), 'goggles');
+  assert.equal(fitLook({ goggles: true }, account).goggles, false);
+  assert.ok(unlock(account, 'goggles'));
+  assert.deepEqual(fitLook({ shades: true, goggles: true }, account), { skin: 0, shirt: 0, pants: 0, hat: hat('none'), coat: null, shades: false, goggles: true });
   // Every kind of vodka for the kubanka; over 20,000 ₽ to the smuggler for the jacket; 2,000 coal for the prison outfit.
   const kinds = Object.keys(config.economy.visions);
   for (const k of kinds.slice(0, -1)) assert.deepEqual(drank(account, k), ['party']);

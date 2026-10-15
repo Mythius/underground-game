@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { UG } from './underground.js';
 
-// Flash floods underground: whenever it's raining up in town (the room sets `raining`). Everyone down there is
+// Flash floods underground: whenever it's raining (or snowing) up in town (the room sets `raining`). Everyone down there is
 // warned; the water rises (you can still walk and run in it); everyone and everything outside the oil hall clears
 // out of sight, the traders and the old miner too. A while after the warning a wave rushes out of the sewers along
 // the tunnels and drowns whoever it reaches (not in the oil hall, which stays dry), and another comes every so often
@@ -114,7 +114,10 @@ export class Flood {
       for (const h of [...(w.homeless?.list ?? [])]) if (swept(h)) w.homeless.vanish(h);
       for (const r of [...(w.giantRats?.list ?? [])]) if (swept(r)) w.giantRats.vanish(r);
       for (const b of [...w.bears.list]) if (swept(b)) w.bears.vanish(b);
-      if (this.front > this.far + 600) this.front = -1; // (it's been everywhere)
+      if (this.front > this.far + 600) { // (it's been everywhere): whoever's still alive down here made it through
+        this.front = -1;
+        for (const p of w.players.values()) if (p.alive && !this.kills.includes(p)) this.events.push({ kind: 'flood_survived', player: p }); // (the swimming goggles)
+      }
     }
     // Everyone and everything else clears out, out of sight.
     const unseen = (x, y) => ![...w.players.values()].some((p) => Math.hypot(p.x - x, p.y - y) < c.clear);

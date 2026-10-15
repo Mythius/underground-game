@@ -140,7 +140,7 @@ export class Room {
     this.world.night = this.env.isNight;
     this.world.dayClock = this.env.clock; // seconds into the day (meal times at the prison)
     this.world.dayNumber = Math.floor(this.env.time / this.env.cycle);
-    if (this.world.flood) this.world.flood.raining = this.env.intensity('rain') >= config.flood.rainFrom && (this.env.season.name !== 'winter' || this.env.time < (this.env.floodUntil ?? 0)); // (rain up in town floods it; snow doesn't — unless the admin's /flood)
+    if (this.world.flood) this.world.flood.raining = this.env.intensity('rain') >= config.flood.rainFrom; // (rain up in town floods it, and so does snow)
     if (this.env.time - this.lastEnvBroadcast >= config.environment.broadcastEverySec) {
       this.lastEnvBroadcast = this.env.time;
       this.broadcast({ t: ServerMsg.ENV, ...this.env.state() });
@@ -180,7 +180,11 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send(rest.kind === 'error' ? { t: ServerMsg.ERROR, code: rest.code } : { t: ServerMsg.POLICE, ...rest });
     }
-    for (const e of this.world.flood?.events.splice(0) ?? []) this.broadcast({ t: ServerMsg.POLICE, ...e }); // flood warnings, the wave, all clear
+    for (const e of this.world.flood?.events.splice(0) ?? []) { // flood warnings, the wave, all clear (to everyone); made it through a wave (to them)
+      const { player, ...rest } = e;
+      if (player) this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
+      else this.broadcast({ t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.giantRats?.events.splice(0) ?? []) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });

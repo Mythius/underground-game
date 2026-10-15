@@ -149,6 +149,12 @@ export class Economy {
     const m = config.markets;
     const cool = (config.underTable.heatDecayPerMin * dt) / 60;
     for (const market of this.markets.values()) if (market.heat) market.heat = Math.max(0, market.heat - cool);
+    // Goods sold that take a moment to tell on the price (gold): into stock once they've settled.
+    for (const market of this.markets.values()) {
+      if (!market.settling?.length) continue;
+      for (const s of market.settling) if ((s.sec -= dt) <= 0) market.goods[s.good].stock += s.qty;
+      market.settling = market.settling.filter((s) => s.sec > 0);
+    }
     for (const market of this.markets.values()) {
       for (const [good, entry] of Object.entries(market.goods)) {
         // Raw sites produce a little on their own; at work sites it's the hands (see Labour) and players.
@@ -202,7 +208,9 @@ export class Economy {
       if (!this.buys(market, good)) return 'not_bought_here';
       if (holder.count(good) < qty) return 'not_carrying';
       p.cash += this.sellPrice(market, good) * qty;
-      market.goods[good].stock += qty;
+      const settle = config.goods[good].settleSec;
+      if (settle) (market.settling ??= []).push({ good, qty, sec: settle }); // (the price holds a few seconds, then drops for all of it)
+      else market.goods[good].stock += qty;
       holder.add(good, -qty);
     }
     return null;

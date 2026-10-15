@@ -2,7 +2,7 @@ import { config } from '../config.js';
 
 // Hats, coats and shades you earn by doing things. No hat and the baseball cap are everyone's from the
 // start; the rest are won once per account and kept. A look ({ skin, shirt, pants, hat (index into
-// config.looks.hats), coat ('trench' | 'leather' | 'prison' | null), shades }) only wears what you've earned.
+// config.looks.hats), coat ('trench' | 'leather' | 'prison' | null), shades, goggles (not both)) only wears what you've earned.
 
 export const WARDROBE = [
   { id: 'cap', part: 'hat', name: 'Baseball cap', free: true },
@@ -26,6 +26,7 @@ export const WARDROBE = [
   { id: 'zek', part: 'hat', name: 'Prison cap', why: 'Dug 2,000 coal at the prison camp' },
   { id: 'prison', part: 'coat', name: 'Prison outfit', why: 'Dug 2,000 coal at the prison camp' },
   { id: 'shades', part: 'shades', name: 'Shades', why: 'Killed one of the governor\'s guards' },
+  { id: 'goggles', part: 'goggles', name: 'Swimming goggles', why: 'Survived a flood wave underground' },
 ];
 const BY_ID = new Map(WARDROBE.map((w) => [w.id, w]));
 export const FREE = WARDROBE.filter((w) => w.free).map((w) => w.id);
@@ -33,7 +34,7 @@ export const SMUGGLED = 20000; // sold to the man in the leather jacket, for the
 export const COAL = 2000; // dug at the prison camp, all told, for the prison outfit (and its cap)
 
 const DONE_WHAT = { wh_buy: 'tophat', work_buy: 'tophat', work_haul: 'miner', hire_hitman: 'helmet', cop_apply: 'furazhka' };
-const POLICE_KIND = { governor_killed: 'crown', govguard_killed: 'shades', fish_caught: 'bucket', cat_fed: 'beanie', wolf_killed: 'wolfhat', bear_killed: 'papakha', prisoners_freed: 'trench' };
+const POLICE_KIND = { governor_killed: 'crown', govguard_killed: 'shades', fish_caught: 'bucket', cat_fed: 'beanie', wolf_killed: 'wolfhat', bear_killed: 'papakha', prisoners_freed: 'trench', flood_survived: 'goggles' };
 
 /** What an account has won so far ({ have: [ids], drank: [vodka kinds], smuggled: ₽, coal: dug in prison }). */
 export function wardrobeOf(account) {
@@ -94,5 +95,6 @@ export function fitLook(look, account) {
   let hat = int(look.hat);
   if (!have.has(hats[hat])) hat = hats.indexOf('cap');
   const coat = ['trench', 'leather', 'prison'].includes(look.coat) && have.has(look.coat) ? look.coat : null;
-  return { skin: int(look.skin), shirt: int(look.shirt), pants: int(look.pants), hat, coat, shades: Boolean(look.shades) && have.has('shades') };
+  const goggles = Boolean(look.goggles) && have.has('goggles');
+  return { skin: int(look.skin), shirt: int(look.shirt), pants: int(look.pants), hat, coat, shades: !goggles && Boolean(look.shades) && have.has('shades'), goggles };
 }

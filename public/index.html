@@ -599,6 +599,9 @@
         <div class="look-row" id="shades-row"><span>Shades</span>
           <div class="hat-pick"><button type="button" id="shades-toggle" aria-pressed="false"></button></div>
         </div>
+        <div class="look-row"><span>Goggles</span>
+          <div class="hat-pick"><button type="button" id="goggles-toggle" aria-pressed="false"></button></div>
+        </div>
         <div id="locked-why" hidden></div>
         <div id="won-count"></div>
         <button type="button" id="randomize">🎲 Random look</button>
@@ -1164,7 +1167,7 @@
           if (msg.kind === 'car_dumped') { dumpedCars.set(msg.id, { x: msg.x, y: msg.y, type: msg.type }); toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} was dumped across town — it's marked on your map`); }
           if (msg.kind === 'atm_hit') { sfx('batHit'); addShake(2.5); toast(`🏏 Smash! ${msg.n}/${msg.of}`); }
           if (msg.kind === 'atm_smashed') { sfx('atmSmash'); addShake(5); toast(`💥 The ATM burst open: +${money(msg.amount)} — it's broken for ${Math.round(msg.sec / 60)} min`); }
-          if (msg.kind === 'flood_warning') { sfx('floodWarn'); toast(`🌊 FLASH FLOOD WARNING — it's raining up top. The water is rising, and in ${Math.round(msg.sec / 60)} minute${Math.round(msg.sec / 60) === 1 ? '' : 's'} a wave will rush through the tunnels. Get up a ladder or into the oil hall before then!`, 7000); }
+          if (msg.kind === 'flood_warning') { sfx('floodWarn'); toast(`🌊 FLASH FLOOD WARNING — ${season.main === 'winter' ? "it's snowing" : "it's raining"} up top. The water is rising, and in ${Math.round(msg.sec / 60)} minute${Math.round(msg.sec / 60) === 1 ? '' : 's'} a wave will rush through the tunnels. Get up a ladder or into the oil hall before then!`, 7000); }
           if (msg.kind === 'flood_wave_soon') { sfx('floodWarn'); toast(`🌊 The wave comes in ${msg.sec} seconds — get up a ladder or into the oil hall!`, 5000); }
           if (msg.kind === 'flood_wave') toast('🌊 The wave is coming through the tunnels — RUN!', 4000);
           if (msg.kind === 'flood_over') toast('🌊 The flood has drained away', 3000);
@@ -2313,7 +2316,7 @@
             const have = tr.insertCell(); have.className = 'num'; have.textContent = f.have ? `have ${f.have}` : '';
             const price = tr.insertCell(); price.className = 'num'; price.textContent = `${money(f.price)} each`;
             const act = tr.insertCell(); act.className = 'num';
-            act.append(button(`Sell all (${f.have})`, () => send({ t: 'train', action: 'deliver', good: f.good, qty: f.have }), { disabled: !f.have }));
+            act.append(button(f.have ? `Sell all (${f.have}) for ${money(f.price * f.have)}` : 'Sell all (0)', () => send({ t: 'train', action: 'deliver', good: f.good, qty: f.have }), { disabled: !f.have }));
           }
         } else {
           h.textContent = '🕶️ A man in a leather jacket';
@@ -2356,7 +2359,7 @@
             buy.append(`Buy ${money(row.buy)}${trendMark(row.trend)} `, button('1', () => trade(row.good, 1, 'buy'), { disabled: maxBuy < 1 }), button('5', () => trade(row.good, 5, 'buy'), { disabled: maxBuy < 5 }), button('Max', () => trade(row.good, maxBuy, 'buy'), { disabled: maxBuy < 1 }));
           }
           const sell = tr.insertCell(); sell.className = 'num';
-          if (row.sell !== null) sell.append(`Sell ${money(row.sell)}${trendMark(row.trend)} `, button(`All (${have})`, () => trade(row.good, have, 'sell'), { disabled: !have }));
+          if (row.sell !== null) sell.append(`Sell ${money(row.sell)}${trendMark(row.trend)} `, button(have ? `All (${have}) for ${money(row.sell * have)}` : 'All (0)', () => trade(row.good, have, 'sell'), { disabled: !have }));
         }
         placeEl.append(h, sub, workSection(d) ?? '', jobSection(d.id) ?? '', cargo, catalogSection(d) ?? '', table);
       } else {
@@ -5258,7 +5261,7 @@
       shirt: Math.floor(Math.random() * looks.shirts.length),
       pants: Math.floor(Math.random() * looks.pants.length),
       hat: (() => { const mine = ownedHats(); return mine[Math.floor(Math.random() * mine.length)]; })(), // (only hats I've won)
-      coat: myLook?.coat ?? null, shades: myLook?.shades ?? false,
+      coat: myLook?.coat ?? null, shades: myLook?.shades ?? false, goggles: myLook?.goggles ?? false,
     });
     const loadSaved = (key, fallback) => {
       try { return { ...fallback, ...JSON.parse(localStorage.getItem(key)) }; } catch { return fallback; }
@@ -5290,6 +5293,9 @@
       const shadesBtn = document.getElementById('shades-toggle');
       shadesBtn.textContent = myLook.shades ? `${lock('shades')}🕶️ On` : 'Off';
       shadesBtn.setAttribute('aria-pressed', String(Boolean(myLook.shades)));
+      const gogglesBtn = document.getElementById('goggles-toggle');
+      gogglesBtn.textContent = myLook.goggles ? `${lock('goggles')}🥽 On` : 'Off';
+      gogglesBtn.setAttribute('aria-pressed', String(Boolean(myLook.goggles)));
       const locked = lockedPieces();
       document.getElementById('locked-why').hidden = !locked.length;
       document.getElementById('locked-why').textContent = locked.map((w) => `🔒 ${w.name}: ${w.why ?? 'not won yet'}`).join(' · ');
@@ -5302,7 +5308,7 @@
 
     /** The pieces I'm trying on but haven't won (Start won't go while there are any). */
     function lockedPieces() {
-      const ids = [looks.hats[myLook.hat], myLook.coat, myLook.shades && 'shades'].filter((id) => id && !owned.has(id));
+      const ids = [looks.hats[myLook.hat], myLook.coat, myLook.shades && 'shades', myLook.goggles && 'goggles'].filter((id) => id && !owned.has(id));
       return ids.map((id) => WARDROBE.find((w) => w.id === id) ?? { id, name: HAT_NAMES[id] ?? id });
     }
 
@@ -5332,7 +5338,8 @@
         lookChanged();
       };
     }
-    document.getElementById('shades-toggle').onclick = () => { myLook.shades = !myLook.shades; lookChanged(); };
+    document.getElementById('shades-toggle').onclick = () => { myLook.shades = !myLook.shades; if (myLook.shades) myLook.goggles = false; lookChanged(); };
+    document.getElementById('goggles-toggle').onclick = () => { myLook.goggles = !myLook.goggles; if (myLook.goggles) myLook.shades = false; lookChanged(); }; // (one or the other)
     document.getElementById('open-character').onclick = (e) => {
       const panel = document.getElementById('character');
       panel.hidden = !panel.hidden;
@@ -9061,9 +9068,9 @@
     // No hat and the baseball cap are everyone's; the rest are kept on your account once won.
     let WARDROBE = [
       { id: 'cap', part: 'hat', name: 'Baseball cap', free: true }, { id: 'none', part: 'hat', name: 'No hat', free: true },
-      { id: 'trench', part: 'coat', name: 'Trench coat' }, { id: 'leather', part: 'coat', name: 'Leather jacket' }, { id: 'prison', part: 'coat', name: 'Prison outfit' }, { id: 'shades', part: 'shades', name: 'Shades' },
+      { id: 'trench', part: 'coat', name: 'Trench coat' }, { id: 'leather', part: 'coat', name: 'Leather jacket' }, { id: 'prison', part: 'coat', name: 'Prison outfit' }, { id: 'shades', part: 'shades', name: 'Shades' }, { id: 'goggles', part: 'goggles', name: 'Swimming goggles' },
     ];
-    const WARDROBE_ICONS = { tophat: '🎩', miner: '⛑️', crown: '👑', helmet: '🪖', party: '🥳', ushanka: '🧢', furazhka: '👮', cowboy: '🤠', beanie: '🧶', wolfhat: '🐺', papakha: '🐻‍❄️', bucket: '🎣', kepka: '🏢', kubanka: '🍾', trench: '🧥', leather: '🧥', prison: '⛓️', zek: '⛓️', shades: '🕶️' };
+    const WARDROBE_ICONS = { tophat: '🎩', miner: '⛑️', crown: '👑', helmet: '🪖', party: '🥳', ushanka: '🧢', furazhka: '👮', cowboy: '🤠', beanie: '🧶', wolfhat: '🐺', papakha: '🐻‍❄️', bucket: '🎣', kepka: '🏢', kubanka: '🍾', trench: '🧥', leather: '🧥', prison: '⛓️', zek: '⛓️', shades: '🕶️', goggles: '🥽' };
     const COATS = { trench: '#8a7355', leather: '#2b1f1a' };
     const owned = new Set(['none', 'cap']); // what I've won (from my account; more as I win them)
     const ownedHats = () => looks.hats.map((h, i) => [h, i]).filter(([h]) => owned.has(h)).map(([, i]) => i);
@@ -9076,7 +9083,8 @@
       if (l.coat === 'trench') look.coat = COATS.trench;
       else if (l.coat === 'leather') look.leather = COATS.leather;
       else if (l.coat === 'prison') Object.assign(look, { shirt: '#2b2c2e', pants: '#232426', convict: true }); // the camp's black cotton
-      if (l.shades) look.shades = true;
+      if (l.goggles) look.goggles = true;
+      else if (l.shades) look.shades = true;
       return look;
     }
 
@@ -9819,14 +9827,18 @@
     const puddles = new Map(); // grid square -> its puddle (or null), worked out once
     const splashes = []; // drops flying up out of a puddle: { x, y, vx, vy, z, vz, born }
     const wading = new Map(); // player / car key -> in a puddle last frame (a splash sound on the way in)
+    let puddleRoads = null; // (the roads they were worked out on: again if those change)
     function puddleAt(gx, gy) {
+      if (puddleRoads !== terrain.roads) { puddles.clear(); puddleRoads = terrain.roads; }
       const key = gx * 100003 + gy;
       if (puddles.has(key)) return puddles.get(key);
       const h1 = hash(gx, gy), h2 = hash(gy + 7, gx - 3), h3 = hash(gx * 3 + 1, gy * 5 + 2);
       let p = null;
-      if (h1 < 0.6) {
-        const x = (gx + 0.15 + 0.7 * h2) * PUDDLE_GRID, y = (gy + 0.15 + 0.7 * h3) * PUDDLE_GRID, rx = 26 + 90 * h1;
-        if (waterDistance(x, y).d > rx + 20) p = { x, y, rx, ry: rx * (0.4 + 0.45 * h2), rot: h3 * Math.PI }; // (not in a river or lake)
+      if (h1 < 0.3) { // (round ones, on the streets only: as big as the road has room for)
+        const x = (gx + 0.15 + 0.7 * h2) * PUDDLE_GRID, y = (gy + 0.15 + 0.7 * h3) * PUDDLE_GRID;
+        const road = terrain.roads.find((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+        const rx = road && Math.min(22 + 110 * h1, x - road.x, road.x + road.w - x, y - road.y, road.y + road.h - y) - 4;
+        if (rx >= 16 && waterDistance(x, y).d > rx + 20) p = { x, y, rx, ry: rx, rot: 0 }; // (not in a river or lake)
       }
       puddles.set(key, p);
       return p;
@@ -12508,6 +12520,15 @@
       // Head and hat
       circle(0.05, 0, head, skin);
       if (look.shades) { ctx.fillStyle = '#0b0b0b'; ctx.beginPath(); ctx.roundRect(0.24, -0.3, 0.16, 0.6, 0.06); ctx.fill(); ctx.fillStyle = 'rgba(255, 255, 255, .35)'; ctx.fillRect(0.3, -0.24, 0.04, 0.12); }
+      if (look.goggles) { // swimming goggles: a strap round the head, two round blue lenses at the front
+        ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = 0.07;
+        ctx.beginPath(); ctx.arc(0.05, 0, head, 0, Math.PI * 2); ctx.stroke();
+        for (const side of [-1, 1]) {
+          circle(0.32, side * 0.17, 0.13, '#1b1b1b');
+          circle(0.32, side * 0.17, 0.09, '#3fa9d6');
+          ctx.fillStyle = 'rgba(255, 255, 255, .55)'; ctx.fillRect(0.33, side * 0.17 - 0.06, 0.03, 0.05);
+        }
+      }
       ctx.translate(0.05, 0);
       drawHat(look.hat, head);
 

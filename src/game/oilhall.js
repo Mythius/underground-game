@@ -2,7 +2,7 @@ import { config } from '../config.js';
 import { Pickup } from './entities.js';
 import { hotbarOf } from './cargo.js';
 
-// The oil hall underground (НЕФТЕХРАНИЛИЩЕ №3): a governor's guard and an overseer (a tax inspector, on loan)
+// The oil hall underground (НЕФТЕХРАНИЛИЩЕ №3): two governor's guards and an overseer (a tax inspector, on loan)
 // shoot anyone who walks in (see Hires). Shabby townsfolk work the little hand pumps at the edge of the
 // oil pits, and when both their watchers are dead they drop everything and run for it. More are locked
 // in the cells along the back wall: the doors can't be picked, only opened with the overseer's key, which
@@ -20,10 +20,12 @@ export class OilHall {
     this.nextId = 1;
     this.time = 0;
     this.events = []; // { player, kind, … } for the room to pass on
-    this.guardWait = { govguard: 0, inspector: 0 };
+    // The watchers' posts: [role, where, the overseer's beat]; each filled again on its own once its man is dead.
+    this.posts = [['govguard', this.oil.guard], ['govguard', this.oil.guard2 ?? this.oil.guard], ['inspector', this.oil.inspector, this.oil.cells.map((c) => c.front)]];
+    this.guardWait = this.posts.map(() => 0);
     this.cellWait = this.oil.cells.map(() => 0);
     this.keyCheck = 0;
-    for (const role of ['govguard', 'inspector']) this.#spawnGuard(role);
+    this.posts.forEach((_, i) => this.#spawnGuard(i));
     this.oil.pumps.forEach((_, i) => this.#spawnWorker(i));
     this.oil.cells.forEach((_, i) => this.#fillCell(i));
   }
@@ -40,9 +42,9 @@ export class OilHall {
     return this.world.hires.list.filter((h) => h.oil);
   }
 
-  #spawnGuard(role) {
-    const o = this.oil;
-    this.world.hires.spawnOil(role, role === 'inspector' ? o.inspector : o.guard, o.hall, role === 'inspector' ? o.cells.map((c) => c.front) : null);
+  #spawnGuard(i) {
+    const [role, at, beat] = this.posts[i];
+    this.world.hires.spawnOil(role, at, this.oil.hall, beat ?? null).oilPost = i;
   }
 
   #spawnWorker(i) {
@@ -80,13 +82,13 @@ export class OilHall {
   step(dt) {
     this.time += dt;
     const c = config.oilHall, o = this.oil, w = this.world;
-    // The guard and the overseer: someone new a while after one's killed (not while anyone's in the hall).
+    // The guards and the overseer: someone new a while after one's killed (not while anyone's in the hall).
     const guards = this.#guards();
-    for (const role of ['govguard', 'inspector']) {
-      if (guards.some((h) => h.role === role)) { this.guardWait[role] = 0; continue; }
-      if ((this.guardWait[role] += dt) < c.guardRespawnSec || this.#anyoneIn(o.hall, 200)) continue;
-      this.guardWait[role] = 0;
-      this.#spawnGuard(role);
+    for (let i = 0; i < this.posts.length; i++) {
+      if (guards.some((h) => h.oilPost === i)) { this.guardWait[i] = 0; continue; }
+      if ((this.guardWait[i] += dt) < c.guardRespawnSec || this.#anyoneIn(o.hall, 200)) continue;
+      this.guardWait[i] = 0;
+      this.#spawnGuard(i);
     }
     const watched = this.#guards().length > 0;
     // Workers back at the pumps once there's someone watching again, and nobody about.

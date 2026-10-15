@@ -795,7 +795,7 @@ export class Hires {
     h.angle = Math.atan2(ty - h.y, tx - h.x);
     const clear = this.#clearShot(h.x, h.y, tx, ty);
     if (keep && (d > keep || !clear)) this.#walk(h, tx, ty, r.runSpeed, dt, null, within);
-    if (!clear || d > r.shootRange || h.fireCooldown > 0 || h.reload > 0) return;
+    if (!clear || d > (h.side === 'state' ? config.governor.shootRange : r.shootRange) || h.fireCooldown > 0 || h.reload > 0) return;
     this.#shoot(h, h.angle + (Math.random() - 0.5) * r.aimSpread);
   }
 
@@ -1051,20 +1051,22 @@ export class Hires {
    */
   spawnOil(role, at, hall, beat = null) {
     const cfg = config.governor[role];
-    this.list.push({
+    const h = {
       kind: 'hire', role, side: 'state', oil: true, hall, beat, slot: 0, id: this.nextId++, employer: null,
       name: role === 'inspector' ? 'the overseer' : "the governor's guard",
       x: at.x, y: at.y, angle: at.a ?? 0, health: cfg.health, maxHealth: cfg.health, radius: cfg.radius,
       weapon: cfg.weapon, fireCooldown: 0, ammo: config.weapons[cfg.weapon].magazineSize, reload: 0,
       vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
       foes: new Map(), offline: 0, pick: null, route: [], post: { x: at.x, y: at.y, angle: at.a }, next: 0, task: null, cash: role === 'inspector' ? 300 : 0,
-    });
+    };
+    this.list.push(h);
+    return h;
   }
 
   /** In the oil hall: anyone in it is shot at (chased a little, never out of the hall); otherwise his post, or the overseer's beat. */
   #oilWatch(h, dt) {
     const c = config.oilHall;
-    const threat = this.#threat(h, null, c.fightRange, h.hall);
+    const threat = this.#stateThreat(h, c.fightRange, h.hall);
     if (threat) return this.#fightThreat(h, threat, dt, h.role === 'inspector' ? 0 : 280, h.hall);
     if (h.beat?.length && (h.next -= dt) <= 0) {
       const b = h.beat[Math.floor(Math.random() * h.beat.length)];
@@ -1085,8 +1087,20 @@ export class Hires {
   }
 
   /** Someone who's hurt any of the household, near enough to deal with. */
-  #stateThreat(h, range) {
-    return this.#threat(h, null, range);
+  #stateThreat(h, range, post = null) {
+    return this.#threat(h, null, range, post) ?? this.#hurtBy(h);
+  }
+
+  /** Whoever's hurt one of the governor's people (they're all foes then), within hurtRange and in sight: shot from afar, they still come for you. */
+  #hurtBy(h) {
+    const w = this.world;
+    let best = null, bestD = config.governor.hurtRange;
+    for (const x of [...w.players.values(), ...this.list]) {
+      if (x === h || !x.alive || x.hidden || x.jailed || !this.#isFoe(h, x)) continue;
+      const tx = x.vehicle ? x.vehicle.x : x.x, ty = x.vehicle ? x.vehicle.y : x.y, d = Math.hypot(tx - h.x, ty - h.y);
+      if (d < bestD && w.lineOfSight(h.x, h.y, tx, ty)) [best, bestD] = [x, d];
+    }
+    return best;
   }
 
   /** The governor: strolls between his study, the hall and the dining room; shoots back if attacked. */
@@ -1133,8 +1147,8 @@ export class Hires {
   #govGuard(h, dt) {
     const g = config.governor;
     const threat = this.#stateThreat(h, g.fightRange);
-    const fromPost = threat ? Math.hypot((threat.vehicle ?? threat).x - h.post.x, (threat.vehicle ?? threat).y - h.post.y) : 0;
-    if (threat && fromPost < g.guardLeash) return this.#fightThreat(h, threat, dt, 240);
+    const fromPost = Math.hypot(h.x - h.post.x, h.y - h.post.y);
+    if (threat && fromPost < g.guardLeash) return this.#fightThreat(h, threat, dt, 240); // (after them, up to guardLeash from his post)
     if (threat) return this.#fightThreat(h, threat, dt, 0); // (too far to chase: shoot from where he is)
     if (Math.hypot(h.post.x - h.x, h.post.y - h.y) > 15) this.#walk(h, h.post.x, h.post.y, config.hires.runSpeed * 0.8, dt);
     else h.angle = h.post.angle ?? h.angle;

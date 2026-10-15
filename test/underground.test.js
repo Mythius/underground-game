@@ -354,8 +354,16 @@ test('gold sells at a town market (it starts with none, so it pays well)', () =>
   assert.ok(price > config.goods.gold.base, 'above its base price while the market has none');
   assert.equal(world.economy.trade(p, depot.id, 'gold', 2, 'sell'), null);
   assert.equal(p.cash, price * 2);
-  assert.equal(depot.goods.gold.stock, 2);
   assert.equal(world.economy.cargoOf(p).count('gold'), 0);
+  assert.ok(price >= 290, 'about 300 ₽ where there is none');
+  // The price holds a few seconds: sell more straight after and it's the same price.
+  world.economy.cargoOf(p).add('gold', 3);
+  assert.equal(world.economy.sellPrice(depot, 'gold'), price, 'not dropped yet');
+  assert.equal(world.economy.trade(p, depot.id, 'gold', 3, 'sell'), null);
+  assert.equal(p.cash, price * 5, 'all five at the same price');
+  world.economy.step(config.goods.gold.settleSec + 0.1);
+  assert.ok(Math.abs(depot.goods.gold.stock - 5) < 0.1, 'then it takes it all in');
+  assert.ok(world.economy.sellPrice(depot, 'gold') < price, 'and the price drops');
 });
 
 test('dying underground: you come back in one of the bunkers, not just anywhere in the maze', () => {
@@ -609,12 +617,12 @@ test('the homeless are solid: walk into one and you shove him aside, not through
   } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
 });
 
-test('the oil hall: a guard and the overseer shoot trespassers, workers pump, prisoners sit in locked cells', () => {
+test('the oil hall: two guards and the overseer shoot trespassers, workers pump, prisoners sit in locked cells', () => {
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
   const oil = world.underground.layout.oil, hall = oil.hall;
   const watchers = world.hires.list.filter((h) => h.oil);
-  assert.deepEqual(watchers.map((h) => h.role).sort(), ['govguard', 'inspector']);
+  assert.deepEqual(watchers.map((h) => h.role).sort(), ['govguard', 'govguard', 'inspector'], 'two guards and the overseer');
   const folk = world.oilHall.folk;
   assert.equal(folk.filter((f) => f.kind === 'worker').length, oil.pumps.length);
   assert.ok(oil.pumps.length >= 9, 'about ten at the pumps');
@@ -634,11 +642,11 @@ test("only the overseer's key opens a cell (no picking); the prisoners run, one 
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
   const layout = world.underground.layout, oil = layout.oil;
-  const [guard, overseer] = ['govguard', 'inspector'].map((r) => world.hires.list.find((h) => h.oil && h.role === r));
+  const guards = world.hires.list.filter((h) => h.oil && h.role === 'govguard'), overseer = world.hires.list.find((h) => h.oil && h.role === 'inspector');
   const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
   p.inventory = p.inventory.map((s, i) => (i ? null : s));
-  // Kill them both: the overseer leaves his key; the workers run for it.
-  world.hires.damage(guard, 1e6, p);
+  // Kill them all: the overseer leaves his key; the workers run for it.
+  for (const g of guards) world.hires.damage(g, 1e6, p);
   world.hires.damage(overseer, 1e6, p);
   const body = [...world.bodies.list.values()].find((b) => b.items.some((i) => i?.type === 'cellkey'));
   assert.ok(body, "the key's on the overseer's body");
@@ -740,6 +748,8 @@ function floodTest() {
   assert.ok(!f.active && f.level === 0, 'drained');
   assert.equal(f.goneTraders.size, 0, 'the traders are back');
   assert.ok(f.events.some((e) => e.kind === 'flood_over'));
+  assert.ok(f.events.some((e) => e.kind === 'flood_survived' && e.player === safe), 'made it through the wave: the swimming goggles');
+  assert.ok(!f.events.some((e) => e.kind === 'flood_survived' && e.player === out), 'not the one it drowned');
   run(config.homeless.respawnSec + 30);
   assert.ok(world.homeless.list.length > 2, 'the homeless come back in time');
 }

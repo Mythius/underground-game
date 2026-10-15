@@ -1774,7 +1774,7 @@ export class World {
   #stab(p, base) {
     // A bat hits harder, and reaches further (it's drawn bigger), the bigger you are.
     const size = base.sizeScale ? clamp(p.radius / massToRadius(this.playerOpts.startMass), ...base.sizeRange) : 1;
-    const stats = { ...base, share: base.share * size, reach: base.reach * size };
+    const stats = { ...base, share: base.share * size ** (base.sizePower ?? 1), reach: base.reach * size };
     const aim = p.input.aim ?? 0;
     const inFront = (x, y, r) => {
       const dx = x - p.x, dy = y - p.y;

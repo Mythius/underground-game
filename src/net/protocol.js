@@ -4,7 +4,7 @@ import { censor, rudeName } from '../moderation.js';
 // Every message is a JSON object with a `t` (type) field.
 
 export const ClientMsg = Object.freeze({
-  JOIN: 'join', // { t, name, look: { skin, shirt, pants, hat }, token? } -> spawn or respawn (token = logged-in session)
+  JOIN: 'join', // { t, name, look: { skin, shirt, pants, hat, coat?, shades?, goggles? }, token? } -> spawn or respawn (token = logged-in session)
   INPUT: 'input', // { t, seq, angle, throttle, boost (sprint), aim, fire, reload, use (E: doors/vehicles), slot, gas, steer, drift, rob (F held), light (flashlight on, underground) }
   PING: 'ping', // { t, ts }
   CHAT: 'chat', // { t, text }
@@ -106,12 +106,13 @@ function sanitizeName(name) {
   return short && !rudeName(short) ? short : 'Player';
 }
 
-/** Each part must be a valid index into its list; anything else falls back to a random choice. */
+/** Each part must be a valid index into its list; anything else falls back to a random choice. Coat, shades and goggles pass on (fitLook keeps only what's been won). */
 function sanitizeLook(look) {
   const pick = (value, list) => (Number.isInteger(value) && value >= 0 && value < list.length ? value : Math.floor(Math.random() * list.length));
   const { skins, shirts, pants, hats } = config.looks;
   const l = look && typeof look === 'object' ? look : {};
-  return { skin: pick(l.skin, skins), shirt: pick(l.shirt, shirts), pants: pick(l.pants, pants), hat: pick(l.hat, hats) };
+  const coat = ['trench', 'leather', 'prison'].includes(l.coat) ? l.coat : null;
+  return { skin: pick(l.skin, skins), shirt: pick(l.shirt, shirts), pants: pick(l.pants, pants), hat: pick(l.hat, hats), coat, shades: l.shades === true, goggles: l.goggles === true };
 }
 
 const validators = {

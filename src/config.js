@@ -110,9 +110,11 @@ export const config = Object.freeze({
   // barrel: where bullets leave the gun, in player radii from the centre (matches the drawing).
   weapons: {
     knife: { name: 'Knife', melee: true, share: 1 / 3, reach: 38, cooldownSec: 0.55, magazineSize: 0, reloadSec: 0, barrel: 1.1, spawnWeight: 0 },
-    // A baseball bat: hits harder and reaches further the bigger you are (share and reach × your width against
-    // a starting player's, within sizeRange: at 4.25×, 18× the mass, a hit takes 85%), reaches further than the knife, and smashes ATMs open (robbery.atmSmash).
-    bat: { name: 'Baseball bat', melee: true, share: 0.2, sizeScale: true, sizeRange: [0.8, 4.25], reach: 52, cooldownSec: 0.7, magazineSize: 0, reloadSec: 0, barrel: 1.7, spawnWeight: 0 },
+    // A baseball bat: hits harder and reaches further the bigger you are (reach × your width against a starting
+    // player's, within sizeRange; share × that width ^ sizePower: 12% of their health at the start, 36% at 2×, 70% at
+    // 3×, and from about 3.8× (the biggest is 4.25×, 18× the mass) one hit kills anyone), reaches further than the knife,
+    // and smashes ATMs open (robbery.atmSmash).
+    bat: { name: 'Baseball bat', melee: true, share: 0.12, sizePower: 1.6, sizeScale: true, sizeRange: [0.8, 4.25], reach: 52, cooldownSec: 0.7, magazineSize: 0, reloadSec: 0, barrel: 1.7, spawnWeight: 0 },
     pistol: { name: 'Pistol', damage: 20, cooldownSec: 0.2, magazineSize: 5, reloadSec: 1.5, bulletSpeed: 900, bulletLifetimeSec: 1.2, pellets: 1, spread: 0, barrel: 1.6, spawnWeight: 0 },
     smg: { name: 'SMG', damage: 9, cooldownSec: 0.08, magazineSize: 25, reloadSec: 2, bulletSpeed: 950, bulletLifetimeSec: 0.9, pellets: 1, spread: 0.09, barrel: 1.8, spawnWeight: 30 },
     shotgun: { name: 'Shotgun', damage: 12, cooldownSec: 0.18, magazineSize: 5, reloadSec: 1.8, bulletSpeed: 800, bulletLifetimeSec: 0.45, pellets: 6, spread: 0.35, barrel: 2.0, spawnWeight: 25 },
@@ -248,7 +250,7 @@ export const config = Object.freeze({
     sand: { name: 'Sand', icon: '🏖️', base: 4, weight: 1, tier: 'raw' },
     coal: { name: 'Coal', icon: '🪨', base: 9, weight: 1, tier: 'raw' }, // mined by convicts at the prison, for its power plant
     fish: { name: 'Fish', icon: '🐟', base: 18, weight: 1, tier: 'raw' }, // caught with a rod (see config.fishing); it eats too
-    gold: { name: 'Gold nugget', icon: '🪙', base: 160, weight: 1, tier: 'raw', unstocked: true }, // mined in the old miner's cave underground
+    gold: { name: 'Gold nugget', icon: '🪙', base: 220, weight: 1, tier: 'raw', unstocked: true, settleSec: 3 }, // mined in the old miner's cave underground (a market with none pays ~300 ₽; what you sell only lowers its price settleSec later, so selling a few at a time all go at the same price)
     planks: { name: 'Planks', icon: '🪚', base: 20, weight: 1, tier: 'processed' },
     flour: { name: 'Flour', icon: '🥡', base: 15, weight: 1, tier: 'processed' },
     steel: { name: 'Steel', icon: '🔗', base: 40, weight: 1, tier: 'processed' },
@@ -637,7 +639,7 @@ export const config = Object.freeze({
     arrestSec: 2.5, // standing next to an officer this long gets you arrested
     shootFrom: 3, // officers shoot at suspects with this many stars or more
     shootRange: 520,
-    fireEverySec: 0.8,
+    fireEverySec: 0.65, // an officer fires a shot this often (was 0.8)
     aimSpread: 0.18,
     officerHealth: 100,
     officerArmor: 0.25, // body armour: officers take this much less damage
@@ -689,7 +691,9 @@ export const config = Object.freeze({
     govguard: { health: 220, armor: 0.5, weapon: 'rifle', radius: 27 },
     inspector: { health: 160, armor: 0.7, weapon: 'smg', rapid: true, radius: 18 },
     respawnSec: 300,
-    fightRange: 650,
+    fightRange: 1100,
+    hurtRange: 2400, // whoever's hurt one of them (or the oil hall's watchers) is seen and gone after from this far: no sniping from a distance
+    shootRange: 1100, // they shoot back from this far (hires: hires.shootRange)
     guardLeash: 700, // guards don't chase further than this from their post
     walkSpeed: 90,
     fine: 3000,
@@ -760,13 +764,13 @@ export const config = Object.freeze({
   // (stalkSpeed), lunging when he's within lungeRange behind you; a wanderer who sees you (within sight)
   // attacks attackChance of the time. Each decides about a given player at most once per rejudgeSec. A stab
   // takes stabShare of your max health. They give up after giveUpSec out of sight or past `leash` from home.
-  // Flash floods underground (src/game/flood.js), whenever it rains in town (not snow). Everyone down there is
+  // Flash floods underground (src/game/flood.js), whenever it rains (or snows) in town. Everyone down there is
   // warned; the water rises over riseSec (still walkable); everyone and everything outside the oil hall clears out
   // once nobody's within `clear` of them (the traders and the old miner too). waveSec after the warning (and again
   // every waveSec while it rains, warned warnSec before; from deepSec before it, it's deep: everyone swims) a wave rushes out of the sewers through the tunnels at
   // waveSpeed, killing anyone it reaches: up a ladder or into the oil hall in time and you live. The oil hall stays
   // dry. Once the rain stops it drains over drainSec, and they all come back as usual.
-  flood: { rainFrom: 0.3, riseSec: 120, drainSec: 90, waveSec: 180, warnSec: 30, deepSec: 90, waveSpeed: 550, clear: 1100 },
+  flood: { rainFrom: 0.3, riseSec: 60, drainSec: 90, waveSec: 120, warnSec: 30, deepSec: 60, waveSpeed: 550, clear: 1100 },
   // The oil hall underground (src/game/oilhall.js): a governor's guard and an overseer (the tax inspector's
   // double, same armour and Uzi) shoot anyone in the hall (fightRange); someone new respawnSec after one's
   // killed, once nobody's in there. Shabby workers at the hand pumps run for it once both are dead.

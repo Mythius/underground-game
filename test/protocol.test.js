@@ -30,7 +30,11 @@ test('cleans chat text and rejects empty messages', () => {
 
 test('looks must be valid indexes; anything else is replaced', () => {
   const ok = decodeClientMessage(JSON.stringify({ t: 'join', name: 'a', look: { skin: 1, shirt: 2, pants: 3, hat: 4 } })).msg.look;
-  assert.deepEqual(ok, { skin: 1, shirt: 2, pants: 3, hat: 4 });
+  assert.deepEqual(ok, { skin: 1, shirt: 2, pants: 3, hat: 4, coat: null, shades: false, goggles: false });
+  const dressed = decodeClientMessage(JSON.stringify({ t: 'join', name: 'a', look: { skin: 1, shirt: 2, pants: 3, hat: 4, coat: 'trench', shades: true } })).msg.look;
+  assert.equal(dressed.coat, 'trench', 'the coat gets through (the room checks it was won)');
+  assert.equal(dressed.shades, true);
+  assert.equal(decodeClientMessage(JSON.stringify({ t: 'join', name: 'a', look: { coat: 'cape' } })).msg.look.coat, null, 'no made-up coats');
   const bad = decodeClientMessage(JSON.stringify({ t: 'join', name: 'a', look: { skin: 99, shirt: -1, pants: 'x', hat: 1.5 } })).msg.look;
   for (const [part, list] of [['skin', 'skins'], ['shirt', 'shirts'], ['pants', 'pants'], ['hat', 'hats']]) {
     assert.ok(Number.isInteger(bad[part]) && bad[part] >= 0 && bad[part] < config.looks[list].length);

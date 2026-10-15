@@ -864,3 +864,27 @@ test('vodka and its mixes drink like vodka, each changing how you see things for
   for (let i = 0; i < 30 * (config.economy.visionSec + 1); i++) world.step(1 / 30);
   assert.deepEqual(p.visions, {}, 'wear off');
 });
+
+test("shoot one of the governor's guards from far off and he still comes for you, shooting back", () => {
+  const world = new World();
+  const guard = world.hires.list.find((h) => h.role === 'govguard');
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  let spot = null; // somewhere well past his fight range that he can see
+  for (let a = 0; a < Math.PI * 2 && !spot; a += 0.1) {
+    const x = guard.x + Math.cos(a) * 1500, y = guard.y + Math.sin(a) * 1500;
+    if (!world.isBlocked(x, y, p.radius) && world.lineOfSight(guard.x, guard.y, x, y)) spot = { x, y };
+  }
+  assert.ok(spot, 'found a sniping spot');
+  Object.assign(p, spot);
+  world.hires.damage(guard, 5, p);
+  const start = Math.hypot(guard.x - p.x, guard.y - p.y);
+  let shot = false;
+  for (let t = 0; t < 6 && !shot; t += 1 / 30) {
+    p.health = p.maxHealth;
+    Object.assign(p, spot);
+    world.step(1 / 30);
+    shot = [...world.bullets.values()].some((b) => b.owner?.role === 'govguard');
+  }
+  assert.ok(Math.hypot(guard.x - p.x, guard.y - p.y) < start - 100, 'he comes after you');
+  assert.ok(shot, 'and shoots back');
+});
