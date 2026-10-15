@@ -700,9 +700,18 @@ export class Room {
     if (!client.name) return client.send({ t: ServerMsg.ERROR, code: 'join_first' });
     if (!client.chatLimiter.tryConsume()) return client.send({ t: ServerMsg.ERROR, code: 'chat_too_fast' });
     const color = client.player?.color ?? '#999';
+    const team = /^\/team\b/i.exec(text); // "/team …": in my team's chat only — but still said out loud, over my head
+    if (team) {
+      text = text.slice(team[0].length).trim();
+      if (!text) return;
+      if (!this.teams.teamOf(client)) return client.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: 'You\'re not in a team — /team only goes to your team' });
+    }
     (client.recentChat ??= []).push(text); // (sent along with any report about them)
     if (client.recentChat.length > 10) client.recentChat.shift();
-    this.broadcast({ t: ServerMsg.CHAT, id: client.player?.id ?? null, name: client.name, color, text });
+    const msg = { t: ServerMsg.CHAT, id: client.player?.id ?? null, name: client.name, color, text };
+    if (!team) return this.broadcast(msg);
+    const mates = new Set([client, ...this.teams.mates(client)]);
+    for (const c of this.clients) c.send(mates.has(c) ? { ...msg, team: true } : { ...msg, name: null, color: null, overhead: true }); // (the rest only see it over my head)
   }
 
   buy(client, item) {

@@ -522,8 +522,8 @@ function handleMessage(client, msg) {
       client.room?.eat(client);
       break;
     case ClientMsg.CHAT:
-      if (msg.text.startsWith('/') && client.admin) adminCommand(client, msg.text);
-      else client.room?.chat(client, censor(msg.text)); // ("/…" from anyone else is just chat)
+      if (msg.text.startsWith('/') && client.admin && !/^\/team\b/i.test(msg.text)) adminCommand(client, msg.text);
+      else client.room?.chat(client, censor(msg.text)); // ("/…" from anyone else is just chat; "/team …" is for anyone)
       break;
     case ClientMsg.FEEDBACK:
       sendFeedback(client, msg);

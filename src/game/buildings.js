@@ -639,7 +639,9 @@ export const BUILDING_TYPES = {
     const { w, h } = size;
     return site({ ...size, label: 'ЛЕСПРОМХОЗ', ground: '#6e6247', fence: '#7a5a3a', groundDecor: false, // the trees stand on the ordinary ground
       decor: [
-        fit('logs', 60, h - 280, w * 0.35, 60, '#8b5a2b'), fit('logs', 60, h - 200, w * 0.35, 60, '#7a4a22'), // log stacks by the gate
+        ...[0, 1, 2].flatMap((i) => [ // small log piles by the gate
+          fit('logs', 60 + i * 150, h - 280, 110, 50, '#8b5a2b'), fit('logs', 80 + i * 150, h - 200, 110, 50, '#7a4a22'),
+        ]),
         { ...fit('heap', w * 0.42, h - 300, 90, 90, '#a0703c'), round: true }, // sawdust heap
       ],
       props: [fit('ramp', w * 0.42 + 120, h - 290, 140, 40, '#5a4a3a')], // loading ramp

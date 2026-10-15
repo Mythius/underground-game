@@ -1337,7 +1337,9 @@
           renderBank();
           break;
         case 'chat':
-          addChat(msg.name, msg.color, msg.text);
+          if (msg.id != null && msg.text) chatSaid.set(msg.id, { text: msg.text.length > 70 ? msg.text.slice(0, 69) + '…' : msg.text, until: performance.now() / 1000 + CHAT_SAY_SEC }); // over their head
+          if (msg.overhead) break; // (a team message for someone else's team: only over their head)
+          addChat(msg.team ? `[team] ${msg.name}` : msg.name, msg.color, msg.text);
           sfx('chat');
           break;
         case 'bought':
@@ -11868,6 +11870,8 @@
       } catch {} // (no lines yet: nobody says anything)
     }
     const SAY_SEC = 3.2;
+    const CHAT_SAY_SEC = 5; // what players type in chat shows over their heads this long
+    const chatSaid = new Map(); // player id -> { text, until }
     const speech = new Map(); // speaker key -> { text, until, near } (near: you were close last frame)
     const pick = (list) => (list?.length ? list[Math.floor(Math.random() * list.length)] : null);
 
@@ -11952,6 +11956,13 @@
         if (d < 300 && t > (s.next ?? 0)) { s.next = t + 12 + Math.random() * 10; return { text: pick(SPEECH.trader ?? ['Psst.']) }; }
         return null;
       });
+      // Players: what they typed in chat (a /team message too), over their heads.
+      for (const [id, said] of chatSaid) {
+        if (said.until < t) { chatSaid.delete(id); continue; }
+        const p = id === myId ? (me && playing && !hiddenSelf ? me : null) : v.players?.get(id);
+        if (!p || hiddenUnderRoof(p.x, p.y)) continue;
+        bubble(said.text, p.x, p.y - 34, Math.min(1, (said.until - t) / 0.4));
+      }
       // The homeless: muttering (in Russian) as you go by, swearing at you when they come at you; one
       // creeping up behind you keeps quiet.
       for (const [id, h] of v.homeless ?? []) {
