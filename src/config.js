@@ -758,6 +758,25 @@ export const config = Object.freeze({
   // (stalkSpeed), lunging when he's within lungeRange behind you; a wanderer who sees you (within sight)
   // attacks attackChance of the time. Each decides about a given player at most once per rejudgeSec. A stab
   // takes stabShare of your max health. They give up after giveUpSec out of sight or past `leash` from home.
+  // The oil hall underground (src/game/oilhall.js): a governor's guard and an overseer (the tax inspector's
+  // double, same armour and Uzi) shoot anyone in the hall (fightRange); someone new respawnSec after one's
+  // killed, once nobody's in there. Shabby workers at the hand pumps run for it once both are dead.
+  // Prisoners in the cells (prisonersPerCell each): only the overseer's key opens a cell (it's gone once you
+  // leave the hall); one of them thanks you with cash, vodka or bread. Emptied cells fill again cellRefillSec
+  // later, when nobody's within refillClear.
+  oilHall: {
+    guardRespawnSec: 480,
+    fightRange: 900,
+    health: 60,
+    radius: 17,
+    walkSpeed: 60,
+    runSpeed: 230,
+    fleeSec: 25,
+    prisonersPerCell: [1, 2],
+    cellRefillSec: 480,
+    refillClear: 900,
+    reward: { cashChance: 0.5, cash: [60, 250], vodkaChance: 0.3, vodka: 3, bread: 3 },
+  },
   // The crates of dynamite in the mine's dead ends: shoot one (or set it alight) and it goes off, hurting
   // everything within `radius` (damage at the middle, less further out, nothing through rock) and setting
   // off any other crate in reach. A new crate is left there respawnSec later, once nobody's near.
@@ -768,7 +787,7 @@ export const config = Object.freeze({
   // `leash` from home; a dead one is replaced respawnSec later, out of everyone's sight.
   giantRats: {
     count: 12,
-    health: 45,
+    health: 135, // (three times what it was: nine knife stabs, ~7 pistol shots)
     radius: 26,
     reach: 10,
     biteShare: 0.07,

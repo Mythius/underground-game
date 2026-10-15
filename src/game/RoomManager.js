@@ -71,12 +71,12 @@ export class RoomManager {
     }
     dest.addClient(client);
     // (the admin's switch: at the foot of any ladder down there; in town, wherever they'd spawn)
-    const ladders = to === 'underground' && !at ? dest.world.underground.layout.ladders : [];
+    const ladders = to === 'underground' && !at ? dest.world.underground.layout.ladders.filter((l) => !l.vent) : [];
     if (ladders.length) {
       const l = ladders[Math.floor(Math.random() * ladders.length)];
       at = { x: l.x / config.underground.scale, y: l.y / config.underground.scale };
     }
-    const spot = !at ? null : to === 'underground' ? dest.world.underground.arrival(at.x, at.y) : dest.world.trapdoorArrival(at.x, at.y);
+    const spot = !at ? null : to === 'underground' ? dest.world.underground.arrival(at.x, at.y) : at.vent ? dest.world.ventArrival() : dest.world.trapdoorArrival(at.x, at.y); // (the oil hall office's ladder: up out of a sewer vent)
     dest.bringIn(client, carry, spot);
     if (from === this.underground) this.#idleUnderground();
     return true;

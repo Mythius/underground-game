@@ -1145,6 +1145,8 @@
           if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
           if (msg.kind === 'bear') { sfx('bearRoar'); addShake(4); toast('🐻 It heard you. It can\'t see — stand still, or run'); }
+          if (msg.kind === 'prisoners_freed') { sfx('coin'); toast(`🔓 They're out and running. One grabs your hand on the way past: ${msg.cash ? money(msg.cash) : `${msg.qty} × ${econ.goods[msg.good]?.name ?? msg.good}`}. "Spasibo, spasibo!"`, 5000); }
+          if (msg.kind === 'cellkey_gone') toast("🗝 You left the oil hall — the overseer's key is no use out here, and somewhere along the way it's gone.");
           if (msg.kind === 'giant_rat') { sfx('giantRat', null); if (performance.now() > (ratToastAt ?? 0)) { ratToastAt = performance.now() + 15000; toast('🐀 A rat the size of a dog — red eyes, coming straight for you! Sprint, or fight it.'); } }
           if (msg.kind === 'homeless_attack') { addShake(2); toast(msg.behind ? '🔪 Someone\'s right behind you — a homeless man, knife out!' : '🔪 A homeless man comes at you with a knife!'); }
           if (msg.kind === 'bear_killed') toast('🐻 The albino bear is down. Whatever it ate is lying there.');
@@ -1624,6 +1626,13 @@
           L(g, 28, 28, 54, 54, '#d4a017', 6);
           R(g, 44, 50, 6, 10, '#d4a017'); R(g, 50, 44, 10, 6, '#d4a017');
         },
+        'tool:cellkey': (g) => { // the overseer's rusty cell key, a cardboard tag on its ring
+          g.strokeStyle = '#8a5a32'; g.lineWidth = 5; g.beginPath(); g.arc(20, 20, 11, 0, Math.PI * 2); g.stroke();
+          L(g, 28, 28, 54, 54, '#9c6a3c', 7);
+          R(g, 43, 50, 7, 11, '#9c6a3c'); R(g, 50, 43, 11, 7, '#9c6a3c');
+          R(g, 6, 34, 14, 18, '#d8c79a'); L(g, 13, 34, 16, 26, '#d8c79a', 1.5); // the tag
+          g.fillStyle = '#7a1f17'; g.font = '700 9px system-ui'; g.textAlign = 'center'; g.fillText('№3', 13, 46);
+        },
         'tool:bunkerkey': (g) => { // a heavy black iron key
           g.strokeStyle = '#6a6f75'; g.lineWidth = 7; g.beginPath(); g.arc(20, 20, 11, 0, Math.PI * 2); g.stroke(); // a grey rim so it shows on dark slots
           L(g, 28, 28, 54, 54, '#6a6f75', 9); R(g, 42, 49, 9, 13, '#6a6f75'); R(g, 49, 42, 13, 9, '#6a6f75');
@@ -1764,7 +1773,8 @@
       have_rod: '🕴️ "You have a rod already. One is enough, no?"',
     };
     const vodkaCarried = () => inv.reduce((n, w) => n + (w?.[0] === 'goods' && w[1] === 'vodka' ? w[2] : 0), 0);
-    const nearTrader = (extra = 0) => Boolean(me && under?.trader && Math.hypot(under.trader.x - me.x, under.trader.y - me.y) < 100 + radiusOf(me.mass) + extra);
+    /** The trader in reach (there's one in most bunkers), or null. */
+    const nearTrader = (extra = 0) => (me && under?.traders?.find((t) => Math.hypot(t.x - me.x, t.y - me.y) < 100 + radiusOf(me.mass) + extra)) || null;
     function renderTrader() {
       const vodka = traderVodka = vodkaCarried();
       shopEl.querySelector('h2').textContent = '🕴️ The trader';
@@ -2056,6 +2066,7 @@
     const CREW_WEAPON = ['rifle', 'rifle', 'sniper', 'rifle', 'pistol', 'rifle', 'smg'];
     const CREW_SIZE = [18, 18, 18, 18, 19, 27, 18]; // (the governor's guards are big men)
     const ECON_ERRORS = {
+      cell_key_door: "🔒 This cell door won't pick — it takes the overseer's key (he carries it)",
       nobody_to_collar: 'Nobody there to arrest or fine',
       not_wanted_player: '🚔 They haven\'t done anything — you can only arrest or fine someone who\'s wanted',
       cop_no_illegal: '🚔 You\'re Militsiya now — you can\'t make or sell anything illegal',
@@ -3992,7 +4003,7 @@
           c.onclick = () => take(i);
           c.innerHTML = it[0] === 'goods' ? `<span class="icon">${iconHTML(it[1], 30)}</span><span class="qty">×${it[2]}</span>`
             : it[0] === 'food' ? `<span class="icon">${iconHTML(`food:${it[1]}`, 30)}</span><span class="qty">×${it[2]}</span>`
-            : it[0] === 'rod' || it[0] === 'bunkerkey' ? `<span class="icon">${iconHTML(`tool:${it[0]}`, 30)}</span>`
+            : it[0] === 'rod' || it[0] === 'bunkerkey' || it[0] === 'cellkey' ? `<span class="icon">${iconHTML(`tool:${it[0]}`, 30)}</span>`
             : `<img src="${gunIcon(it[0])}" alt="${it[0]}">`;
           grid.append(c);
         });
@@ -6705,12 +6716,9 @@
     const HOMELESS_HATS = ['ushanka', 'beanie', 'none', 'ushanka', 'cap'];
     function drawHomeless(h, id, now) {
       const look = { skin: resolveLook({ skin: id * 5 + 1 }).skin, shirt: HOMELESS_COATS[id % HOMELESS_COATS.length], pants: '#2b2622', hat: HOMELESS_HATS[(id * 3) % HOMELESS_HATS.length] };
-      if (h.state === 0) { // sitting: cardboard under him, a bottle beside, rocking a little
+      if (h.state === 0) { // sitting: a blanket round him, a bottle beside, rocking a little
         const a = h.angle;
         ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(a);
-        ctx.fillStyle = '#8a6a43'; ctx.fillRect(-26, -22, 46, 44);
-        ctx.strokeStyle = 'rgba(60, 40, 20, .6)'; ctx.lineWidth = 1.5; ctx.strokeRect(-26, -22, 46, 44);
-        ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(20, 0); ctx.stroke(); // (the fold)
         ctx.fillStyle = '#3d4a2e'; ctx.beginPath(); ctx.ellipse(-6, 0, 18, 20, 0, 0, Math.PI * 2); ctx.fill(); // a blanket round him
         ctx.fillStyle = '#2f5a3a'; ctx.beginPath(); ctx.arc(14, 24, 4, 0, Math.PI * 2); ctx.fill(); // the bottle, lying by him
         ctx.fillRect(16, 22, 8, 4);
@@ -6748,8 +6756,10 @@
     }
     // The trader: a trench coat and a fedora, collar up, keeping an eye on you; a crate of his wares at his feet.
     const UG_TRADER_LOOK = { skin: '#d9a877', shirt: '#2e2b28', pants: '#1c1c1c', hat: 'fedora', coat: '#5d5142' };
-    const ugTrader = { aim: Math.PI / 2, say: null };
+    /** Each trader's own bits: where he's looking, and anything he's about to say. */
+    const traderState = (t) => (t.st ??= { aim: Math.PI / 2, say: null });
     function drawTrader(t, now) {
+      const ugTrader = traderState(t);
       if (t.x < viewBox.l - 300 || t.x > viewBox.r + 300 || t.y < viewBox.t - 300 || t.y > viewBox.b + 300) return;
       const near = me && playing && Math.hypot(me.x - t.x, me.y - t.y) < 500;
       const want = near ? Math.atan2(me.y - t.y, me.x - t.x) : Math.PI / 2 + Math.sin(now / 1900) * 1.2; // (watching you; otherwise the doors)
@@ -6764,7 +6774,7 @@
       const sway = Math.sin(now / 1300) * 1.5;
       drawPerson({ x: t.x + sway, y: t.y, r: 18, aim: ugTrader.aim, weapon: null, thrust: 0 }, UG_TRADER_LOOK);
     }
-    function traderSays(text) { ugTrader.say = text; }
+    function traderSays(text) { const t = nearTrader(60); if (t) traderState(t).say = text; }
 
     /** Make the old miner say something right now (lending you his pick). */
     function minerSays(text) { oldMiner.say = text; }
@@ -7926,8 +7936,8 @@
     const isVodka = (w) => isGoods(w) && VODKAS.has(w[1]);
     const edible = (w) => isFood(w) || (isGoods(w) && (w[1] === 'bread' || w[1] === 'fish' || w[1] === 'bat' || w[1] === 'blackguns')) || isVodka(w); // (bakery bread and fish eat too; vodka drinks; a bat from the factory is taken up)
     const isTool = (w) => w?.[0] === 'tool'; // ['tool', 'pickaxe' | 'axe' | 'scythe'] — borrowed from a work site
-    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧', key: '⟦tool:key⟧', bunkerkey: '⟦tool:bunkerkey⟧' }; // drawn icons (see ICON_DRAW)
-    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod', key: "Guard's key", bunkerkey: 'Bunker key' };
+    const TOOL_ICONS = { pickaxe: '⟦tool:pickaxe⟧', axe: '⟦tool:axe⟧', scythe: '⟦tool:scythe⟧', rod: '⟦tool:rod⟧', key: '⟦tool:key⟧', bunkerkey: '⟦tool:bunkerkey⟧', cellkey: '⟦tool:cellkey⟧' }; // drawn icons (see ICON_DRAW)
+    const TOOL_NAMES = { pickaxe: 'Pickaxe', axe: 'Axe', scythe: 'Scythe', rod: 'Fishing rod', key: "Guard's key", bunkerkey: 'Bunker key', cellkey: "Overseer's key" };
     const holdingRod = () => isTool(inv[selectedSlot]) && inv[selectedSlot][1] === 'rod';
 
     function renderHotbar() {
@@ -7950,6 +7960,7 @@
         } else if (isTool(w)) {
           slot.classList.add('goods');
           slot.title = w[1] === 'rod' ? 'Fishing rod — click a river or lake to cast; when a fish bites, pull (click) each time it tires'
+            : w[1] === 'cellkey' ? "Overseer's key — off the oil hall's overseer. E at a cell door opens it. It's no good outside the hall: leave and it's gone"
             : w[1] === 'bunkerkey' ? "Bunker key — off one of the governor's guards. E at a bunker's trapdoor opens it (the key stays in the lock)"
             : `${TOOL_NAMES[w[1]] ?? w[1]} — the foreman's; click to work, it goes back when you leave the site`;
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`tool:${w[1]}`, 42)}</span>`);
@@ -8726,6 +8737,8 @@
         const gone = new Set(msg.tnt || []);
         for (const d of under.tntList ??= under.decor.map((d, i) => [d, i]).filter(([d]) => d.k === 'tnt')) d[0].open = gone.has(d[1]);
       }
+      const oilfolk = new Map(); // the oil hall's workers and prisoners: [id, x, y, angle, state (0 pumping, 1 running, 2 in a cell), look, health, prisoner]
+      for (const [id, x, y, angle, state, look, hp, prisoner] of msg.oilfolk ?? []) oilfolk.set(id, { x, y, angle, state, look, hp, prisoner: prisoner === 1 });
       const rats = new Map(); // giant rats underground: [id, x, y, angle, running, health, biting]
       for (const [id, x, y, angle, run, hp, bite] of msg.rats ?? []) rats.set(id, { x, y, angle, run: run === 1, hp, bite: bite === 1 });
       otherLines = msg.lines ?? [];
@@ -8738,7 +8751,7 @@
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       const cats = new Map();
       for (const [id, x, y, angle, move, look, petted, knows, heldBy] of msg.cats ?? []) cats.set(id, { x, y, angle, move, look, petted: petted === 1, knows: knows === 1, heldBy });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, cats, bodies: corpses });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -8910,7 +8923,12 @@
         const ra = a.rats?.get(id);
         rats.set(id, ra ? { ...rb, x: lerp(ra.x, rb.x, t), y: lerp(ra.y, rb.y, t), angle: lerpAngle(ra.angle, rb.angle, t) } : rb);
       }
-      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, cats, bodies: b.bodies };
+      const oilfolk = new Map();
+      for (const [id, fb] of b.oilfolk ?? []) {
+        const fa = a.oilfolk?.get(id);
+        oilfolk.set(id, fa ? { ...fb, x: lerp(fa.x, fb.x, t), y: lerp(fa.y, fb.y, t), angle: lerpAngle(fa.angle, fb.angle, t) } : fb);
+      }
+      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -9098,6 +9116,11 @@
           rect(0.2, 0.75, -0.07, 0.07, '#7a4a2a');
           rect(0.75, 2.6, -0.035, 0.035, '#c9a26a');
           g.fillStyle = '#7d838a'; g.beginPath(); g.arc(0.55, 0.16, 0.13, 0, Math.PI * 2); g.fill();
+          break;
+        case 'cellkey': // a rusty iron key
+          g.strokeStyle = '#8a5a32'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0, 0.18, 0, Math.PI * 2); g.stroke();
+          rect(0.68, 1.2, -0.05, 0.05, '#9c6a3c');
+          rect(1.02, 1.12, 0.05, 0.2, '#9c6a3c'); rect(0.86, 0.94, 0.05, 0.15, '#9c6a3c');
           break;
         case 'bunkerkey': // a heavy black iron key
           g.strokeStyle = '#111'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0, 0.18, 0, Math.PI * 2); g.stroke();
@@ -11315,7 +11338,8 @@
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
       if (under?.miner && Math.hypot(under.miner.x - me.x, under.miner.y - me.y) < 90 + radiusOf(me.mass)) options.push({ kind: 'miner', dist: d(under.miner) - 10, x: under.miner.x, y: under.miner.y - 56 });
-      if (nearTrader()) options.push({ kind: 'trader', dist: d(under.trader) - 10, x: under.trader.x, y: under.trader.y - 56 });
+      const trader = nearTrader();
+      if (trader) options.push({ kind: 'trader', dist: d(trader) - 10, x: trader.x, y: trader.y - 56 });
       const ladder = nearestLadder();
       if (ladder) options.push({ kind: 'ladder', dist: ladder.d, x: ladder.x, y: ladder.y - 70 });
       const trap = nearestTrapdoor();
@@ -11746,8 +11770,9 @@
         }
         return null;
       });
-      if (under?.trader) speaker('trader', under.trader.x, under.trader.y, 40, (s, d) => { // a word as you come up; now and then while you're near
-        if (ugTrader.say) { const text = ugTrader.say; ugTrader.say = null; s.next = t + 8; return { text, urgent: true }; }
+      for (const [i, tr] of (under?.traders ?? []).entries()) speaker(`trader${i}`, tr.x, tr.y, 40, (s, d) => { // a word as you come up; now and then while you're near
+        const st = traderState(tr);
+        if (st.say) { const text = st.say; st.say = null; s.next = t + 8; return { text, urgent: true }; }
         const edge = approach(s, d, 260, 340);
         if (edge === 'in') { s.next = t + 10 + Math.random() * 6; return { text: pick(SPEECH.trader ?? ['Psst.']), urgent: true }; }
         if (d < 300 && t > (s.next ?? 0)) { s.next = t + 12 + Math.random() * 10; return { text: pick(SPEECH.trader ?? ['Psst.']) }; }
@@ -11779,6 +11804,16 @@
           return null;
         });
       }
+      // The oil hall: workers grumbling at the pumps; prisoners calling out from the cells.
+      for (const [id, f] of v.oilfolk ?? []) {
+        speaker(`o${id}`, f.x, f.y, 34, (s, d) => {
+          if (f.state === 1) { if (!s.ran) { s.ran = true; if (Math.random() < 0.4) return { text: pick(SPEECH[f.prisoner ? 'prisonerFree' : 'oilWorkerRun'] ?? ['…']), urgent: true }; } return null; }
+          if (approach(s, d, 200, 280) === 'in' && Math.random() < 0.5) { s.next = t + 10 + Math.random() * 8; return { text: pick(SPEECH[f.prisoner ? 'prisoner' : 'oilWorker'] ?? ['…']), urgent: true }; }
+          s.next ??= t + 5 + Math.random() * 20;
+          if (d < 500 && t > s.next) { s.next = t + 14 + Math.random() * 16; return { text: pick(SPEECH[f.prisoner ? 'prisoner' : 'oilWorker'] ?? ['…']) }; }
+          return null;
+        });
+      }
       // Hired muscle: my goons mutter now and then; guards warn off whoever walks up; a hitman taking aim.
       for (const [id, h] of v.crew ?? []) {
         speaker(`h${id}`, h.x, h.y, 34, (s, d) => {
@@ -11789,7 +11824,7 @@
           }
           if (h.role === 1) return approach(s, d, 150, 220) === 'in' && !h.mine ? { text: pick(SPEECH.guard), urgent: true } : null;
           if (h.role === 4 || h.role === 6) { // the governor or the tax inspector: lots to say, and more when someone's shooting
-            const who = h.role === 4 ? 'governor' : 'inspector';
+            const who = h.role === 4 ? 'governor' : under ? 'oilInspector' : 'inspector'; // (down in the oil hall: the overseer)
             if (h.aiming) { if (t > (s.shout ?? 0)) { s.shout = t + 3 + Math.random() * 2; return { text: pick(SPEECH[`${who}Fight`]), urgent: true }; } return null; }
             if (approach(s, d, 170, 240) === 'in') { s.next = t + 9 + Math.random() * 6; return { text: pick(SPEECH[who]), urgent: true }; }
             s.next ??= t + 6 + Math.random() * 15;
@@ -12493,6 +12528,31 @@
       }
     }
 
+    // ---- the oil hall's people: workers in rags heaving at the hand pumps, prisoners slumped in the cells ----
+    let shownOil = new Map();
+    const OIL_RAGS = ['#4d4a42', '#5a4f3f', '#3f4640', '#55493f', '#4a4038', '#3d3a36', '#5c5448', '#45403a'];
+    const OIL_HATS = ['none', 'cap', 'beanie', 'none', 'ushanka', 'none', 'cap', 'beanie'];
+    function drawOilFolk(f, id, now) {
+      const look = { skin: resolveLook({ skin: f.look * 3 + 2 }).skin, shirt: OIL_RAGS[f.look % 8], pants: '#2e2b27', hat: OIL_HATS[f.look % 8] };
+      if (f.state === 2) { // in a cell: slumped against the wall, knees up, head down
+        ctx.save(); ctx.translate(f.x, f.y);
+        ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.beginPath(); ctx.ellipse(2, 3, 20, 16, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        drawPerson({ x: f.x, y: f.y, r: 16, aim: f.angle + Math.sin(now / 1500 + id) * 0.1, weapon: null, thrust: 0 }, look);
+      } else if (f.state === 0) { // heaving at the pump: leaning in and back
+        const k = Math.sin(now / 380 + id * 0.7) * 5;
+        drawPerson({ x: f.x + Math.cos(f.angle) * k, y: f.y + Math.sin(f.angle) * k, r: 17, aim: f.angle, weapon: null, thrust: 0, held: null }, look);
+        ctx.fillStyle = 'rgba(20, 16, 12, .35)'; // oil-smeared
+        ctx.beginPath(); ctx.arc(f.x + Math.cos(f.angle) * (k + 6), f.y + Math.sin(f.angle) * (k + 6), 5, 0, Math.PI * 2); ctx.fill();
+      } else drawPerson({ x: f.x, y: f.y, r: 17, aim: f.angle, weapon: null, thrust: 0 }, look); // running for it
+      if (f.hp < 100) {
+        ctx.fillStyle = 'rgba(0, 0, 0, .6)'; ctx.fillRect(f.x - 16, f.y - 32, 32, 4);
+        ctx.fillStyle = f.hp > 50 ? '#5ad15a' : f.hp > 25 ? '#f4c430' : '#e74c3c'; ctx.fillRect(f.x - 16, f.y - 32, 32 * f.hp / 100, 4);
+      }
+    }
+    /** Is someone working the hand pump at (x, y) just now? (Its handle only goes when there is.) */
+    const pumpWorked = (x, y) => [...shownOil.values()].some((f) => f.state === 0 && Math.hypot(f.x - x, f.y - y) < 70);
+
     // ---- giant rats (the server's: they come for you): three times an ordinary rat, mangy and dark, eyes glowing red ----
     let shownRats = new Map();
     const GIANT = 3;
@@ -12882,7 +12942,34 @@
           ctx.fillStyle = '#20251e'; ctx.beginPath(); ctx.arc(cx + 8, cy - 7, 3.5, 0, Math.PI * 2); ctx.fill();
           break;
         }
-        case 'lantern': { // a miner's lamp on a hook, long since gone out
+        case 'tent': { // a trader's tent: an old army ridge tent, patched, pegged out, the flap tied back
+          const cx = x + w / 2;
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(x + 6, y + 8, w, h);
+          ctx.strokeStyle = '#3a3226'; ctx.lineWidth = 1.5; // guy ropes out to the pegs
+          for (const [px, py, qx, qy] of [[x, y + 10, x - 14, y - 6], [x + w, y + 10, x + w + 14, y - 6], [x, y + h - 10, x - 14, y + h + 6], [x + w, y + h - 10, x + w + 14, y + h + 6]]) { ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(qx, qy); ctx.stroke(); ctx.fillStyle = '#6b5a3a'; ctx.fillRect(qx - 2, qy - 2, 4, 4); }
+          ctx.fillStyle = '#5b6340'; ctx.fillRect(x, y, w / 2, h); // the canvas, one side in shadow
+          ctx.fillStyle = '#6f7a4e'; ctx.fillRect(cx, y, w / 2, h);
+          ctx.fillStyle = '#4a5233'; ctx.fillRect(cx - 2, y - 4, 4, h + 8); // the ridge pole
+          ctx.fillStyle = '#7d6a48'; ctx.fillRect(x + 14, y + 24, 22, 16); ctx.fillStyle = '#8a7a52'; ctx.fillRect(x + w - 40, y + 50, 18, 20); // patches
+          ctx.fillStyle = '#1c1a14'; // the way in, at the front, the flap tied back
+          ctx.beginPath(); ctx.moveTo(cx - 22, y + h); ctx.lineTo(cx, y + h - 34); ctx.lineTo(cx + 22, y + h); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = '#6f7a4e'; ctx.beginPath(); ctx.moveTo(cx + 22, y + h); ctx.lineTo(cx, y + h - 34); ctx.lineTo(cx + 30, y + h - 8); ctx.closePath(); ctx.fill();
+          break;
+        }
+        case 'lantern': { // a miner's lamp on a hook, long since gone out (a trader's: alight, flickering)
+          if (d.lit) {
+            const cx = x + w / 2, cy = y + h / 2, f = 0.85 + 0.15 * Math.sin(now / 90 + x) * Math.sin(now / 37 + y);
+            ctx.save(); ctx.globalCompositeOperation = 'lighter';
+            const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, 190 * f);
+            g.addColorStop(0, `rgba(255, 200, 110, ${0.42 * f})`); g.addColorStop(1, 'rgba(255, 170, 80, 0)');
+            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 190 * f, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
+            ctx.fillStyle = '#6b4a2a'; ctx.fillRect(cx - 14, cy + 6, 28, 18); // the crate it stands on
+            ctx.fillStyle = '#2b2620'; ctx.fillRect(cx - 9, cy - 11, 18, 20); // the frame
+            ctx.fillStyle = `rgba(255, 220, 140, ${0.8 * f + 0.2})`; ctx.fillRect(cx - 6, cy - 8, 12, 14); // the flame behind the glass
+            ctx.fillStyle = '#fff5d0'; ctx.fillRect(cx - 2, cy - 4, 4, 6);
+            break;
+          }
           ctx.fillStyle = '#2b2620'; ctx.fillRect(x + w / 2 - 2, y - 6, 4, 8);
           ctx.fillStyle = '#8a6a2a'; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2); ctx.fill();
           ctx.fillStyle = '#d8c48a'; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2 - 5, 0, Math.PI * 2); ctx.fill();
@@ -12937,6 +13024,36 @@
           ctx.beginPath(); ctx.moveTo(x + w * 0.25, y + h * 0.75); ctx.quadraticCurveTo(x + w * 0.45, y + h * 0.35, x + w * 0.7, y + h * 0.35); ctx.stroke();
           ctx.fillStyle = '#a3261b'; ctx.beginPath(); ctx.moveTo(x + w * 0.74, y + h * 0.35); ctx.lineTo(x + w * 0.66, y + h * 0.28); ctx.lineTo(x + w * 0.66, y + h * 0.42); ctx.fill();
           for (let k = 0; k < 5; k++) { ctx.fillStyle = k % 2 ? '#1d4fa0' : '#a3261b'; ctx.beginPath(); ctx.arc(x + 30 + ugHash(Math.round(x), k) * (w - 60), y + 25 + ugHash(k, Math.round(y)) * (h - 50), 4, 0, Math.PI * 2); ctx.fill(); }
+          break;
+        }
+        case 'handpump': { // a little cast-iron hand pump on the pit's edge, its hose down into the oil; the handle going when someone works it
+          const cx = x + w / 2, cy = y + h / 2, a = Math.atan2(d.ny ?? 1, d.nx ?? 0);
+          ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
+          ctx.strokeStyle = '#1a1714'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(6, 0); ctx.quadraticCurveTo(22, 6, 36, 2); ctx.stroke(); // the hose, into the oil
+          ctx.fillStyle = 'rgba(0, 0, 0, .35)'; ctx.fillRect(-10, -8, 22, 20);
+          ctx.fillStyle = '#4b5254'; ctx.fillRect(-11, -10, 20, 20); // the body
+          ctx.fillStyle = '#5f686a'; ctx.beginPath(); ctx.arc(-1, 0, 6, 0, Math.PI * 2); ctx.fill();
+          const swing = pumpWorked(cx, cy) ? Math.sin(now / 380 + x) * 0.6 : 0;
+          ctx.rotate(Math.PI + swing); ctx.fillStyle = '#7a4d2a'; ctx.fillRect(0, -2.5, 26, 5); // the handle
+          ctx.fillStyle = '#2b2b2b'; ctx.fillRect(22, -3.5, 6, 7);
+          ctx.restore();
+          break;
+        }
+        case 'officechair': { // a worn office chair, pushed back from the desk
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.beginPath(); ctx.arc(x + w / 2 + 2, y + h / 2 + 3, w / 2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#3c2f28'; ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2 - 2, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#54433a'; ctx.fillRect(x + 4, y + 2, w - 8, 8); // the back
+          ctx.fillStyle = '#6b5a4c'; ctx.fillRect(x + w / 2 - 6, y + h / 2 - 2, 12, 6); // the split in the seat
+          break;
+        }
+        case 'filing': { // a grey filing cabinet, a drawer half out and papers spilling
+          ctx.fillStyle = 'rgba(0, 0, 0, .3)'; ctx.fillRect(x + 3, y + 3, w, h);
+          ctx.fillStyle = '#6f7472'; ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = '#4a4e4c'; ctx.lineWidth = 2;
+          for (let k = 1; k < 3; k++) { ctx.beginPath(); ctx.moveTo(x + 3, y + (h * k) / 3); ctx.lineTo(x + w - 3, y + (h * k) / 3); ctx.stroke(); }
+          ctx.fillStyle = '#c9c4b2'; for (let k = 0; k < 3; k++) ctx.fillRect(x + w / 2 - 6, y + 4 + (h * k) / 3, 12, 3); // handles
+          ctx.fillStyle = '#e2dccb'; ctx.save(); ctx.translate(x + w * 0.7, y + h + 6); ctx.rotate(0.4); ctx.fillRect(-8, -5, 16, 11); ctx.restore(); // a dropped file
           break;
         }
         case 'desk': { // a steel desk with a field radio on it, dials and a green lamp
@@ -13708,11 +13825,16 @@
       }
       wolfSounds(frameTime);
       if (under?.miner) drawOldMiner(under.miner, frameTime);
-      if (under?.trader) drawTrader(under.trader, frameTime);
+      for (const tr of under?.traders ?? []) drawTrader(tr, frameTime);
       shownBears = view.bears ?? new Map();
       for (const [id, bf] of shownBears) {
         if (bf.x < viewBox.l - 100 || bf.x > viewBox.r + 100 || bf.y < viewBox.t - 100 || bf.y > viewBox.b + 100) continue;
         drawBear(bf, id, frameTime);
+      }
+      shownOil = view.oilfolk ?? new Map();
+      for (const [id, f] of shownOil) {
+        if (f.x < viewBox.l - 60 || f.x > viewBox.r + 60 || f.y < viewBox.t - 60 || f.y > viewBox.b + 60) continue;
+        drawOilFolk(f, id, frameTime);
       }
       shownRats = view.rats ?? new Map();
       for (const [id, r] of shownRats) {

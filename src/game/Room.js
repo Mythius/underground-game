@@ -170,6 +170,10 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.oilHall?.events.splice(0) ?? []) {
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send(rest.kind === 'error' ? { t: ServerMsg.ERROR, code: rest.code } : { t: ServerMsg.POLICE, ...rest });
+    }
     for (const e of this.world.giantRats?.events.splice(0) ?? []) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -626,7 +630,7 @@ export class Room {
   takeOut(client) {
     const p = client.player;
     if (!p?.alive || p.vehicle || p.carrying || p.holdingCat || p.jailed || p.hidden) return null;
-    const carry = { cash: p.cash, inventory: p.inventory.map((s) => (s?.minerLoan ? null : s)), selected: p.selected, health: p.health, mass: p.mass, stamina: p.stamina }; // (the old miner's pickaxe stays down there with him)
+    const carry = { cash: p.cash, inventory: p.inventory.map((s) => (s?.minerLoan || s?.type === 'cellkey' ? null : s)), selected: p.selected, health: p.health, mass: p.mass, stamina: p.stamina }; // (the old miner's pickaxe stays down there with him)
     p.cash = 0;
     p.inventory = p.inventory.map(() => null); // (so nothing drops here)
     this.removeClient(client, { travel: true });
@@ -1190,6 +1194,7 @@ export class Room {
           bears: this.world.bears.visible(cx, cy, config.world.viewDistance),
           homeless: this.world.homeless?.visible(cx, cy, config.world.viewDistance) ?? [],
           rats: this.world.giantRats?.visible(cx, cy, config.world.viewDistance) ?? [],
+          oilfolk: this.world.oilHall?.visible(cx, cy, config.world.viewDistance) ?? [],
           tnt: this.world.tnt.some((c) => c.blown) ? this.world.tnt.filter((c) => c.blown).map((c) => c.decor) : 0, // crates of dynamite that have gone off (their index in the decor)
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),

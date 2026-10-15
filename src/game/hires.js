@@ -387,6 +387,7 @@ export class Hires {
     if (h.health > 0) return false;
     const items = [{ type: h.weapon, ammo: h.ammo, reloadTimer: 0 }];
     if (h.role === 'govguard') items.push({ type: 'bunkerkey', tool: true }); // each of the governor's guards carries a key to a bunker trapdoor
+    if (h.oil && h.role === 'inspector') items.push({ type: 'cellkey', tool: true }); // the overseer: the key to the oil hall's cells
     this.world.bodies?.add({ x: h.x, y: h.y, angle: h.angle, kind: 'npc', look: LOOKS[h.role], items, cash: h.cash ?? 0, killer: attacker?.kind === 'player' ? attacker : null });
     this.#tell(h, 'hire_died');
     this.#remove(h, true);
@@ -419,7 +420,7 @@ export class Hires {
     this.list.splice(i, 1);
     h.alive = false;
     if (CREW.includes(h.role) && h.employer) this.onCrewChange?.(h.employer); // (their clipboard is saved)
-    if (h.side === 'state') {
+    if (h.side === 'state' && !h.oil) { // (the oil hall's: see OilHall)
       this.stateTimers.push([h.role, h.slot ?? 0, config.governor.respawnSec]); // someone new, in a while
       if (h.role === 'inspector' && h.task && !h.task.fined) this.inspections.unshift({ account: h.task.account, reason: h.task.reason, warehouse: h.task.spot?.warehouse }); // (his successor makes the visit)
       if (h.vehicle) { h.vehicle.ai = null; }
@@ -463,6 +464,7 @@ export class Hires {
       if (h.role === 'goon') this.#goon(h, dt);
       else if (h.role === 'guard') this.#guard(h, dt);
       else if (h.role === 'gangster') this.#gangster(h, dt);
+      else if (h.oil) this.#oilWatch(h, dt);
       else if (h.role === 'governor') this.#governor(h, dt);
       else if (h.role === 'govguard') this.#govGuard(h, dt);
       else if (h.role === 'inspector') this.#inspector(h, dt);
@@ -1034,6 +1036,37 @@ export class Hires {
     };
     if (role === 'inspector') h.car = this.#officialCar();
     this.list.push(h);
+  }
+
+  /**
+   * The oil hall's watchers underground: a governor's guard (`govguard`) or the overseer (an `inspector`),
+   * on `at`, keeping to `hall` (a rect) and shooting anyone who comes into it. The overseer strolls between
+   * `beat` (points along the cells).
+   */
+  spawnOil(role, at, hall, beat = null) {
+    const cfg = config.governor[role];
+    this.list.push({
+      kind: 'hire', role, side: 'state', oil: true, hall, beat, slot: 0, id: this.nextId++, employer: null,
+      name: role === 'inspector' ? 'the overseer' : "the governor's guard",
+      x: at.x, y: at.y, angle: at.a ?? 0, health: cfg.health, maxHealth: cfg.health, radius: cfg.radius,
+      weapon: cfg.weapon, fireCooldown: 0, ammo: config.weapons[cfg.weapon].magazineSize, reload: 0,
+      vehicle: null, alive: true, wanted: 0, lastSeen: 0, hidden: null, jailed: null, shotPolice: false,
+      foes: new Map(), offline: 0, pick: null, route: [], post: { x: at.x, y: at.y, angle: at.a }, next: 0, task: null, cash: role === 'inspector' ? 300 : 0,
+    });
+  }
+
+  /** In the oil hall: anyone in it is shot at (chased a little, never out of the hall); otherwise his post, or the overseer's beat. */
+  #oilWatch(h, dt) {
+    const c = config.oilHall;
+    const threat = this.#threat(h, null, c.fightRange, h.hall);
+    if (threat) return this.#fightThreat(h, threat, dt, h.role === 'inspector' ? 0 : 280, h.hall);
+    if (h.beat?.length && (h.next -= dt) <= 0) {
+      const b = h.beat[Math.floor(Math.random() * h.beat.length)];
+      h.post = { x: b.x, y: b.y, angle: h.post.angle };
+      h.next = 8 + Math.random() * 10;
+    }
+    if (Math.hypot(h.post.x - h.x, h.post.y - h.y) > 15) this.#walk(h, h.post.x, h.post.y, config.governor.walkSpeed, dt, null, h.hall);
+    else if (h.post.angle !== undefined) h.angle = h.post.angle;
   }
 
   /** The inspector's black Lada, parked along the front of the residence (a fresh one if his is gone). */

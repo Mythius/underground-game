@@ -27,6 +27,7 @@ import { Wolves } from './wolves.js';
 import { Bears } from './bear.js';
 import { Homeless } from './homeless.js';
 import { GiantRats } from './giantRats.js';
+import { OilHall } from './oilhall.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
@@ -231,6 +232,7 @@ export class World {
     this.underground = map?.underground ? new Underground(this, map.underground) : null; // (the underground world: its layout and loot)
     this.homeless = map?.underground ? new Homeless(this, map.underground) : null; // (the knife-carrying homeless down there)
     this.giantRats = map?.underground ? new GiantRats(this, map.underground) : null; // (and rats the size of dogs)
+    this.oilHall = map?.underground?.oil ? new OilHall(this, map.underground) : null; // (the oil hall: its watchers, workers and prisoners)
     this.rebuildGrid();
   }
 
@@ -1043,6 +1045,7 @@ export class World {
       deaths.push({ victim: p, killer: { name: 'a homeless man' } });
     }
     this.giantRats?.step(dt);
+    this.oilHall?.step(dt);
     for (const p of this.giantRats?.kills.splice(0) ?? []) {
       if (!this.players.has(p.id)) continue;
       this.removePlayer(p.id);
@@ -1120,6 +1123,19 @@ export class World {
     return null;
   }
 
+  /** Up the ladder from the oil hall's office: out of a sewer vent somewhere in town, beside it. */
+  ventArrival() {
+    const vents = this.vents ?? [];
+    for (let i = 0; i < 30 && vents.length; i++) {
+      const v = vents[Math.floor(Math.random() * vents.length)];
+      for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const at = { x: v.x + v.w / 2 + dx * (v.w / 2 + 30), y: v.y + v.h / 2 + dy * (v.h / 2 + 30) };
+        if (!this.isBlocked(at.x, at.y, 22) && !this.isSwimming(at.x, at.y)) return at;
+      }
+    }
+    return null;
+  }
+
   /** Just up a ladder from the underground (at x, y there): beside the nearest trapdoor, which is open now. */
   trapdoorArrival(x, y) {
     const k = config.underground.scale;
@@ -1142,7 +1158,7 @@ export class World {
   /** A door locked to p within reach, for lock picking. */
   lockedDoorNear(p, reach = 90) {
     for (const d of this.doors) {
-      if (d.open || !this.lockedFor(d, p) || this.prison.keyOnly(d) || this.prison.wallOnly(d)) continue; // (the prison's outer door: only a guard's key; the inner fence: a pickaxe)
+      if (d.open || d.cell || !this.lockedFor(d, p) || this.prison.keyOnly(d) || this.prison.wallOnly(d)) continue; // (the oil hall's cells: only the overseer's key) // (the prison's outer door: only a guard's key; the inner fence: a pickaxe)
       if (Math.hypot(d.x + d.w / 2 - p.x, d.y + d.h / 2 - p.y) < reach + p.radius) return d;
     }
     return null;
@@ -1346,6 +1362,7 @@ export class World {
         continue;
       }
       if (this.prison.useKey(best, p)) continue; // a guard's key in the outer fence's door
+      if (this.oilHall?.useKey(best, p)) { if (best.open) changed.push(best); continue; } // the overseer's key in a cell door
       if (this.lockedFor(best, p)) {
         this.police.events.push({ player: p, kind: 'error', code: this.prison.keyOnly(best) ? 'prison_key_door' : this.prison.wallOnly(best) ? 'prison_wall' : this.prison.isPrisonDoor(best) ? 'prison_pick_door' : 'locked' });
         continue;
@@ -1502,7 +1519,7 @@ export class World {
       }
     }
     // Underground: the homeless and the giant rats are solid too — walk into one and you shove him aside (never into the rock).
-    const under = [...(this.homeless?.list ?? []).map((h) => [h, config.homeless.radius]), ...(this.giantRats?.list ?? []).map((g) => [g, config.giantRats.radius])];
+    const under = [...(this.homeless?.list ?? []).map((h) => [h, config.homeless.radius]), ...(this.giantRats?.list ?? []).map((g) => [g, config.giantRats.radius]), ...(this.oilHall?.folk ?? []).filter((f) => f.state !== 'sit').map((f) => [f, config.oilHall.radius])];
     if (!under.length) return;
     for (const p of this.players.values()) {
       if (p.vehicle || !p.alive || p.hidden) continue;
@@ -1718,6 +1735,7 @@ export class World {
     for (const h of [...this.hires.list]) if (!h.vehicle && inFire(h.x, h.y, h.radius)) this.hires.damage(h, at(h.x, h.y), o);
     for (const h of [...(this.homeless?.list ?? [])]) if (inFire(h.x, h.y, config.homeless.radius)) this.homeless.damage(h, at(h.x, h.y), o);
     for (const r of [...(this.giantRats?.list ?? [])]) if (inFire(r.x, r.y, config.giantRats.radius)) this.giantRats.damage(r, at(r.x, r.y), o);
+    for (const f of [...(this.oilHall?.folk ?? [])]) if (inFire(f.x, f.y, config.oilHall.radius)) this.oilHall.damage(f, at(f.x, f.y), o);
     for (const w of [...this.wolves.list]) if (inFire(w.x, w.y, config.wolves.radius)) this.wolves.damage(w, at(w.x, w.y), o);
     for (const b of [...this.bears.list]) if (inFire(b.x, b.y, config.bear.radius)) this.bears.damage(b, at(b.x, b.y), o);
     for (const t of [...this.townsfolk.people]) if (t.inside <= 0 && inFire(t.x, t.y, 17)) { if (blame) this.#hurtTownsperson(t, at(t.x, t.y), o); else this.townsfolk.damage(t, at(t.x, t.y)); }
@@ -1770,6 +1788,7 @@ export class World {
     for (const b of this.bears.list) consider('bear', b, config.bear.radius);
     for (const h of this.homeless?.list ?? []) consider('homeless', h, config.homeless.radius);
     for (const r of this.giantRats?.list ?? []) consider('rat', r, config.giantRats.radius);
+    for (const f of this.oilHall?.folk ?? []) consider('oilfolk', f, config.oilHall.radius);
     if (!best && base.sizeScale) { // nobody to hit: a bat swung at an ATM
       const atm = this.atms.find((a) => inFront(a.x, a.y, 16) < Infinity);
       if (atm) this.#smashAtm(p, atm);
@@ -1781,7 +1800,8 @@ export class World {
     if (best.kind === 'hire') return void this.hires.damage(t, config.hires.health * stats.share, p);
     if (best.kind === 'wolf') return this.wolves.damage(t, config.wolves.health * stats.share + 0.01, p);
     if (best.kind === 'homeless') return void this.homeless.damage(t, config.homeless.health * stats.share + 0.01, p);
-    if (best.kind === 'rat') return void this.giantRats.damage(t, config.giantRats.health * stats.share + 0.01, p);
+    if (best.kind === 'oilfolk') return void this.oilHall.damage(t, config.oilHall.health * stats.share + 0.01, p);
+    if (best.kind === 'rat') return void this.giantRats.damage(t, (config.giantRats.health / 3) * stats.share + 0.01, p); // (tough: a knife takes nine stabs)
     if (best.kind === 'bear') return this.bears.damage(t, 60 * stats.share, p); // (a knife: 20 a stab. It hardly notices.)
     this.hires.noteAttack(p, t);
     if (best.kind === 'npc') return this.#hurtTownsperson(t, config.townsfolk.health * stats.share + 0.01, p);
@@ -1840,6 +1860,12 @@ export class World {
       if (bear) {
         this.bullets.delete(b.id);
         this.bears.damage(bear, b.damage, shooter);
+        continue;
+      }
+      const worker = this.oilHall?.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq, shooter);
+      if (worker) {
+        this.bullets.delete(b.id);
+        this.oilHall.damage(worker, b.damage, shooter);
         continue;
       }
       const rat = this.giantRats?.hitBy(px, py, b.x, b.y, b.radius, segmentDistSq);

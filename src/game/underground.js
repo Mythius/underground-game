@@ -31,7 +31,7 @@ function seeded(seed) {
  *   { cell, cols, rows, grid (string of cell codes), lines (metro track centre lines), stations,
  *     bunkers, decor: [{ k, x, y, w, h, solid?, … }], cabinets: [{ x, y, w, h, rot }] (storage, in the bunkers), ladders: [{ x, y, entrance }],
  *     caves: [{ x, y, r }], lakes: [{ x, y, r }] (water circles, as in town), halls: [{ x, y, w, h, side }],
- *     gold: [{ x, y }] (gold rocks to mine, in the old miner's cave), miner: { x, y } | null, trader: { x, y } | null (swaps things for vodka),
+ *     gold: [{ x, y }] (gold rocks to mine, in the old miner's cave), miner: { x, y } | null, traders: [{ x, y }] (they swap things for vodka),
  *     channels: [{ points: [[x, y], [x, y]], width }] (the sewers' water, as rivers), doors: [{ x, y, w, h, nx, ny, locked }] (real doors: nx, ny the way they swing; locked: picked open, locks again once shut) }
  */
 export function generateUnderground({ width, height, anchors = [], seed = 1937, caves: caveCount = 3, deadZones = 5 }) {
@@ -186,6 +186,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
 
   // ---- the oil hall: a great concrete hall against the edge of the map, with pits of crude oil in the floor
   // and a row of cells along the back wall (later: guards, and prisoners made to work the pumps).
+  let oilInfo = null; // the oil hall's people and places: { hall, office, cells, pumps, guard, inspector, doorsOut }
   const sz = Math.min(1, Math.min(cols, rows) / 84); // (sized for the real underground, 84 cells across; smaller on a smaller map)
   function placeHall(L, D) {
     const spots = [];
@@ -201,14 +202,26 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
       if (side === 'n' || side === 's') { const y0 = side === 'n' ? 1 : rows - 1 - H; for (let x0 = 2; x0 + W < cols - 1; x0++) if (fits(x0, y0)) spots.push({ side, x0, y0, W, H }); }
       else { const x0 = side === 'w' ? 1 : cols - 1 - W; for (let y0 = 2; y0 + H < rows - 1; y0++) if (fits(x0, y0)) spots.push({ side, x0, y0, W, H }); }
     }
-    if (!spots.length) return null;
-    const { side, x0, y0, W, H } = spots[Math.floor(rnd() * spots.length)];
+    // The inspector's office goes off the start of the back wall (u -3..-1, v 0..1 in hall cells): it needs rock there too.
+    const frame = ({ side: sd, x0: a0, y0: b0, W: w0, H: h0 }) => ({ n: [a0, b0, 1, 0, 0, 1], s: [a0, b0 + h0 - 1, 1, 0, 0, -1], w: [a0, b0, 0, 1, 1, 0], e: [a0 + w0 - 1, b0, 0, 1, -1, 0] }[sd]);
+    const officeFree = (sp) => {
+      const [fx, fy, fax, fay, fix, fiy] = frame(sp);
+      for (let cu = -4; cu <= -1; cu++) for (let cv = 0; cv <= 2; cv++) {
+        const x = fx + fax * cu + fix * cv, y = fy + fay * cu + fiy * cv;
+        if (!inside(x, y) || keep[at(x, y)] || g[at(x, y)]) return false;
+      }
+      return true;
+    };
+    const roomy = spots.filter(officeFree);
+    if (!roomy.length) return null;
+    const { side, x0, y0, W, H } = roomy[Math.floor(rnd() * roomy.length)];
     const z = 300 + halls.length;
     fill(x0, y0, W, H, UG.HALL, z);
     keepOut(x0, y0, W, H, 1);
     const X0 = x0 * CELL, Y0 = y0 * CELL, X1 = (x0 + W) * CELL, Y1 = (y0 + H) * CELL;
     const hall = { x: X0, y: Y0, w: X1 - X0, h: Y1 - Y0, side };
     halls.push(hall);
+    const oil = { hall: { x: X0, y: Y0, w: X1 - X0, h: Y1 - Y0 }, cells: [], pumps: [], doorsOut: [] }; // (see the return: who works and watches in here)
     // Local: u along the back wall (the map's edge), v out from it into the hall, in world units.
     const pt = (u, v) => (side === 'n' ? [X0 + u, Y0 + v] : side === 's' ? [X0 + u, Y1 - v] : side === 'w' ? [X0 + v, Y0 + u] : [X1 - v, Y0 + u]);
     const P = (u, v, w, hh, extra) => {
@@ -217,8 +230,13 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     };
     const LU = L * CELL, DV = D * CELL;
     // The way in: two doors in the front wall, one at each end.
-    const [ox, oy, ax, ay, ix, iy] = { n: [x0, y0, 1, 0, 0, 1], s: [x0, y0 + H - 1, 1, 0, 0, -1], w: [x0, y0, 0, 1, 1, 0], e: [x0 + W - 1, y0, 0, 1, -1, 0] }[side];
+    const [ox, oy, ax, ay, ix, iy] = frame({ side, x0, y0, W, H });
     const cellOf = (cu, cv) => [ox + ax * cu + ix * cv, oy + ay * cu + iy * cv];
+    const at2 = (u, v) => { const [x, y] = pt(u, v); return { x: Math.round(x), y: Math.round(y) }; };
+    for (const [cu, cv] of [[Math.round(L * 0.3) | 1, D], [Math.round(L * 0.7) | 1, D], [-1, Math.round(D * 0.6)], [L, Math.round(D * 0.6)]]) { // (just outside each way out)
+      const [x, y] = cellOf(cu, cv);
+      oil.doorsOut.push({ x: (x + 0.5) * CELL, y: (y + 0.5) * CELL });
+    }
     for (const [cu, cv, dx, dy] of [[Math.round(L * 0.3) | 1, D - 1, ix, iy], [Math.round(L * 0.7) | 1, D - 1, ix, iy], [0, Math.round(D * 0.6), -ax, -ay], [L - 1, Math.round(D * 0.6), ax, ay]]) {
       const [x, y] = cellOf(cu, cv);
       exits.push({ x, y, dx, dy, z });
@@ -229,15 +247,31 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     for (let k = 0; k < n; k++) {
       const cu = u0 + k * cw, door = 84;
       decor.push({ k: 'bars', ...P(cu + 10, cellD - 12, cw - 20 - door, 12), solid: true });
-      decor.push({ k: 'celldoor', ...P(cu + cw - 10 - door, cellD - 12 - door, 12, door) });
+      // The cell door: shut and locked. No picking it: only the overseer's key opens it.
+      const cd = P(cu + cw - 10 - door, cellD - 12, door, 12);
+      doors.push({ x: cd.x, y: cd.y, w: cd.w, h: cd.h, nx: ix, ny: iy, locked: true, cell: true });
+      oil.cells.push({ ...at2(cu + cw * 0.45, cellD * 0.55), door: doors.length - 1, front: at2(cu + cw - 10 - door / 2, cellD + 40) });
       decor.push({ k: 'cot', ...P(cu + 26, 18, 70, 130), solid: true });
       decor.push({ k: 'shackles', ...P(cu + cw * 0.55, 0, 60, 70), seed: ri(0, 9999) });
       decor.push({ k: 'bucket', ...P(cu + cw - 70, 30, 30, 30) });
       if (rnd() < 0.45) decor.push({ k: 'bones', ...P(cu + 40 + rnd() * (cw - 120), 160 + rnd() * 120, 48, 32), seed: ri(0, 9999) });
     }
     // The oil pits: three big ones down the middle, a chain rail round each.
-    const pits = [0.2, 0.5, 0.8].map((f) => P(LU * f - 260, cellD + CELL * 1.6, 520, Math.min(600, DV - cellD - CELL * 3.2), { k: 'oilpit', solid: true, seed: ri(0, 9999) }));
+    const pitV = cellD + CELL * 1.6, pitD = Math.min(600, DV - cellD - CELL * 3.2);
+    const pits = [0.2, 0.5, 0.8].map((f) => P(LU * f - 260, pitV, 520, pitD, { k: 'oilpit', solid: true, seed: ri(0, 9999) }));
     decor.push(...pits);
+    // Little hand pumps at the edge of the pits (a hose down into the oil), a worker at each.
+    const pumpAt = [];
+    for (const f of [0.2, 0.5, 0.8]) for (const du of [-170, 0, 170]) pumpAt.push([LU * f + du, pitV - 34, ix, iy]); // (along the near edge)
+    pumpAt.push([LU * 0.35, pitV + pitD + 34, -ix, -iy]); // (and one along the far side, between the pits)
+    for (const [u, v, fx, fy] of pumpAt) {
+      const c = at2(u, v), stand = at2(u, v + (fy === iy && fx === ix ? -40 : 40));
+      decor.push({ k: 'handpump', x: c.x - 14, y: c.y - 14, w: 28, h: 28, solid: true, nx: fx, ny: fy }); // (nx, ny: toward the oil)
+      oil.pumps.push({ x: stand.x, y: stand.y, a: Math.atan2(c.y - stand.y, c.x - stand.x) });
+    }
+    // The guard by the main way in; the overseer strolling the floor in front of the cells.
+    oil.guard = { ...at2(LU * 0.3, DV - CELL * 1.2), a: Math.atan2(-iy, -ix) };
+    oil.inspector = { ...at2(LU * 0.5, cellD + CELL * 0.7), a: Math.atan2(iy, ix) };
     // Strip lights in rows across the ceiling (a few of them flicker), hooks on chains hanging between.
     for (const v of [cellD + CELL * 0.8, cellD + CELL * 1.6 + 300, DV - CELL * 0.9]) {
       for (let u = CELL * 1.2; u < LU - CELL; u += CELL * 2) decor.push({ k: 'tube', ...P(u - 70, v - 8, 140, 16), over: true, flicker: rnd() < 0.25, seed: ri(0, 9999) });
@@ -254,6 +288,27 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     for (const u of [40, LU - 80]) for (let v = cellD + 120; v < DV - 260; v += 70) if (rnd() < 0.6) decor.push({ k: 'barrel', ...P(u, v, 40, 40), solid: true, oil: true });
     const [sx, sy] = pt(LU / 2, DV - CELL * 0.45);
     decor.push({ k: 'stencil', x: sx - 140, y: sy - 15, w: 280, h: 30, text: 'НЕФТЕХРАНИЛИЩЕ №3' });
+    // The overseer's office, through a locked door (pick it) in the end wall by the first cell: a desk, filing
+    // cabinets, a steel cabinet worth opening, and an iron ladder up to a sewer vent in town.
+    for (let cu = -3; cu <= -1; cu++) for (let cv = 0; cv <= 1; cv++) { const [x, y] = cellOf(cu, cv); set(x, y, UG.HALL, z); }
+    const [c1x, c1y] = cellOf(-3, 0), [c2x, c2y] = cellOf(-1, 1);
+    keepOut(Math.min(c1x, c2x), Math.min(c1y, c2y), Math.abs(c2x - c1x) + 1, Math.abs(c2y - c1y) + 1, 1);
+    const OW = CELL * 3, OD = CELL * 2, dv = 200, dl = 96; // (the doorway: dl long, starting dv out from the back wall)
+    decor.push({ k: 'partition', ...P(-12, 0, 24, dv), solid: true }, { k: 'partition', ...P(-12, dv + dl, 24, OD - dv - dl), solid: true });
+    const od = P(-8, dv, 16, dl);
+    doors.push({ x: od.x, y: od.y, w: od.w, h: od.h, nx: ax, ny: ay, locked: true, office: true });
+    decor.push({ k: 'desk', ...P(-OW + 150, 110, 110, 54), solid: true });
+    decor.push({ k: 'officechair', ...P(-OW + 185, 60, 40, 40) });
+    for (let k = 0; k < 3; k++) decor.push({ k: 'filing', ...P(-OW + 20 + k * 52, OD - 62, 46, 44), solid: true, face: side });
+    const cab = P(-90, 20, 60, 30);
+    decor.push({ k: 'steelcab', ...cab, solid: true, face: { n: 's', s: 'n', w: 'e', e: 'w' }[side] }); // (against the back wall, its doors open into the room)
+    cabinets.push({ x: cab.x, y: cab.y, w: cab.w, h: cab.h, rot: 0 });
+    decor.push({ k: 'poster', ...P(-OW + 40, 0, 80, 16), n: 2, wall: true });
+    const ld = at2(-OW + 50, OD / 2 - 10);
+    decor.push({ k: 'ladder', x: ld.x - 30, y: ld.y - 40, w: 60, h: 80 });
+    ladders.push({ x: ld.x, y: ld.y, entrance: null, vent: true }); // (up: out of a sewer vent somewhere in town)
+    oil.office = (() => { const a = pt(-OW, 0), b = pt(0, OD); return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) }; })();
+    oilInfo = oil;
     return hall;
   }
   placeHall(Math.round(16 * sz), Math.round(10 * sz)) ?? placeHall(Math.round(13 * sz), Math.round(8 * sz)) ?? placeHall(10, 7);
@@ -723,7 +778,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
       doorKeep.push({ x: wx - CELL, y: gap - CELL, w: CELL * 2, h: CELL * 2 });
       rooms.push({ x: b.x, y: b.y, w: wx - b.x, h: b.h }, { x: wx + 24, y: b.y, w: b.x + b.w - wx - 24, h: b.h });
     } else rooms.push({ x: b.x, y: b.y, w: b.w, h: b.h });
-    Object.assign(b, { rooms, solid, keep: doorKeep }); // (for the trader, below)
+    Object.assign(b, { rooms, solid, keep: doorKeep }); // (for the traders, below)
     const kinds = ['barracks', 'command', 'store', 'generator', 'infirmary'];
     rooms.forEach((r, i) => {
       const kind = b.entrance !== null && i === 0 ? 'command' : kinds[(ri(0, 99) + i) % kinds.length];
@@ -777,29 +832,37 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     }
   }
 
-  // ---- the trader: a man in a trench coat in the biggest bunker without a ladder, standing in the clear
-  // nearest the middle of one of its rooms (no random numbers here: the rest of the maze stays as it was).
-  let trader = null;
-  const quiet = bunkers.filter((b) => b.entrance === null).sort((a, b) => b.w * b.h - a.w * a.h);
-  for (const b of quiet.length ? quiet : bunkers) {
+  // ---- traders: a man in a trench coat in most of the bunkers (three in four), each with his tent pitched
+  // behind him and a lantern going, standing in the clear nearest the middle of a room (no random numbers
+  // here: the rest of the maze stays as it was).
+  const traders = [];
+  bunkers.forEach((b, i) => {
+    if (i % 4 === 3) return; // (not every bunker)
     const near = (x, y, o, m) => x > o.x - m && x < o.x + o.w + m && y > o.y - m && y < o.y + o.h + m;
-    let bd = Infinity;
+    const hits = (r, o, m) => r.x < o.x + o.w + m && o.x - m < r.x + r.w && r.y < o.y + o.h + m && o.y - m < r.y + r.h;
+    let best = null, bd = Infinity;
     for (const r of b.rooms) {
-      for (let y = r.y + 80; y < r.y + r.h - 80; y += 20) {
-        for (let x = r.x + 80; x < r.x + r.w - 80; x += 20) {
-          if (b.solid.some((o) => near(x, y, o, 70)) || b.keep.some((o) => near(x, y, o, 0))) continue;
+      for (let y = r.y + 190; y < r.y + r.h - 70; y += 20) {
+        for (let x = r.x + 90; x < r.x + r.w - 90; x += 20) {
+          const tent = { x: x - 62, y: y - 160, w: 124, h: 104 };
+          if (b.solid.some((o) => near(x, y, o, 60) || hits(tent, o, 12)) || b.keep.some((o) => near(x, y, o, 0) || hits(tent, o, 0))) continue;
+          if (ladders.some((l) => Math.hypot(l.x - x, l.y - y) < 200)) continue; // (clear of the ladder up)
           const d = Math.hypot(x - (r.x + r.w / 2), y - (r.y + r.h / 2));
-          if (d < bd) [trader, bd] = [{ x, y }, d];
+          if (d < bd) [best, bd] = [{ x, y, tent }, d];
         }
       }
     }
-    if (trader) break;
-  }
-  if (trader) decor.push({ k: 'blocker', x: trader.x - 16, y: trader.y - 16, w: 32, h: 32, solid: true }); // (him: you can't walk through him)
+    if (!best) return;
+    traders.push({ x: best.x, y: best.y });
+    decor.push({ k: 'blocker', x: best.x - 16, y: best.y - 16, w: 32, h: 32, solid: true }); // (him: you can't walk through him)
+    decor.push({ k: 'tent', ...best.tent, solid: true, seed: i * 97 + 13 });
+    decor.push({ k: 'lantern', x: best.x + 44, y: best.y - 62, w: 24, h: 24, lit: true }); // (on a crate by the tent, alight)
+    b.solid.push(best.tent);
+  });
 
   let grid = '';
   for (let i = 0; i < g.length; i++) grid += g[i];
-  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, cabinets, ladders, caves: caves.map(({ x, y, r, lake, gold: g2 }) => ({ x, y, r, lake: Boolean(lake), gold: Boolean(g2) })), gold, miner, trader, lakes, halls, doors, channels };
+  return { cell: CELL, cols, rows, grid, lines, stations, bunkers: bunkers.map(({ x, y, w, h, name, entrance }) => ({ x, y, w, h, name, entrance })), decor, cabinets, ladders, caves: caves.map(({ x, y, r, lake, gold: g2 }) => ({ x, y, r, lake: Boolean(lake), gold: Boolean(g2) })), gold, miner, traders, oil: oilInfo, lakes, halls, doors, channels };
 }
 
 /** The solid rock as rectangles: runs along each row, merged down with identical runs below (at most 8 cells long, for the grids). */
@@ -881,6 +944,7 @@ export class Underground {
     const k = config.underground.scale;
     let best = null, bd = Infinity;
     for (const l of this.layout.ladders) {
+      if (l.vent) continue; // (the oil hall office's: it only goes up, to a vent)
       const d = Math.hypot(l.x - x * k, l.y - y * k);
       if (d < bd) [best, bd] = [l, d];
     }
@@ -927,8 +991,9 @@ export class Underground {
    * a Molotov cocktail or a fishing rod. Returns { item } or an error code.
    */
   trade(p, item) {
-    const t = this.layout.trader, cfg = config.underground;
-    if (!t || Math.hypot(t.x - p.x, t.y - p.y) > cfg.traderReach + p.radius) return 'too_far';
+    const cfg = config.underground;
+    const t = (this.layout.traders ?? []).find((o) => Math.hypot(o.x - p.x, o.y - p.y) <= cfg.traderReach + p.radius); // (whichever's in reach)
+    if (!t) return 'too_far';
     if (!cfg.trades.includes(item)) return 'bad_item';
     if (item === 'molotov' && p.account?.cop) return 'cop_no_illegal';
     if (item === 'rod' && p.inventory.some((s) => s?.type === 'rod')) return 'have_rod';

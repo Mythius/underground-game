@@ -19,7 +19,8 @@ test('the underground is dug the same every time, and every bit of it can be wal
   const b = generateUnderground({ width: 8000, height: 8000, anchors });
   assert.equal(a.grid, b.grid);
   assert.deepEqual(a.decor, b.decor);
-  assert.equal(a.ladders.length, 3, 'an entrance bunker (with a ladder) for each anchor');
+  assert.equal(a.ladders.filter((l) => !l.vent).length, 3, 'an entrance bunker (with a ladder) for each anchor');
+  assert.ok(a.ladders.filter((l) => l.vent).length <= 1, "(and the oil hall office's, up to a vent in town)");
   for (const kind of [UG.MINE, UG.TUNNEL, UG.PLATFORM, UG.BUNKER]) assert.ok(a.grid.includes(String(kind)), `has some ${kind}`);
   assert.ok(a.stations.length >= 1 && a.bunkers.length >= 6);
   const { cols, rows, grid } = a;
@@ -63,7 +64,8 @@ test('an oil hall with pits and cells lies against the edge of the map, behind l
 test("doors where the shafts come out into built places; the oil hall's are locked till picked, and lock again once shut", () => {
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
-  const doors = world.doors.filter((d) => d.underground);
+  world.hires.list = world.hires.list.filter((h) => !h.oil); // (not shot at by the oil hall's watchers meanwhile)
+  const doors = world.doors.filter((d) => d.underground && !d.cell && !d.office);
   assert.ok(doors.length > 20, 'plenty of doors');
   const u = world.underground.layout, cell = (x, y) => u.grid[Math.floor(y / CELL) * u.cols + Math.floor(x / CELL)];
   for (const d of doors.filter((x) => !x.locked)) assert.equal(cell(d.x + d.w / 2, d.y + d.h / 2), String(UG.MINE), 'a shaft door is in the shaft');
@@ -106,7 +108,8 @@ test("loot's in the bunkers' cabinets, which anyone can open, and they fill agai
   assert.equal(u.loot, undefined);
   assert.ok([...world.pickups.values()].every((k) => k.goods?.good === 'vodka' && k.goods.qty === 1), 'nothing on the ground but loose bottles');
   assert.ok(u.cabinets.length >= u.bunkers.length, 'a cabinet or two in every bunker room');
-  for (const c of u.cabinets) assert.ok(u.bunkers.some((b) => c.x >= b.x && c.y >= b.y && c.x + c.w <= b.x + b.w && c.y + c.h <= b.y + b.h), 'in a bunker');
+  const within = (c, b) => c.x >= b.x && c.y >= b.y && c.x + c.w <= b.x + b.w && c.y + c.h <= b.y + b.h;
+  for (const c of u.cabinets) assert.ok(u.bunkers.some((b) => within(c, b)) || within(c, u.oil.office), "in a bunker (or the oil hall's office)");
   const cabs = world.underground.cabinets.map((c) => c.it);
   assert.ok(cabs.every((it) => it.slots.some(Boolean)), 'all stocked');
   const it = cabs[0];
@@ -410,10 +413,13 @@ test('bottles of vodka lie about the underground, and turn up again somewhere el
 test('the trader in a bunker swaps one bottle of vodka for bread, a bat, a knife or a Molotov', () => {
   const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
   const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
-  const u = world.underground.layout, t = u.trader;
-  assert.ok(t, 'he has a spot');
-  assert.ok(u.bunkers.some((b) => b.entrance === null && t.x > b.x && t.x < b.x + b.w && t.y > b.y && t.y < b.y + b.h), 'in a bunker without a ladder');
-  assert.deepEqual(generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).trader, generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).trader, 'always the same spot');
+  const u = world.underground.layout, t = u.traders[0];
+  assert.ok(u.traders.length >= u.bunkers.length / 2, 'one in most of the bunkers');
+  for (const o of u.traders) assert.ok(u.bunkers.some((b) => o.x > b.x && o.x < b.x + b.w && o.y > b.y && o.y < b.y + b.h), 'in a bunker');
+  assert.equal(u.decor.filter((d) => d.k === 'tent').length, u.traders.length, 'each with his tent');
+  assert.equal(u.decor.filter((d) => d.k === 'lantern' && d.lit).length, u.traders.length, 'and a lantern going');
+  for (const o of u.traders) assert.ok(!world.isBlocked(o.x + 50, o.y + 40, 10) || !world.isBlocked(o.x - 50, o.y + 40, 10) || !world.isBlocked(o.x, o.y + 60, 10), 'you can get to him');
+  assert.deepEqual(generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).traders, generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).traders, 'always the same spots');
   const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
   p.inventory = [makeWeapon('knife'), { good: 'vodka', qty: 4 }, null, null, null];
   Object.assign(p, { x: t.x + 300, y: t.y });
@@ -505,8 +511,10 @@ test('giant rats: one that sees you comes for you and bites, and dies to a few s
   p.inventory[0] = makeWeapon('knife');
   p.selected = 0;
   let killed = false;
-  for (let i = 0; i < 10 && !killed; i++) killed = rats.damage(r, config.giantRats.health / 3 + 0.01, p);
-  assert.ok(killed && !rats.list.includes(r), 'three stabs kill it');
+  let stabs = 0;
+  for (; stabs < 20 && !killed; stabs++) killed = rats.damage(r, (config.giantRats.health / 3) / 3 + 0.01, p);
+  assert.ok(killed && !rats.list.includes(r), 'it dies in the end');
+  assert.equal(stabs, 9, 'nine stabs (three times as tough)');
   Object.assign(p, { x: -9999, y: -9999 });
   rats.step(config.giantRats.respawnSec + 1);
   assert.equal(rats.list.length, config.giantRats.count, 'another one turns up');
@@ -562,4 +570,73 @@ test('the homeless are solid: walk into one and you shove him aside, not through
     world.step(1 / 30);
     assert.ok(Math.hypot(p.x - h.x, p.y - h.y) >= p.radius + config.homeless.radius - 1, 'not overlapping');
   } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); }
+});
+
+test('the oil hall: a guard and the overseer shoot trespassers, workers pump, prisoners sit in locked cells', () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const oil = world.underground.layout.oil, hall = oil.hall;
+  const watchers = world.hires.list.filter((h) => h.oil);
+  assert.deepEqual(watchers.map((h) => h.role).sort(), ['govguard', 'inspector']);
+  const folk = world.oilHall.folk;
+  assert.equal(folk.filter((f) => f.kind === 'worker').length, oil.pumps.length);
+  assert.ok(oil.pumps.length >= 9, 'about ten at the pumps');
+  assert.ok(folk.filter((f) => f.kind === 'prisoner').length >= oil.cells.length, 'someone in every cell');
+  for (const c of oil.cells) {
+    const d = world.underground.layout.doors[c.door];
+    assert.ok(d.cell && d.locked && !d.open, 'cell doors shut and locked');
+  }
+  // Walk in: they open fire.
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  Object.assign(p, { x: oil.guard.x, y: oil.guard.y - (oil.guard.y > hall.y + hall.h / 2 ? 200 : -200) });
+  for (let t = 0; t < 3 && !world.bullets.size; t += 1 / 30) { p.health = p.maxHealth; world.step(1 / 30); }
+  assert.ok([...world.bullets.values()].some((b) => b.owner.oil), 'shot at');
+});
+
+test("only the overseer's key opens a cell (no picking); the prisoners run, one thanks you; the key's gone once you leave", () => {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const layout = world.underground.layout, oil = layout.oil;
+  const [guard, overseer] = ['govguard', 'inspector'].map((r) => world.hires.list.find((h) => h.oil && h.role === r));
+  const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });
+  p.inventory = p.inventory.map((s, i) => (i ? null : s));
+  // Kill them both: the overseer leaves his key; the workers run for it.
+  world.hires.damage(guard, 1e6, p);
+  world.hires.damage(overseer, 1e6, p);
+  const body = [...world.bodies.list.values()].find((b) => b.items.some((i) => i?.type === 'cellkey'));
+  assert.ok(body, "the key's on the overseer's body");
+  for (let t = 0; t < config.oilHall.fleeSec + 1; t += 1 / 30) world.step(1 / 30);
+  assert.equal(world.oilHall.folk.filter((f) => f.kind === 'worker').length, 0, 'the workers are gone');
+
+  const cell = oil.cells[0], door = layout.doors[cell.door];
+  Object.assign(p, { x: cell.front.x, y: cell.front.y });
+  assert.equal(world.lockedDoorNear(p), null, "the lock can't be picked");
+  p.input.use = true;
+  world.step(1 / 30);
+  assert.equal(door.open, false, 'no key: it stays shut');
+  p.inventory[1] = { type: 'cellkey', tool: true };
+  const cash = p.cash, vodka = () => p.inventory.reduce((n, s) => n + (s?.good === 'vodka' ? s.qty : 0), 0) + p.inventory.reduce((n, s) => n + (s?.good === 'bread' ? s.qty : 0), 0);
+  p.input.use = true;
+  world.step(1 / 30);
+  assert.equal(door.open, true, 'the key opens it');
+  world.step(1 / 30);
+  assert.ok(world.oilHall.folk.filter((f) => f.cell === 0).every((f) => f.state === 'free'), "they're out");
+  assert.ok(p.cash > cash || vodka() > 0 || world.pickups.size > config.underground.bottles, 'and one thanked you');
+  for (let t = 0; t < config.oilHall.fleeSec + 1; t += 1 / 30) world.step(1 / 30);
+  assert.ok(!world.oilHall.folk.some((f) => f.cell === 0), 'gone');
+  // Out of the hall: the key's no good, and gone.
+  Object.assign(p, { x: oil.doorsOut[0].x, y: oil.doorsOut[0].y });
+  for (let t = 0; t < 1; t += 1 / 30) world.step(1 / 30);
+  assert.ok(!p.inventory.some((s) => s?.type === 'cellkey'), 'the key went');
+});
+
+test("the ladder in the oil hall's office comes out of a sewer vent in town", () => {
+  const town = new World(config.world, config.player, config.weapons);
+  assert.ok(town.vents.length > 0);
+  const at = town.ventArrival();
+  assert.ok(at && town.vents.some((v) => Math.hypot(v.x + v.w / 2 - at.x, v.y + v.h / 2 - at.y) < 120), 'beside a vent');
+  const u = generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed });
+  const l = u.ladders.find((x) => x.vent);
+  assert.ok(l && l.x > u.oil.office.x && l.x < u.oil.office.x + u.oil.office.w && l.y > u.oil.office.y && l.y < u.oil.office.y + u.oil.office.h, 'in the office');
+  assert.ok(u.doors.some((d) => d.office && d.locked && !d.cell), 'behind a locked (pickable) door');
 });
