@@ -55,7 +55,7 @@ export class GiantRats {
   step(dt) {
     this.time += dt;
     const c = config.giantRats;
-    for (let i = this.timers.length - 1; i >= 0; i--) {
+    for (let i = this.timers.length - 1; i >= 0 && !this.world.flood?.active; i--) { // (nothing new while it's flooded)
       if ((this.timers[i] -= dt) > 0) continue;
       if (this.#spawn(c.spawnClear)) this.timers.splice(i, 1);
       else this.timers[i] = 10;
@@ -121,6 +121,13 @@ export class GiantRats {
   hitBy(ax, ay, bx, by, rad, segmentDistSq) {
     for (const r of this.list) if (segmentDistSq(ax, ay, bx, by, r.x, r.y) < (config.giantRats.radius + rad) ** 2) return r;
     return null;
+  }
+
+  /** Gone (cleared out by a flood, or swept off by its wave): another turns up later. */
+  vanish(r) {
+    if (!this.list.includes(r)) return;
+    this.list.splice(this.list.indexOf(r), 1);
+    this.timers.push(config.giantRats.respawnSec);
   }
 
   /** Hurt by `attacker`: it comes for whoever did it, or dies (and another turns up later). */

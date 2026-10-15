@@ -938,6 +938,8 @@
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
+      floodCfg = msg.flood ?? floodCfg;
+      flood = null;
       rats.list = []; // (the last world's rats)
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] })),
         ...(under?.decor ?? []).filter((d) => d.k === 'tnt').map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))]; // (a crate of dynamite: solid till it goes off — d.open)
@@ -1136,6 +1138,10 @@
           if (msg.kind === 'car_dumped') { dumpedCars.set(msg.id, { x: msg.x, y: msg.y, type: msg.type }); toast(`🚗 Your ${vehicleTypes[msg.type]?.name ?? 'car'} was dumped across town — it's marked on your map`); }
           if (msg.kind === 'atm_hit') { sfx('batHit'); addShake(2.5); toast(`🏏 Smash! ${msg.n}/${msg.of}`); }
           if (msg.kind === 'atm_smashed') { sfx('atmSmash'); addShake(5); toast(`💥 The ATM burst open: +${money(msg.amount)} — it's broken for ${Math.round(msg.sec / 60)} min`); }
+          if (msg.kind === 'flood_warning') { sfx('floodWarn'); toast(`🌊 FLASH FLOOD WARNING — it's raining up top. The water is rising, and in ${Math.round(msg.sec / 60)} minute${Math.round(msg.sec / 60) === 1 ? '' : 's'} a wave will rush through the tunnels. Get up a ladder or into the oil hall before then!`, 7000); }
+          if (msg.kind === 'flood_wave_soon') { sfx('floodWarn'); toast(`🌊 The wave comes in ${msg.sec} seconds — get up a ladder or into the oil hall!`, 5000); }
+          if (msg.kind === 'flood_wave') toast('🌊 The wave is coming through the tunnels — RUN!', 4000);
+          if (msg.kind === 'flood_over') toast('🌊 The flood has drained away', 3000);
           if (msg.kind === 'fish_bite') { sfx('splash'); toast('🎣 Fish on! It fights the line — click to pull each time it tires (goes still in the gold rings)'); }
           if (msg.kind === 'fish_pull') sfx('splash');
           if (msg.kind === 'fish_caught') {
@@ -1774,7 +1780,7 @@
     };
     const vodkaCarried = () => inv.reduce((n, w) => n + (w?.[0] === 'goods' && w[1] === 'vodka' ? w[2] : 0), 0);
     /** The trader in reach (there's one in most bunkers), or null. */
-    const nearTrader = (extra = 0) => (me && under?.traders?.find((t) => Math.hypot(t.x - me.x, t.y - me.y) < 100 + radiusOf(me.mass) + extra)) || null;
+    const nearTrader = (extra = 0) => (me && under?.traders?.find((t, i) => !flood?.gone.has(i) && Math.hypot(t.x - me.x, t.y - me.y) < 100 + radiusOf(me.mass) + extra)) || null; // (not one who's left for the flood)
     function renderTrader() {
       const vodka = traderVodka = vodkaCarried();
       shopEl.querySelector('h2').textContent = '🕴️ The trader';
@@ -5669,6 +5675,8 @@
       chop: (o) => { tone(o, { dur: 0.1, freq: 160, endFreq: 90, vol: 0.4 }); noiseBurst(o, { dur: 0.08, filter: 'lowpass', freq: 1200, vol: 0.4 }); },
       harvest: (o) => { noiseBurst(o, { dur: 0.18, freq: 4200, q: 1, vol: 0.25, endFreq: 2000 }); },
       lockpick: (o) => { tone(o, { dur: 0.03, type: 'square', freq: 2400 + Math.random() * 800, vol: 0.08 }); },
+      floodWarn: (o) => { for (let i = 0; i < 3; i++) { tone(o, { at: i * 0.9, dur: 0.7, type: 'sawtooth', freq: 180, endFreq: 150, vol: 0.18 }); tone(o, { at: i * 0.9, dur: 0.7, type: 'square', freq: 90, vol: 0.08 }); } }, // a klaxon, three times
+      floodWave: (o) => noiseBurst(o, { dur: 2.5, filter: 'lowpass', freq: 420, q: 0.6, vol: 0.9 }),
       torch: (o) => { tone(o, { dur: 0.025, type: 'square', freq: 1100, vol: 0.1 }); noiseBurst(o, { dur: 0.04, freq: 3200, q: 2, vol: 0.3 }); }, // a flashlight's switch: click
       cast: (o) => { noiseBurst(o, { dur: 0.25, freq: 1800, endFreq: 500, q: 1, vol: 0.18 }); tone(o, { at: 0.32, dur: 0.08, freq: 700, endFreq: 300, vol: 0.15 }); },
       splash: (o) => { noiseBurst(o, { dur: 0.3, filter: 'lowpass', freq: 1800, endFreq: 250, vol: 0.35 }); },
@@ -6911,6 +6919,13 @@
         o1.connect(f); o2.connect(f); f.connect(g); g.connect(audio.master); o1.start(); o2.start();
         return { o: o1, o2, g, stop: (t) => o2.stop(t) };
       });
+      const floodWave = loop('floodWave', () => { // a flood's wave: a deep rushing roar
+        const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
+        const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 420; f.Q.value = 0.6;
+        const g = a.createGain(); g.gain.value = 0;
+        src.connect(f); f.connect(g); g.connect(audio.master); src.start();
+        return { src, g };
+      });
       const sewer = loop('sewer', () => { // running water: low rushing noise, and a higher trickle over it
         const src = a.createBufferSource(); src.buffer = audio.noise; src.loop = true;
         const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 650; f.Q.value = 0.7;
@@ -6991,6 +7006,7 @@
       const sewerNear = under && me && playing ? sewerNearness(me.x, me.y) : 0;
       if (sewer?.f2) sewer.f2.frequency.setTargetAtTime(1900 + 600 * Math.sin(now * 1.7) * Math.sin(now * 0.6), now, 0.2); // (the gurgle wandering)
       loopGain(sewer, 'sewer', sewerNear * (sewer?.file ? 0.35 : 0.12), now, 0.5);
+      loopGain(floodWave, 'floodWave', waveLoudness() * (floodWave?.file ? 0.9 : 0.6), now, 0.3);
       const hall = under && me && playing ? hallNearness(me.x, me.y) : 0;
       loopGain(fluoro, 'fluoro', hall * (fluoro?.file ? 0.08 : 0.012), now, 0.4);
       const gust = under && playing ? undergroundGust(now) * (1 - hall * 0.8) : 0;
@@ -7014,12 +7030,13 @@
         const moved = Math.hypot(me.x - (steps.x ?? me.x), me.y - (steps.y ?? me.y));
         steps.x = me.x; steps.y = me.y;
         steps.dist += moved < 50 ? moved : 0;
-        const swimming = isSwimming(me.x, me.y);
+        const swimming = swimmingAt(me.x, me.y);
         const stride = swimming ? 120 : 70;
         if (steps.dist > stride) {
           steps.dist = 0;
           const inside = insideBuilding(me.x, me.y);
-          sfx(swimming ? 'swim' : winter && !inside && !onRoad(me.x, me.y) ? 'snowStep' : 'footstep', null, 0.6);
+          if (!swimming && inFloodWater(me.x, me.y)) sfx('splash', null, 0.25); // (splashing through a flood)
+          else sfx(swimming ? 'swim' : winter && !inside && !onRoad(me.x, me.y) ? 'snowStep' : 'footstep', null, 0.6);
         }
       }
       steps.pick = (steps.pick ?? 0) - dt;
@@ -8519,6 +8536,10 @@
     // In winter the lakes are frozen: walkable (and slippery). Same rule as the server: season.cur, no blending.
     const lakesFrozen = () => !under && season.cur === 'winter'; // (the lake underground never freezes)
     const isSwimming = (x, y) => waterDistance(x, y, !lakesFrozen()).d < 0 && !onRoad(x, y);
+    /** Swimming, for a person: in the water, or anywhere in a flood underground once it's deep (as on the server). */
+    const swimmingAt = (x, y) => isSwimming(x, y) || Boolean(flood?.deep && under && floodDistAt(x, y) >= 0);
+    /** Wading through a flood underground (the water's up round here). */
+    const inFloodWater = (x, y) => Boolean(flood && under && flood.shown > 0.6 && floodDistAt(x, y) >= 0);
     const isOnIce = (x, y) => lakesFrozen() && terrain.water.lakes.some((l) => Math.hypot(x - l.x, y - l.y) < l.r);
 
     function pushOutOfWater(c) {
@@ -8542,7 +8563,7 @@
     // p needs x, y, mass, stamina, staminaDelay, exhausted.
     function stepMove(p, angle, throttle, boost, dt) {
       const o = playerParams;
-      const swimming = isSwimming(p.x, p.y);
+      const swimming = swimmingAt(p.x, p.y);
       let v = speedOf(p.mass) * throttle * (swimming ? o.swimSpeed ?? 0.5 : 1) * (carrying ? o.carrySpeed ?? 0.65 : 1); // keep in sync with the server
       if (boost && !swimming && throttle > 0 && !p.exhausted && p.stamina > 0) {
         v *= o.sprintMultiplier;
@@ -8746,6 +8767,7 @@
       }
       const oilfolk = new Map(); // the oil hall's workers and prisoners: [id, x, y, angle, state (0 pumping, 1 running, 2 in a cell), look, health, prisoner]
       for (const [id, x, y, angle, state, look, hp, prisoner] of msg.oilfolk ?? []) oilfolk.set(id, { x, y, angle, state, look, hp, prisoner: prisoner === 1 });
+      setFlood(msg.flood);
       const rats = new Map(); // giant rats underground: [id, x, y, angle, running, health, biting]
       for (const [id, x, y, angle, run, hp, bite] of msg.rats ?? []) rats.set(id, { x, y, angle, run: run === 1, hp, bite: bite === 1 });
       otherLines = msg.lines ?? [];
@@ -9680,9 +9702,9 @@
       return null;
     }
     /** Whoever's moving through a puddle kicks up drops (a car a spray): `key` for the splash on the way in. */
-    function wade(key, x, y, vx, vy, car, now, dt) {
-      const speed = Math.hypot(vx, vy), inside = speed > 25 && puddleUnder(x, y);
-      if (inside && !wading.get(key)) sfx('splash', { x, y }, car ? 0.5 : 0.25);
+    function wade(key, x, y, vx, vy, car, now, dt, inWater = null, quiet = false) {
+      const speed = Math.hypot(vx, vy), inside = speed > 25 && (inWater ?? puddleUnder(x, y));
+      if (inside && !wading.get(key) && !quiet) sfx('splash', { x, y }, car ? 0.5 : 0.25); // (quiet: the footsteps splash instead)
       wading.set(key, Boolean(inside));
       if (!inside || splashes.length > 400) return;
       for (let n = speed * dt * (car ? 0.25 : 0.12); n > 0; n--) {
@@ -9747,7 +9769,7 @@
         const d = splashes[i];
         d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt; d.vz -= 520 * dt;
         if (d.z < 0 || now - d.born > 700) { splashes.splice(i, 1); continue; }
-        ctx.beginPath(); ctx.arc(d.x, d.y - d.z * 0.35, 2.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(d.x, d.y - d.z * 0.35, 3, 0, Math.PI * 2); ctx.fill();
       }
     }
 
@@ -11479,7 +11501,7 @@
       if (flock) options.push({ kind: 'crows', target: flock, dist: 30, x: me.x, y: me.y - 46 });
       const vent = nearestVent();
       if (vent) options.push({ kind: 'vent', dist: d({ x: vent.x + vent.w / 2, y: vent.y + vent.h / 2 }) + 10, x: vent.x + vent.w / 2, y: vent.y - 18 });
-      if (under?.miner && Math.hypot(under.miner.x - me.x, under.miner.y - me.y) < 90 + radiusOf(me.mass)) options.push({ kind: 'miner', dist: d(under.miner) - 10, x: under.miner.x, y: under.miner.y - 56 });
+      if (under?.miner && !flood?.minerGone && Math.hypot(under.miner.x - me.x, under.miner.y - me.y) < 90 + radiusOf(me.mass)) options.push({ kind: 'miner', dist: d(under.miner) - 10, x: under.miner.x, y: under.miner.y - 56 });
       const trader = nearTrader();
       if (trader) options.push({ kind: 'trader', dist: d(trader) - 10, x: trader.x, y: trader.y - 56 });
       const ladder = nearestLadder();
@@ -11901,7 +11923,7 @@
       for (const k of shop.shopkeepers) speaker(`k${k.x},${k.y}`, k.x, k.y, 52, either(robbedLines(SPEECH.robShop, 'shop'), keeperLines(SPEECH.shop)));
       for (const k of bankData.tellers) speaker(`t${k.x},${k.y}`, k.x, k.y, 36, either(robbedLines(SPEECH.robBank, 'bank'), keeperLines(SPEECH.teller)));
       for (const p of econ.places) speaker(`p${p.id}`, p.x, p.y, 36, keeperLines(SPEECH[p.role] ?? SPEECH.market));
-      if (under?.miner) speaker('oldminer', under.miner.x, under.miner.y, 40, (s, d) => { // muttering nonsense; now and then screaming about the flood
+      if (under?.miner && !flood?.minerGone) speaker('oldminer', under.miner.x, under.miner.y, 40, (s, d) => { // muttering nonsense; now and then screaming about the flood
         if (oldMiner.say) { const text = oldMiner.say; oldMiner.say = null; s.next = t + 6; return { text, urgent: true }; }
         const edge = approach(s, d, 260, 340);
         if (edge === 'in') { s.next = t + 5 + Math.random() * 3; return { text: pick(SPEECH.miner), urgent: true }; }
@@ -11912,7 +11934,7 @@
         }
         return null;
       });
-      for (const [i, tr] of (under?.traders ?? []).entries()) speaker(`trader${i}`, tr.x, tr.y, 40, (s, d) => { // a word as you come up; now and then while you're near
+      for (const [i, tr] of (under?.traders ?? []).entries()) if (!flood?.gone.has(i)) speaker(`trader${i}`, tr.x, tr.y, 40, (s, d) => { // a word as you come up; now and then while you're near
         const st = traderState(tr);
         if (st.say) { const text = st.say; st.say = null; s.next = t + 8; return { text, urgent: true }; }
         const edge = approach(s, d, 260, 340);
@@ -12628,7 +12650,8 @@
       rats.last = now;
       if (!me || !playing) return;
       rats.list = rats.list.filter((r) => Math.hypot(r.x - me.x, r.y - me.y) < RAT_NEAR + 200);
-      while (rats.list.length < RAT_MAX) {
+      if (flood) rats.list = rats.list.filter((r) => Math.hypot(r.x - me.x, r.y - me.y) < 500); // (a flood: they're off, out of sight)
+      while (!flood && rats.list.length < RAT_MAX) {
         const s = ratSpot(me.x, me.y, 500, RAT_NEAR);
         if (!s) break;
         rats.list.push({ ...s, a: Math.random() * Math.PI * 2, state: 'sniff', until: now + Math.random() * 3000, to: null, size: 0.8 + Math.random() * 0.5, step: 0 });
@@ -13611,6 +13634,167 @@
     }
 
     /** Underground there's no sky: just the gloom, closing in round the edges. (Proper lighting comes later.) */
+    // ---- flash floods underground (while it rains in town): the water rises in circles that spread till the floor's
+    // covered (you can still walk in it); every so often a wave rushes out of the sewers along the tunnels. The oil
+    // hall stays dry. The server says how high the water is and how far the wave has got; where that is on the map
+    // comes from each cell's distance from the sewers, worked out here the same way as on the server. ----
+    let floodCfg = { waveSpeed: 550 };
+    let flood = null; // { level 0..1, waveIn (s, -1: none coming), front (-1), gone: traders' indexes, minerGone, at, shown }
+    function setFlood(v) {
+      if (!v || !under) { flood = null; return; }
+      const [level, waveIn, front, gone, minerGone, deep] = v;
+      flood = { level: level / 100, waveIn, front, gone: new Set(gone), minerGone: minerGone === 1, deep: deep === 1, at: performance.now(), shown: flood?.shown ?? level / 100, depth: flood?.depth ?? 0 };
+    }
+    /** Each cell's distance along the open cells from the nearest sewer (-1: rock, the oil hall, cut off). As on the server (src/game/flood.js). */
+    function floodDistances(u) {
+      const { cols, rows, cell } = u, oil = u.oil;
+      const inR = (r, x, y) => r && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+      const open = (i) => {
+        if (u.g[i] === UGC.ROCK || u.g[i] === UGC.HALL) return false;
+        const x = ((i % cols) + 0.5) * cell, y = (Math.floor(i / cols) + 0.5) * cell;
+        return !inR(oil?.hall, x, y) && !inR(oil?.office, x, y);
+      };
+      const dist = new Float32Array(cols * rows).fill(-1), queue = [];
+      for (let i = 0; i < cols * rows; i++) if (u.g[i] === UGC.SEWER && open(i)) { dist[i] = 0; queue.push(i); }
+      if (!queue.length) for (const l of u.ladders ?? []) { const i = Math.floor(l.y / cell) * cols + Math.floor(l.x / cell); if (dist[i] < 0 && open(i)) { dist[i] = 0; queue.push(i); } }
+      for (let head = 0; head < queue.length; head++) {
+        const i = queue[head], x = i % cols, y = Math.floor(i / cols);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy, j = ny * cols + nx;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || dist[j] >= 0 || !open(j)) continue;
+          dist[j] = dist[i] + cell;
+          queue.push(j);
+        }
+      }
+      return dist;
+    }
+    /** How far the wave has got just now (carried on between snapshots), or -1. */
+    const waveFront = () => (flood && flood.front >= 0 ? flood.front + floodCfg.waveSpeed * (performance.now() - flood.at) / 1000 : -1);
+    const floodDistAt = (x, y) => {
+      const C = under.cell, cx = Math.floor(x / C), cy = Math.floor(y / C);
+      under.floodDist ??= floodDistances(under);
+      return cx < 0 || cy < 0 || cx >= under.cols || cy >= under.rows ? -1 : under.floodDist[cy * under.cols + cx];
+    };
+    /** 0..1: how loud the wave's roar is where I am (coming closer, then rushing past). */
+    function waveLoudness() {
+      const front = waveFront();
+      if (front < 0 || !me || !under) return 0;
+      const d = floodDistAt(me.x, me.y);
+      if (d < 0) return 0.15; // (in the oil hall: you hear it go by)
+      const gap = d - front;
+      return gap > 0 ? Math.max(0, 1 - gap / 3500) ** 1.5 : Math.max(0, 1 + gap / 1500);
+    }
+    /** The wave: a band of churning, lighter water with white foam along its front (and darker water tumbling behind). `k` dims it (seen through the dark: just the foam). */
+    function drawWaveCrest(k, now) {
+      const front = waveFront();
+      if (front < 0) return;
+      const u = under, C = u.cell, D = (u.floodDist ??= floodDistances(u));
+      const x0 = Math.max(0, Math.floor(viewBox.l / C)), x1 = Math.min(u.cols - 1, Math.floor(viewBox.r / C));
+      const y0 = Math.max(0, Math.floor(viewBox.t / C)), y1 = Math.min(u.rows - 1, Math.floor(viewBox.b / C));
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const d = D[cy * u.cols + cx];
+          if (d < 0 || d > front + C || d < front - 900) continue;
+          const behind = front - d; // (negative: it's just coming in here)
+          const a = behind < 0 ? 1 + behind / C : behind < 320 ? 1 : Math.max(0, 1 - (behind - 320) / 580);
+          const X = cx * C, Y = cy * C;
+          if (k === 1) { // the body of the wave: lighter, then darker water tumbling along behind
+            ctx.fillStyle = behind < 320 ? `rgba(95, 145, 185, ${0.6 * a})` : `rgba(18, 42, 64, ${0.55 * a})`;
+            ctx.beginPath(); ctx.arc(X + C / 2, Y + C / 2, C * 0.78, 0, Math.PI * 2); ctx.fill();
+          }
+          if (behind > 420) continue;
+          ctx.fillStyle = `rgba(225, 240, 252, ${0.85 * a * k})`; // foam
+          ctx.beginPath();
+          for (let i = 0; i < 14; i++) {
+            const h1 = hash(cx * 3 + i, cy * 7), h2 = hash(cy * 5 - i, cx * 11 + i);
+            const x = X + C * (0.05 + 0.9 * h1) + Math.sin(now / 140 + h2 * 9) * 8, y = Y + C * (0.05 + 0.9 * h2) + Math.cos(now / 170 + h1 * 9) * 8, r = C * (0.025 + 0.05 * h2);
+            ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2);
+          }
+          ctx.fill();
+        }
+      }
+    }
+    function drawFlood(now) {
+      if (!flood) return;
+      flood.shown += (flood.level - flood.shown) * 0.05;
+      const L = flood.shown, u = under, C = u.cell, D = (u.floodDist ??= floodDistances(u));
+      const x0 = Math.max(0, Math.floor(viewBox.l / C)), x1 = Math.min(u.cols - 1, Math.floor(viewBox.r / C));
+      const y0 = Math.max(0, Math.floor(viewBox.t / C)), y1 = Math.min(u.rows - 1, Math.floor(viewBox.b / C));
+      ctx.save();
+      ctx.beginPath(); // (the oil hall stays dry)
+      ctx.rect(viewBox.l, viewBox.t, viewBox.r - viewBox.l, viewBox.b - viewBox.t);
+      for (const r of [u.oil?.hall, u.oil?.office]) if (r) ctx.rect(r.x, r.y, r.w, r.h);
+      ctx.clip('evenodd');
+      // The water: a circle in each cell (each starting at its own time) spreading till they meet; then all of it.
+      ctx.beginPath();
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          if (D[cy * u.cols + cx] < 0) continue;
+          if (L >= 0.999) { ctx.rect(cx * C, cy * C, C, C); continue; }
+          const g = (L - hash(cx, cy) * 0.7) / 0.3;
+          if (g <= 0) continue;
+          const r = Math.min(1, g) * C * 1.15, x = (cx + 0.5 + (hash(cy, cx + 5) - 0.5) * 0.5) * C, y = (cy + 0.5 + (hash(cx - 3, cy + 9) - 0.5) * 0.5) * C;
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+        }
+      }
+      flood.depth += ((flood.deep ? 1 : 0) - flood.depth) * 0.03; // (deepening: darker, and you can't see the floor)
+      ctx.fillStyle = `rgba(${36 - 16 * flood.depth}, ${70 - 26 * flood.depth}, ${96 - 26 * flood.depth}, ${0.82 + 0.16 * flood.depth})`;
+      ctx.fill();
+      // Its surface: little ripples drifting by.
+      if (L > 0.2) {
+        ctx.strokeStyle = `rgba(150, 190, 220, ${0.22 * Math.min(1, L * 1.5)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let cy = y0; cy <= y1; cy++) {
+          for (let cx = x0; cx <= x1; cx++) {
+            if (D[cy * u.cols + cx] < 0 || (L < 0.999 && (L - hash(cx, cy) * 0.7) / 0.3 < 1)) continue;
+            for (let i = 0; i < 2; i++) {
+              const t = (now / 4000 + hash(cx + i, cy * 3)) % 1, x = (cx + hash(cy * 7 + i, cx)) * C, y = (cy + t) * C;
+              ctx.moveTo(x - 14, y); ctx.quadraticCurveTo(x, y - 5, x + 14, y);
+            }
+          }
+        }
+        ctx.stroke();
+      }
+      drawWaveCrest(1, now);
+      ctx.restore();
+      // Running (or swimming) through it: drops flying up round your legs.
+      const dt = Math.min(0.1, (now - (flood.lastDraw ?? now)) / 1000);
+      flood.lastDraw = now;
+      if (dt > 0 && L > 0.6) {
+        if (me && playing && !hiddenSelf) wade('fme', me.x, me.y, me.vx ?? 0, me.vy ?? 0, false, now, dt, inFloodWater(me.x, me.y), true);
+        for (const [id, p] of lastShown) {
+          if (id === myId) continue;
+          const last = wading.get(`f${id}xy`);
+          wading.set(`f${id}xy`, [p.x, p.y]);
+          if (last) wade(`f${id}`, p.x, p.y, (p.x - last[0]) / dt, (p.y - last[1]) / dt, false, now, dt, inFloodWater(p.x, p.y), true);
+        }
+      }
+    }
+    /** The flood's line at the top of the screen: how long till the wave, or that it's coming now, or draining. */
+    function drawFloodBanner(w, h) {
+      if (!flood) return;
+      const front = waveFront();
+      if (!playing) return;
+      const text = front >= 0 ? '🌊 THE WAVE IS COMING — RUN!'
+        : flood.waveIn >= 0 ? `🌊 Wave in ${Math.floor(flood.waveIn / 60)}:${String(flood.waveIn % 60).padStart(2, '0')} · ${flood.deep ? 'swim for a ' : ''}ladder or oil hall!`
+          : '🌊 Rain stopped · water draining';
+      ctx.save();
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.font = `700 ${w < 600 ? 12 : 14}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const tw = Math.min(w - 20, ctx.measureText(text).width + 28), y = 74; // (under the buttons along the top, between the map and the panels)
+      ctx.fillStyle = front >= 0 ? 'rgba(120, 20, 20, .9)' : 'rgba(15, 35, 55, .88)';
+      ctx.strokeStyle = front >= 0 ? '#ff6b6b' : '#5fa8d3';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(w / 2 - tw / 2, y - 15, tw, 30, 15); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(text, w / 2, y + 1, tw - 20);
+      ctx.restore();
+    }
+
     // ---- the dark underground: near black but for its lights — the traders' and the old miner's lanterns, his
     // campfire, the oil hall's strip lights, fires, gunfire, the tunnels' signal lamps — and flashlights (C), which
     // shine the way you aim and stop at the rock. Everyone sees everyone's beam. Drawn at low resolution, like the night.
@@ -13723,7 +13907,9 @@
       }
       ctx.globalCompositeOperation = 'source-over';
       for (const [id, r] of shownRats) drawRatEyeGlow(r, id, performance.now(), 0.8); // the giant rats' eyes glow through the dark
+      drawWaveCrest(0.25, now); // (the wave's white water shows in the dark: see it coming)
       ctx.restore();
+      drawFloodBanner(w, h);
       if (!torchUsed && me && playing && !hiddenSelf) { // first time down here: how to see anything
         const text = touchMode ? 'Tap 🔦 for your flashlight' : 'Press C for your flashlight';
         const x = (me.x - camera.x) * viewZ + w / 2, y = (me.y - camera.y) * viewZ + h / 2 - 78 + 3 * Math.sin(now / 300);
@@ -13896,6 +14082,7 @@
       ctx.strokeRect(0, 0, world.width, world.height);
       viewBox = { l: camera.x - vw / 2 - 100, t: camera.y - vh / 2 - 100, r: camera.x + vw / 2 + 100, b: camera.y + vh / 2 + 100 };
       if (under) drawUnderground(frameTime);
+      if (under) drawFlood(frameTime);
       drawForestFloors(viewBox.l, viewBox.t, viewBox.r, viewBox.b);
       drawPaths();
       drawWater(frameTime);
@@ -13983,7 +14170,7 @@
       drawCats(view, shown, frameTime, false);
       for (const [id, p] of shown) {
         if (id === myId && hiddenSelf) continue; // inside the bin
-        if (isSwimming(p.x, p.y)) {
+        if (swimmingAt(p.x, p.y)) {
           ctx.strokeStyle = 'rgba(200, 230, 255, .5)';
           ctx.lineWidth = 3;
           const ripple = 1.15 + 0.15 * Math.sin(frameTime / 250 + id);
@@ -14089,8 +14276,8 @@
         drawWolf(wf, id, frameTime);
       }
       wolfSounds(frameTime);
-      if (under?.miner) drawOldMiner(under.miner, frameTime);
-      for (const tr of under?.traders ?? []) drawTrader(tr, frameTime);
+      if (under?.miner && !flood?.minerGone) drawOldMiner(under.miner, frameTime);
+      for (const [i, tr] of (under?.traders ?? []).entries()) if (!flood?.gone.has(i)) drawTrader(tr, frameTime); // (gone, while it's flooded)
       shownBears = view.bears ?? new Map();
       for (const [id, bf] of shownBears) {
         if (bf.x < viewBox.l - 100 || bf.x > viewBox.r + 100 || bf.y < viewBox.t - 100 || bf.y > viewBox.b + 100) continue;

@@ -760,6 +760,13 @@ export const config = Object.freeze({
   // (stalkSpeed), lunging when he's within lungeRange behind you; a wanderer who sees you (within sight)
   // attacks attackChance of the time. Each decides about a given player at most once per rejudgeSec. A stab
   // takes stabShare of your max health. They give up after giveUpSec out of sight or past `leash` from home.
+  // Flash floods underground (src/game/flood.js), whenever it rains in town (not snow). Everyone down there is
+  // warned; the water rises over riseSec (still walkable); everyone and everything outside the oil hall clears out
+  // once nobody's within `clear` of them (the traders and the old miner too). waveSec after the warning (and again
+  // every waveSec while it rains, warned warnSec before; from deepSec before it, it's deep: everyone swims) a wave rushes out of the sewers through the tunnels at
+  // waveSpeed, killing anyone it reaches: up a ladder or into the oil hall in time and you live. The oil hall stays
+  // dry. Once the rain stops it drains over drainSec, and they all come back as usual.
+  flood: { rainFrom: 0.3, riseSec: 120, drainSec: 90, waveSec: 180, warnSec: 30, deepSec: 90, waveSpeed: 550, clear: 1100 },
   // The oil hall underground (src/game/oilhall.js): a governor's guard and an overseer (the tax inspector's
   // double, same armour and Uzi) shoot anyone in the hall (fightRange); someone new respawnSec after one's
   // killed, once nobody's in there. Shabby workers at the hand pumps run for it once both are dead.

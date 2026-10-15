@@ -957,7 +957,7 @@ export class Underground {
    */
   lend(p) {
     const m = this.layout.miner;
-    if (!m || Math.hypot(m.x - p.x, m.y - p.y) > config.underground.minerReach + p.radius) return 'too_far';
+    if (!m || this.world.flood?.minerGone || Math.hypot(m.x - p.x, m.y - p.y) > config.underground.minerReach + p.radius) return 'too_far';
     const held = p.inventory.findIndex((s) => s?.minerLoan);
     if (held >= 0) { p.inventory[held] = null; return { returned: 'pickaxe' }; }
     if (p.inventory.some((s) => s?.tool && s.type === 'pickaxe')) return 'one_tool';
@@ -992,7 +992,7 @@ export class Underground {
    */
   trade(p, item) {
     const cfg = config.underground;
-    const t = (this.layout.traders ?? []).find((o) => Math.hypot(o.x - p.x, o.y - p.y) <= cfg.traderReach + p.radius); // (whichever's in reach)
+    const t = (this.layout.traders ?? []).find((o, i) => !this.world.flood?.goneTraders.has(i) && Math.hypot(o.x - p.x, o.y - p.y) <= cfg.traderReach + p.radius); // (whichever's in reach; not one who's left for the flood)
     if (!t) return 'too_far';
     if (!cfg.trades.includes(item)) return 'bad_item';
     if (item === 'molotov' && p.account?.cop) return 'cop_no_illegal';

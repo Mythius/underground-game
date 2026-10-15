@@ -545,7 +545,7 @@ function removeClient(client, code) {
 
 /**
  * The admin's chat commands (signed in with Google as an admin):
- * /players · /kick name · /ban name (their IP and account) · /unban name-or-ip · /bans
+ * /players · /kick name · /ban name (their IP and account) · /unban name-or-ip · /bans · /rain [min] · /flood [min] (rain in town; /flood floods the underground even in winter)
  */
 function adminCommand(admin, text) {
   const reply = (line) => admin.send({ t: ServerMsg.CHAT, id: null, name: null, color: null, text: line });
@@ -590,10 +590,21 @@ function adminCommand(admin, text) {
       for (const r of last) reply(`🚩 ${new Date(r.at).toLocaleString()} · ${r.by.name} → ${r.about.name} (${REASONS[r.reason]})${r.text ? `: ${r.text}` : ''}${r.chat.length ? ` · they said: "${r.chat.slice(-3).join('" "')}"` : ''}`);
       return;
     }
+    case 'rain':
+    case 'flood': { // weather for testing: rain in town for a few minutes (/flood: and the underground floods, even in winter)
+      const env = rooms.town?.env;
+      if (!env) return reply('No town running');
+      const min = Math.min(60, Math.max(1, Number(arg) || 10));
+      env.events = env.events.filter((e) => e.kind !== 'rain' || e.end < env.time); // (whatever rain there was, replaced)
+      env.events.push({ kind: 'rain', start: env.time - config.environment.weatherFadeSec, end: env.time + min * 60 }); // (already at full strength)
+      env.floodUntil = cmd.toLowerCase() === 'flood' ? env.time + min * 60 : 0;
+      logger.info('admin weather', { cmd, min });
+      return reply(`🌧 Raining in town for ${min} min${cmd.toLowerCase() === 'flood' ? ' — the underground floods (even in winter)' : env.season.name === 'winter' ? " (it's winter: snow — /flood floods the underground anyway)" : ''}`);
+    }
     case 'bans':
       return reply(bans.bans.length ? `Banned: ${bans.bans.map((b) => `${b.name} (${b.ip ?? 'no IP'})`).join(', ')}` : 'Nobody is banned');
     default:
-      return reply('Admin commands: /players · /kick name · /ban name · /unban name-or-ip · /bans · /reports');
+      return reply('Admin commands: /players · /kick name · /ban name · /unban name-or-ip · /bans · /reports · /rain [min] · /flood [min]');
   }
 }
 

@@ -683,3 +683,63 @@ test("the trader's message gets through to the server (every trade, nothing else
   for (const item of config.underground.trades) assert.deepEqual(decodeClientMessage(JSON.stringify({ t: 'trader', item })), { ok: true, msg: { t: 'trader', item } });
   assert.equal(decodeClientMessage(JSON.stringify({ t: 'trader', item: 'sniper' })).ok, false);
 });
+
+test('a flash flood while it rains in town: warned, everyone clears out, waves from the sewers drown you outside the oil hall, then it drains', () => {
+  Object.assign(config.homeless, HOMELESS);
+  config.giantRats.count = RATS;
+  try { floodTest(); } finally { Object.assign(config.homeless, { sitters: 0, wanderers: 0 }); config.giantRats.count = 0; }
+});
+
+function floodTest() {
+  const town = { width: 27000, height: 27000, buildings: [], trapdoorOf: () => null };
+  const world = new World(config.world, config.player, config.weapons, undergroundMap(town));
+  const f = world.flood, u = world.underground.layout, c = config.flood;
+  assert.ok(f.dist.some((d) => d === 0), 'the sewers are where it comes from');
+  const hall = u.oil.hall;
+  assert.equal(f.distAt(hall.x + hall.w / 2, hall.y + hall.h / 2), -1, 'the oil hall stays dry');
+  const run = (sec) => { for (let t = 0; t < sec; t += 0.5) world.step(0.5); };
+  run(1);
+  assert.ok(world.homeless.list.length && world.giantRats.list.length, 'the homeless and the rats are about');
+  // A player out in the tunnels, far from the sewers, and one in the oil hall.
+  const far = f.dist.reduce((best, d, i) => (d > f.dist[best] ? i : best), 0);
+  const out = world.spawnPlayer('out', null, { id: 1, name: 'out', bank: 0, guest: false });
+  const safe = world.spawnPlayer('safe', null, { id: 2, name: 'safe', bank: 0, guest: false });
+  const keep = () => {
+    Object.assign(out, { x: ((far % u.cols) + 0.5) * u.cell, y: (Math.floor(far / u.cols) + 0.5) * u.cell, health: out.maxHealth });
+    Object.assign(safe, { x: hall.x + hall.w / 2, y: hall.y + hall.h / 2, health: safe.maxHealth });
+  };
+  keep();
+  f.raining = true;
+  world.step(0.1);
+  assert.ok(f.active);
+  assert.ok(f.events.some((e) => e.kind === 'flood_warning'), 'warned');
+  run(5);
+  assert.ok(world.homeless.list.every((h) => [out, safe].some((p) => Math.hypot(p.x - h.x, p.y - h.y) < c.clear)), 'the homeless have cleared out');
+  assert.ok(world.giantRats.list.every((r) => [out, safe].some((p) => Math.hypot(p.x - r.x, p.y - r.y) < c.clear)), 'and the rats');
+  assert.equal(f.goneTraders.size + u.traders.filter((t) => [out, safe].some((p) => Math.hypot(p.x - t.x, p.y - t.y) < c.clear)).length, u.traders.length, 'the traders too');
+  assert.equal(world.underground.trade(Object.assign(out, { x: u.traders[[...f.goneTraders][0]].x + 40, y: u.traders[[...f.goneTraders][0]].y }), 'bread'), 'too_far', 'no trading with a trader who has gone');
+  keep();
+  f.kills.length = 0;
+  for (let t = 0; t < c.waveSec - c.deepSec - 15; t += 1) { world.step(1); keep(); }
+  assert.ok(!f.deep, 'walkable at first');
+  for (let t = c.waveSec - c.deepSec - 15; t < c.waveSec - 10; t += 1) { world.step(1); keep(); }
+  assert.ok(f.deepAt(out.x, out.y), 'deep before the wave: swimming');
+  assert.ok(!f.deepAt(safe.x, safe.y), 'not in the oil hall');
+  assert.ok(f.level === 1, 'risen');
+  assert.ok(world.players.has(out.id), 'still alive before the wave');
+  assert.ok(f.events.some((e) => e.kind === 'flood_wave_soon'), 'a last warning');
+  let t = 0;
+  while (world.players.has(out.id) && t < 60) { world.step(0.5); Object.assign(safe, { x: hall.x + hall.w / 2, y: hall.y + hall.h / 2 }); t += 0.5; }
+  assert.ok(!world.players.has(out.id), 'the wave got the one out in the tunnels');
+  assert.ok(world.players.has(safe.id), 'not the one in the oil hall');
+  assert.ok(t * c.waveSpeed > f.distAt(((far % u.cols) + 0.5) * u.cell, (Math.floor(far / u.cols) + 0.5) * u.cell) - c.waveSpeed, 'it took its time getting there');
+  // Still raining: another wave a while later. Then the rain stops: it drains, and they come back.
+  assert.ok(f.nextWave > c.waveSec - 60, 'the next one is on its way');
+  f.raining = false;
+  run(c.drainSec + 70);
+  assert.ok(!f.active && f.level === 0, 'drained');
+  assert.equal(f.goneTraders.size, 0, 'the traders are back');
+  assert.ok(f.events.some((e) => e.kind === 'flood_over'));
+  run(config.homeless.respawnSec + 30);
+  assert.ok(world.homeless.list.length > 2, 'the homeless come back in time');
+}

@@ -115,7 +115,7 @@ export class Homeless {
   step(dt) {
     this.time += dt;
     const c = config.homeless;
-    for (let i = this.timers.length - 1; i >= 0; i--) {
+    for (let i = this.timers.length - 1; i >= 0 && !this.world.flood?.active; i--) { // (nobody new while it's flooded)
       if ((this.timers[i][1] -= dt) > 0) continue;
       if (this.#spawn(this.timers[i][0])) this.timers.splice(i, 1);
       else this.timers[i][1] = 10; // (nowhere out of sight just now: try again in a bit)
@@ -274,6 +274,13 @@ export class Homeless {
   hitBy(ax, ay, bx, by, r, segmentDistSq) {
     for (const h of this.list) if (segmentDistSq(ax, ay, bx, by, h.x, h.y) < (config.homeless.radius + r) ** 2) return h;
     return null;
+  }
+
+  /** Gone, with nothing left behind (cleared out by a flood, or swept off by its wave): someone new turns up later. */
+  vanish(h) {
+    if (!this.list.includes(h)) return;
+    this.list.splice(this.list.indexOf(h), 1);
+    this.timers.push([h.kind, config.homeless.respawnSec]);
   }
 
   /** Hurt by `attacker`: he fights back (whichever kind he is). Killed: a body with his knife and a few coins. */

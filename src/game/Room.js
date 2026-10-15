@@ -139,6 +139,7 @@ export class Room {
     this.world.night = this.env.isNight;
     this.world.dayClock = this.env.clock; // seconds into the day (meal times at the prison)
     this.world.dayNumber = Math.floor(this.env.time / this.env.cycle);
+    if (this.world.flood) this.world.flood.raining = this.env.intensity('rain') >= config.flood.rainFrom && (this.env.season.name !== 'winter' || this.env.time < (this.env.floodUntil ?? 0)); // (rain up in town floods it; snow doesn't — unless the admin's /flood)
     if (this.env.time - this.lastEnvBroadcast >= config.environment.broadcastEverySec) {
       this.lastEnvBroadcast = this.env.time;
       this.broadcast({ t: ServerMsg.ENV, ...this.env.state() });
@@ -174,6 +175,7 @@ export class Room {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send(rest.kind === 'error' ? { t: ServerMsg.ERROR, code: rest.code } : { t: ServerMsg.POLICE, ...rest });
     }
+    for (const e of this.world.flood?.events.splice(0) ?? []) this.broadcast({ t: ServerMsg.POLICE, ...e }); // flood warnings, the wave, all clear
     for (const e of this.world.giantRats?.events.splice(0) ?? []) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
@@ -484,6 +486,7 @@ export class Room {
       roomId: this.id,
       world: { width: this.world.width, height: this.world.height, kind: this.kind },
       underground: this.world.underground?.layout ?? null, // the maze down there: its grid of cells and what's in it
+      flood: this.world.flood ? config.flood : null, // (how fast a flash flood's wave goes)
       tickRate: config.tickRate,
       snapshotRate: this.snapshotRate,
       buildings: this.world.buildings,
@@ -1144,6 +1147,7 @@ export class Room {
   /** Per-client snapshot containing only what's in that client's view. */
   #sendSnapshots() {
     const tick = this.world.tick;
+    const flood = this.world.flood?.state() ?? 0;
     for (const client of this.clients) {
       const me = client.player;
       // Spectators (dead / not yet spawned) watch the world centre.
@@ -1194,6 +1198,7 @@ export class Room {
           homeless: this.world.homeless?.visible(cx, cy, config.world.viewDistance) ?? [],
           rats: this.world.giantRats?.visible(cx, cy, config.world.viewDistance) ?? [],
           oilfolk: this.world.oilHall?.visible(cx, cy, config.world.viewDistance) ?? [],
+          flood: flood, // the flash flood: [water %, seconds till the wave, how far it's got, traders gone, miner gone] (0: none)
           tnt: this.world.tnt.some((c) => c.blown) ? this.world.tnt.filter((c) => c.blown).map((c) => c.decor) : 0, // crates of dynamite that have gone off (their index in the decor)
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),
           crew: this.world.hires.visible(cx, cy, config.world.viewDistance, client.account),

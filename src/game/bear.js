@@ -58,7 +58,7 @@ export class Bears {
     this.time += dt;
     const c = config.bear;
     for (const home of this.homes) { // a while after it's killed, another one's moved in (if nobody's watching)
-      if (home.dead === null || (home.dead -= dt) > 0) continue;
+      if (home.dead === null || this.world.flood?.active || (home.dead -= dt) > 0) continue; // (nothing moves in while it's flooded)
       if ([...this.world.players.values()].some((p) => Math.hypot(p.x - home.x, p.y - home.y) < home.r + 600)) { home.dead = 20; continue; }
       this.#spawn(home);
     }
@@ -137,6 +137,13 @@ export class Bears {
   hitBy(ax, ay, bx, by, r, segmentDistSq) {
     for (const b of this.list) if (segmentDistSq(ax, ay, bx, by, b.x, b.y) < (config.bear.radius + r) ** 2) return b;
     return null;
+  }
+
+  /** Gone (cleared out by a flood, or swept off by its wave): another moves in later. */
+  vanish(b) {
+    if (!this.list.includes(b)) return;
+    this.list.splice(this.list.indexOf(b), 1);
+    b.home.dead = config.bear.respawnSec;
   }
 
   /** Hurt by `attacker`: it knows where that came from. Killed, it drops what it had in it. */

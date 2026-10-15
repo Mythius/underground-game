@@ -27,6 +27,7 @@ import { Wolves } from './wolves.js';
 import { Bears } from './bear.js';
 import { Homeless } from './homeless.js';
 import { GiantRats } from './giantRats.js';
+import { Flood } from './flood.js';
 import { OilHall } from './oilhall.js';
 import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
@@ -233,6 +234,7 @@ export class World {
     this.homeless = map?.underground ? new Homeless(this, map.underground) : null; // (the knife-carrying homeless down there)
     this.giantRats = map?.underground ? new GiantRats(this, map.underground) : null; // (and rats the size of dogs)
     this.oilHall = map?.underground?.oil ? new OilHall(this, map.underground) : null; // (the oil hall: its watchers, workers and prisoners)
+    this.flood = map?.underground ? new Flood(this, map.underground) : null; // (flash floods down there while it rains in town)
     this.rebuildGrid();
   }
 
@@ -1038,6 +1040,12 @@ export class World {
       this.removePlayer(p.id);
       deaths.push({ victim: p, killer: { name: 'the albino bear' } });
     }
+    this.flood?.step(dt);
+    for (const p of this.flood?.kills.splice(0) ?? []) {
+      if (!this.players.has(p.id)) continue;
+      this.removePlayer(p.id);
+      deaths.push({ victim: p, killer: { name: 'the flood' } });
+    }
     this.homeless?.step(dt);
     for (const p of this.homeless?.kills.splice(0) ?? []) {
       if (!this.players.has(p.id)) continue;
@@ -1389,7 +1397,7 @@ export class World {
       }
       const { angle, boost } = p.input;
       const throttle = p.vehicle || (p.jailed && !p.jailed.prison) || p.hidden ? 0 : p.input.throttle; // drivers use gas/steer instead; prisoners and the hidden stay put
-      const swimming = !p.vehicle && this.isSwimming(p.x, p.y);
+      const swimming = !p.vehicle && (this.isSwimming(p.x, p.y) || this.flood?.deepAt(p.x, p.y)); // (a flood down there, deep: everyone swims)
       let speed = p.speed * throttle * (swimming ? o.swimSpeed : 1) * (p.carrying ? config.bodies.carrySpeed : 1); // keep in sync with the client
 
       // Keep in sync with stepMove() in public/index.html, which predicts this on the client.
