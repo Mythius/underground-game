@@ -1573,6 +1573,14 @@
           L(g, 28, 28, 54, 54, '#d4a017', 6);
           R(g, 44, 50, 6, 10, '#d4a017'); R(g, 50, 44, 10, 6, '#d4a017');
         },
+        'tool:bunkerkey': (g) => { // a heavy black iron key
+          g.strokeStyle = '#6a6f75'; g.lineWidth = 7; g.beginPath(); g.arc(20, 20, 11, 0, Math.PI * 2); g.stroke(); // a grey rim so it shows on dark slots
+          L(g, 28, 28, 54, 54, '#6a6f75', 9); R(g, 42, 49, 9, 13, '#6a6f75'); R(g, 49, 42, 13, 9, '#6a6f75');
+          g.strokeStyle = '#111'; g.lineWidth = 5; g.beginPath(); g.arc(20, 20, 11, 0, Math.PI * 2); g.stroke();
+          L(g, 28, 28, 54, 54, '#111', 7);
+          R(g, 43, 50, 7, 11, '#111'); R(g, 50, 43, 11, 7, '#111');
+          L(g, 30, 31, 50, 51, 'rgba(255,255,255,.18)', 1.5); // a dull sheen
+        },
         'tool:scythe': (g) => {
           L(g, 14, 58, 30, 8, '#8b5a2b', 4); L(g, 18, 40, 26, 42, '#8b5a2b', 4);
           g.fillStyle = '#b8bec6'; g.beginPath(); g.moveTo(30, 8); g.quadraticCurveTo(52, 6, 60, 30); g.quadraticCurveTo(50, 14, 30, 14); g.fill();
@@ -3950,20 +3958,15 @@
 
     // The locked trapdoor in a bunker's floor (E). It never opens… as far as anyone knows.
     const TRAPDOOR_LINES = [
-      'Locked. A heavy padlock, rusted shut.',
-      'You rattle the padlock. Somewhere below, something rattles back.',
-      'Locked tight. Cold air seeps up round the edges.',
-      'Locked. Stencilled on the iron: «ПОСТОРОННИМ ВХОД ВОСПРЕЩЁН» — no entry.',
-      'You knock. The echo goes down a long, long way.',
-      'Locked. The padlock looks newer than the bunker.',
+      'Locked. Looks like two big drunk guys have slept here recently.',
     ];
     let openTraps = new Set(), openTrapsKey = ''; // the trapdoors (decor) a guard's key has opened
     function rattleTrapdoor() {
       const t = nearestTrapdoor();
-      if (t && openTraps.has(t)) return toast('🕳️ The hatch hangs open. An iron ladder goes down into the dark… (nothing to find down there yet)', 3800);
+      if (t && openTraps.has(t)) return toast('🕳️ The hatch hangs open. An iron ladder goes down into the dark…', 3800);
       if (t && inv.some((s) => isTool(s) && s[1] === 'bunkerkey')) return send({ t: 'trapdoor', id: t.bunker });
       sfx('error');
-      toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]} (One of the governor's guards might carry a key.)`, 3600);
+      toast(`🔒 ${TRAPDOOR_LINES[Math.floor(Math.random() * TRAPDOOR_LINES.length)]}`, 3600);
     }
 
     function nearestTrapdoor() {
@@ -8560,11 +8563,10 @@
           rect(0.75, 2.6, -0.035, 0.035, '#c9a26a');
           g.fillStyle = '#7d838a'; g.beginPath(); g.arc(0.55, 0.16, 0.13, 0, Math.PI * 2); g.fill();
           break;
-        case 'bunkerkey': // a heavy iron key with a red tag
-          g.strokeStyle = '#8d949c'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0, 0.18, 0, Math.PI * 2); g.stroke();
-          rect(0.68, 1.2, -0.05, 0.05, '#8d949c');
-          rect(1.02, 1.12, 0.05, 0.2, '#8d949c'); rect(0.86, 0.94, 0.05, 0.15, '#8d949c');
-          rect(0.2, 0.36, -0.12, 0.12, '#b03a2e');
+        case 'bunkerkey': // a heavy black iron key
+          g.strokeStyle = '#111'; g.lineWidth = 0.1; g.beginPath(); g.arc(0.5, 0, 0.18, 0, Math.PI * 2); g.stroke();
+          rect(0.68, 1.2, -0.05, 0.05, '#111');
+          rect(1.02, 1.12, 0.05, 0.2, '#111'); rect(0.86, 0.94, 0.05, 0.15, '#111');
           break;
         case 'key':
           g.strokeStyle = '#d4a017'; g.lineWidth = 0.08; g.beginPath(); g.arc(0.5, 0, 0.16, 0, Math.PI * 2); g.stroke();
