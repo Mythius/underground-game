@@ -12479,9 +12479,9 @@
       // A long trench coat: its skirt trails out behind, belted at the waist, collar up.
       if (look.coat) {
         ctx.fillStyle = shade(look.coat, 0.8);
-        ctx.beginPath(); ctx.roundRect(-0.95, -0.98, 1.4, 1.96, 0.45); ctx.fill();
+        ctx.beginPath(); ctx.roundRect(-0.8, -0.98, 1.25, 1.96, 0.45); ctx.fill();
         ctx.strokeStyle = shade(look.coat, 0.55); ctx.lineWidth = 0.06; ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-0.95, 0); ctx.lineTo(-0.45, 0); ctx.stroke(); // the vent at the back
+        ctx.beginPath(); ctx.moveTo(-0.8, 0); ctx.lineTo(-0.45, 0); ctx.stroke(); // the vent at the back
       }
       // Shoulders / torso
       ctx.fillStyle = look.coat ?? look.leather ?? color;
