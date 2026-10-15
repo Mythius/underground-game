@@ -113,7 +113,7 @@ export class Player {
     this.selected = slot;
   }
 
-  applyInput({ seq, angle, throttle, boost, aim = angle, fire = false, reload = false, use = false, slot = null, gas = 0, steer = 0, drift = false, rob = false }) {
+  applyInput({ seq, angle, throttle, boost, aim = angle, fire = false, reload = false, use = false, slot = null, gas = 0, steer = 0, drift = false, rob = false, light = false }) {
     if (seq <= this.lastInputSeq) return; // stale / reordered
     this.lastInputSeq = seq;
     this.input.angle = angle;
@@ -128,6 +128,7 @@ export class Player {
     this.input.steer = steer;
     this.input.drift = drift;
     this.input.rob = rob; // held: robbing goes on only while F is down
+    this.input.light = light; // a flashlight on (underground: everyone sees the beam)
     if (slot !== null && slot < this.inventory.length) this.selectSlot(slot);
   }
 

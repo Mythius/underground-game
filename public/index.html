@@ -938,6 +938,7 @@
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
+      if (under && !flashHinted) { flashHinted = true; toast(`🔦 It's dark down here — ${touchMode ? '🔦' : 'C'} for your flashlight`); }
       rats.list = []; // (the last world's rats)
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] })),
         ...(under?.decor ?? []).filter((d) => d.k === 'tnt').map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))]; // (a crate of dynamite: solid till it goes off — d.open)
@@ -5104,7 +5105,7 @@
       }
       const ox = w / 2 - camera.x, oy = h / 2 - camera.y; // world → screen
       const focus = me && playing ? { x: me.x + ox, y: me.y + oy } : { x: w / 2, y: h / 2 };
-      if (under) return drawUnderShade(w, h, focus);
+      if (under) return drawUnderShade(w, h, now);
       ctx.save();
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 
@@ -5669,6 +5670,7 @@
       chop: (o) => { tone(o, { dur: 0.1, freq: 160, endFreq: 90, vol: 0.4 }); noiseBurst(o, { dur: 0.08, filter: 'lowpass', freq: 1200, vol: 0.4 }); },
       harvest: (o) => { noiseBurst(o, { dur: 0.18, freq: 4200, q: 1, vol: 0.25, endFreq: 2000 }); },
       lockpick: (o) => { tone(o, { dur: 0.03, type: 'square', freq: 2400 + Math.random() * 800, vol: 0.08 }); },
+      torch: (o) => { tone(o, { dur: 0.025, type: 'square', freq: 1100, vol: 0.1 }); noiseBurst(o, { dur: 0.04, freq: 3200, q: 2, vol: 0.3 }); }, // a flashlight's switch: click
       cast: (o) => { noiseBurst(o, { dur: 0.25, freq: 1800, endFreq: 500, q: 1, vol: 0.18 }); tone(o, { at: 0.32, dur: 0.08, freq: 700, endFreq: 300, vol: 0.15 }); },
       splash: (o) => { noiseBurst(o, { dur: 0.3, filter: 'lowpass', freq: 1800, endFreq: 250, vol: 0.35 }); },
       reel: (o) => { for (let i = 0; i < 6; i++) tone(o, { at: i * 0.035, dur: 0.02, type: 'square', freq: 1500, vol: 0.05 }); },
@@ -8126,6 +8128,7 @@
       }
       if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; } // (the sound plays when it's paid)
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
+      if (playing && e.code === 'KeyC' && under && !e.repeat && document.activeElement !== chatInput) { flashlight = !flashlight; sfx('torch'); return; } // the flashlight, underground
       if (playing && e.code === 'KeyH' && me?.car?.type === 'police' && !e.repeat && document.activeElement !== chatInput) { send({ t: 'siren' }); return; } // a stolen Militsiya car's siren
       if (playing && (e.code === 'KeyV' || e.code === 'KeyN') && (me?.car || riding) && !e.repeat && document.activeElement !== chatInput) { send({ t: 'radio', action: e.code === 'KeyV' ? 'toggle' : 'next' }); return; } // the car radio
       if (playing && e.code === 'KeyP' && !me?.car && !e.repeat && document.activeElement !== chatInput) { // pet the cat (in my arms, or one beside me that knows me)
@@ -8264,7 +8267,7 @@
       if (!playing) return;
       const { angle, throttle, boost, gas, steer, drift } = moveInput();
       pending.push({ seq, angle, throttle, boost, gas, steer, drift, time: performance.now() });
-      send({ t: 'input', seq: seq++, angle, throttle, boost, aim: aimAngle(), fire: firing, reload: reloadRequested, use: useRequested, slot: selectedSlot, gas, steer, drift, rob: robHeld });
+      send({ t: 'input', seq: seq++, angle, throttle, boost, aim: aimAngle(), fire: firing, reload: reloadRequested, use: useRequested, slot: selectedSlot, gas, steer, drift, rob: robHeld, light: flashlight && Boolean(under) });
       reloadRequested = false;
       useRequested = false;
     }, 1000 / 30);
@@ -8382,6 +8385,7 @@
       { code: 'KeyG', label: '💰 Bribe', show: () => myRoadblock() },
       { code: 'KeyH', label: '🚨', show: () => me?.car?.type === 'police' },
       { code: 'KeyC', label: '💡', show: () => me?.car },
+      { code: 'KeyC', label: '🔦', show: () => under && !me?.car }, // the flashlight
       { code: 'KeyV', label: '📻', show: () => me?.car || riding },
       { code: 'KeyN', label: '⏭', show: () => me?.car || riding },
       { code: 'ShiftLeft', label: 'Brake', hold: true, show: () => me?.car },
@@ -8716,8 +8720,8 @@
       if (late < 1000) jitterMs = late > jitterMs ? late : jitterMs + (late - jitterMs) * 0.005; // (a backgrounded tab's backlog isn't jitter)
 
       const players = new Map();
-      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held, swings] of msg.players) {
-        players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held });
+      for (const [id, x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held, swings, light] of msg.players) {
+        players.set(id, { x, y, r, hp, aim, weapon, maxHp, cop, wanted, sleeping, held, light: light === 1 });
         const seen = swingsSeen.get(id);
         if (!seen) swingsSeen.set(id, { n: swings, at: -1e9 }); // (first sight: no swing to show)
         else if (seen.n !== swings) Object.assign(seen, { n: swings, at: performance.now() + interpDelay }); // they swung: animate it (when their interpolated body gets there)
@@ -8869,7 +8873,7 @@
       for (const [id, pb] of b.players) {
         const pa = a.players.get(id);
         players.set(id, pa
-          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon, cop: pb.cop, wanted: pb.wanted, sleeping: pb.sleeping, held: pb.held }
+          ? { x: lerp(pa.x, pb.x, t), y: lerp(pa.y, pb.y, t), r: lerp(pa.r, pb.r, t), hp: pb.hp, maxHp: pb.maxHp, aim: lerpAngle(pa.aim, pb.aim, t), weapon: pb.weapon, cop: pb.cop, wanted: pb.wanted, sleeping: pb.sleeping, held: pb.held, light: pb.light }
           : pb);
       }
       const bullets = new Map();
@@ -13505,21 +13509,98 @@
     }
 
     /** Underground there's no sky: just the gloom, closing in round the edges. (Proper lighting comes later.) */
-    function drawUnderShade(w, h, focus) {
+    // ---- the dark underground: near black but for its lights — the traders' and the old miner's lanterns, his
+    // campfire, the oil hall's strip lights, fires, gunfire, the tunnels' signal lamps — and flashlights (C), which
+    // shine the way you aim and stop at the rock. Everyone sees everyone's beam. Drawn at low resolution, like the night.
+    let flashlight = false; // mine switched on
+    let flashHinted = false; // told about it (once a visit to the page)
+    let lastShown = new Map(); // the players as drawn this frame: their beams
+    const UG_DARK = 0.97; // how much of the view the dark hides, away from any light
+    const BEAM = { range: 640, half: 0.44, core: 0.22, rays: 36 };
+
+    /** How far a ray from (x, y) at angle a gets before the rock (a little way into it, so the wall's face is lit). */
+    function rayToRock(x, y, a, range) {
+      const C = under.cell, step = C / 4, dx = Math.cos(a), dy = Math.sin(a);
+      for (let d = step; d < range; d += step) if (ugCell(Math.floor((x + dx * d) / C), Math.floor((y + dy * d) / C)) === UGC.ROCK) return d + step;
+      return range;
+    }
+
+    /** A flashlight's beam punched out of the dark: a fan of rays from (x, y) toward `aim`, brightest close to. */
+    function beamHole(x, y, aim, half, strength) {
+      skx.beginPath();
+      skx.moveTo(x, y);
+      for (let i = 0; i <= BEAM.rays; i++) {
+        const a = aim - half + (2 * half * i) / BEAM.rays, d = rayToRock(x, y, a, BEAM.range);
+        skx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d);
+      }
+      skx.closePath();
+      const g = skx.createRadialGradient(x, y, 15, x, y, BEAM.range);
+      g.addColorStop(0, `rgba(0, 0, 0, ${strength})`);
+      g.addColorStop(0.55, `rgba(0, 0, 0, ${strength * 0.8})`);
+      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      skx.fillStyle = g;
+      skx.fill();
+    }
+
+    function drawUnderShade(w, h, now) {
+      const seen = (x, y, m) => x > viewBox.l - m && x < viewBox.r + m && y > viewBox.t - m && y < viewBox.b + m;
+      skx.setTransform(1, 0, 0, 1, 0, 0);
+      skx.globalCompositeOperation = 'source-over';
+      skx.clearRect(0, 0, skyCanvas.width, skyCanvas.height);
+      skx.fillStyle = `rgba(0, 0, 0, ${UG_DARK})`;
+      skx.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+      skx.globalCompositeOperation = 'destination-out';
+      skx.setTransform(SKY_SCALE * viewZ, 0, 0, SKY_SCALE * viewZ, SKY_SCALE * (w / 2 - camera.x * viewZ), SKY_SCALE * (h / 2 - camera.y * viewZ)); // (world coordinates, like the view)
+      if (me && playing && !hiddenSelf) lightHole(me.x, me.y, 25, 150, 0.55); // my own eyes: just the walls round me
+      // Flashlights: mine (where I'm aiming right now) and everyone else's.
+      const beam = (x, y, aim) => {
+        beamHole(x, y, aim, BEAM.half, 0.5);
+        beamHole(x, y, aim, BEAM.core, 0.85);
+        lightHole(x, y, 0, 80, 0.45); // (the spill round whoever holds it)
+      };
+      if (flashlight && me && playing && !hiddenSelf) beam(me.x, me.y, aimAngle());
+      for (const [id, p] of lastShown) if (id !== myId && p.light && seen(p.x, p.y, BEAM.range)) beam(p.x, p.y, p.aim);
+      // The lanterns, the miner's campfire and the tunnels' signal lamps.
+      under.lights ??= (under.decor ?? []).filter((d) => (d.k === 'lantern' && d.lit) || d.k === 'campfire' || d.k === 'signal');
+      for (const d of under.lights) {
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+        if (d.k === 'signal') { if (seen(cx, cy, 120)) lightHole(cx, cy, 0, 95, 0.35); }
+        else if (d.k === 'campfire') { if (seen(cx, cy, 420)) lightHole(cx, cy, 40, 360 + 16 * Math.sin(now / 110 + cx) * Math.sin(now / 270), 0.95); }
+        else if (seen(cx, cy, 340)) lightHole(cx, cy, 40, 320, 0.95);
+      }
+      // The oil hall: strip lights all over, softening off into the doorways.
+      const hall = under.oil?.hall;
+      if (hall && hall.x < viewBox.r + 100 && hall.x + hall.w > viewBox.l - 100 && hall.y < viewBox.b + 100 && hall.y + hall.h > viewBox.t - 100) {
+        for (const [m, a] of [[0, 0.75], [45, 0.35], [100, 0.2]]) {
+          skx.fillStyle = `rgba(0, 0, 0, ${a})`;
+          skx.fillRect(hall.x - m, hall.y - m, hall.w + m * 2, hall.h + m * 2);
+        }
+      }
+      for (const [id, fx, fy, r] of flames) if (seen(fx, fy, 300)) lightHole(fx, fy, 0, r * 2.6 + 12 * Math.sin(now / 90 + id), 0.95); // Molotov fires
+      for (const f of flashes) { // gunfire: a flash of light round the shooter
+        const age = (now - f.born) / 70;
+        if (age < 1 && seen(f.x, f.y, 300)) lightHole(f.x, f.y, 0, 280, 0.9 * (1 - age));
+      }
       ctx.save();
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-      const g = ctx.createRadialGradient(focus.x, focus.y, 180, focus.x, focus.y, Math.max(w, h) * 0.7);
-      g.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      g.addColorStop(1, 'rgba(0, 0, 0, .6)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(skyCanvas, 0, 0, w, h);
       ctx.restore();
-      if (shownRats.size) { // the giant rats' eyes glow through the gloom
-        ctx.save();
-        ctx.setTransform(DPR * viewZ, 0, 0, DPR * viewZ, DPR * (w / 2 - camera.x * viewZ), DPR * (h / 2 - camera.y * viewZ));
-        for (const [id, r] of shownRats) drawRatEyeGlow(r, id, performance.now(), 0.8);
-        ctx.restore();
+      ctx.save();
+      ctx.setTransform(DPR * viewZ, 0, 0, DPR * viewZ, DPR * (w / 2 - camera.x * viewZ), DPR * (h / 2 - camera.y * viewZ));
+      ctx.globalCompositeOperation = 'lighter';
+      for (const d of under.lights) { // the signal lamps' red glow on the tunnel walls
+        if (d.k !== 'signal') continue;
+        const cx = d.x + d.w / 2, cy = d.y + d.h / 2;
+        if (!seen(cx, cy, 60)) continue;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 45);
+        g.addColorStop(0, 'rgba(255, 40, 30, .35)');
+        g.addColorStop(1, 'rgba(255, 40, 30, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, 45, 0, Math.PI * 2); ctx.fill();
       }
+      ctx.globalCompositeOperation = 'source-over';
+      for (const [id, r] of shownRats) drawRatEyeGlow(r, id, performance.now(), 0.8); // the giant rats' eyes glow through the dark
+      ctx.restore();
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
@@ -13583,6 +13664,7 @@
       interpDelay += (delayTarget - interpDelay) * Math.min(1, dt * (delayTarget > interpDelay ? 2 : 0.3)); // (slow enough that the view's clock only slows or speeds a touch)
       const view = clockOffset === null ? interpolated(0) : interpolated(frameTime - clockOffset - interpDelay);
       const shown = new Map(view.players); // copy: view may be a buffered snapshot
+      lastShown = shown; // (for their flashlights, underground)
 
       // Move my player locally every frame, and fold in a share of any server correction.
       if (me && playing) {

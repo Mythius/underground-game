@@ -1162,7 +1162,7 @@ export class Room {
           if (e.vehicle) continue; // drawn as their vehicle
           if (e.hidden && e !== me) continue; // in a dumpster: nobody else sees them
           const aim = Math.round(e.input.aim * 100) / 100;
-          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0, e.sleeping ? 1 : 0, heldIcon(e), e.swings ?? 0]); // (in Militsiya uniform; wanted — only officers are told; asleep in bed; goods or food in hand; knife/bat swings so far, to animate them)
+          players.push([e.id, round1(e.x), round1(e.y), round1(e.radius), Math.ceil(e.health), aim, e.weapon?.type ?? e.tool?.type ?? null, e.maxHealth, e.account?.cop ? 1 : e.jailed?.prison ? 2 : 0, me?.account?.cop && e.wanted ? 1 : 0, e.sleeping ? 1 : 0, heldIcon(e), e.swings ?? 0, this.kind === 'underground' && e.input?.light ? 1 : 0]); // (in Militsiya uniform; wanted — only officers are told; asleep in bed; goods or food in hand; knife/bat swings so far, to animate them; flashlight on)
           if (e.fishing && e !== me) lines.push([e.id, Math.round(e.fishing.x), Math.round(e.fishing.y), e.fishing.victim ? 2 : e.fishing.phase === 'bite' ? 1 : 0]); // 2: hooked onto a player
         } else if (e.kind === 'pickup') {
           const at = [e.id, Math.round(e.x), Math.round(e.y)];

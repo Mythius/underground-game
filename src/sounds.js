@@ -94,6 +94,7 @@ export const SOUND_SLOTS = [
     { id: 'alarm', name: 'Wanted (crime reported)' },
     { id: 'busted', name: 'Arrested' },
     { id: 'lockpick', name: 'Picking a lock (repeats)' },
+    { id: 'torch', name: 'Flashlight switch (C, underground)' },
     { id: 'pickpocket', name: 'Pickpocketing' },
     { id: 'atmSmash', name: 'An ATM bursting open (bat)' },
     { id: 'bribe', name: 'Paying a bribe at a checkpoint' },

@@ -46,7 +46,7 @@ test('bank requests need a valid action and a positive whole amount', () => {
 
 test('clamps input throttle and coerces boost', () => {
   const { msg } = decodeClientMessage('{"t":"input","seq":3,"angle":1.5,"throttle":9,"boost":"yes"}');
-  assert.deepEqual(msg, { t: 'input', seq: 3, angle: 1.5, throttle: 1, boost: false, aim: 1.5, fire: false, reload: false, use: false, slot: null, gas: 0, steer: 0, drift: false, rob: false });
+  assert.deepEqual(msg, { t: 'input', seq: 3, angle: 1.5, throttle: 1, boost: false, aim: 1.5, fire: false, reload: false, use: false, slot: null, gas: 0, steer: 0, drift: false, rob: false, light: false });
 });
 
 test('fishing messages: cast with an angle, pull with what you saw; rods are on the shop list', () => {

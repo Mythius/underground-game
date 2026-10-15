@@ -747,7 +747,7 @@ export function generateUnderground({ width, height, anchors = [], seed = 1937, 
     decor.push({ k: 'blocker', x: miner.x - 16, y: miner.y - 16, w: 32, h: 32, solid: true }); // (him: you can't walk through him)
     decor.push({ k: 'campfire', x: cx + 10, y: cy - 20, w: 40, h: 40, solid: true });
     decor.push({ k: 'bedroll', x: cx - 60, y: cy - 70, w: 90, h: 40 });
-    decor.push({ k: 'lantern', x: cx + 50, y: cy + 20, w: 24, h: 24 });
+    decor.push({ k: 'lantern', x: cx + 50, y: cy + 20, w: 24, h: 24, lit: true }); // (alight: one of the few lights down here)
     decor.push({ k: 'picks', x: cx + 40, y: cy - 70, w: 40, h: 40 });
     for (const o of gold) decor.push({ k: 'rubble', x: o.x - 35, y: o.y - 35, w: 70, h: 70, seed: ri(0, 9999) }); // (spoil heaped round each face)
   }

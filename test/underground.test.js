@@ -453,7 +453,7 @@ test('the trader in a bunker swaps one bottle of vodka for 3 bread, a bat, a kni
   assert.ok(u.traders.length >= u.bunkers.length / 2, 'one in most of the bunkers');
   for (const o of u.traders) assert.ok(u.bunkers.some((b) => o.x > b.x && o.x < b.x + b.w && o.y > b.y && o.y < b.y + b.h), 'in a bunker');
   assert.equal(u.decor.filter((d) => d.k === 'tent').length, u.traders.length, 'each with his tent');
-  assert.equal(u.decor.filter((d) => d.k === 'lantern' && d.lit).length, u.traders.length, 'and a lantern going');
+  assert.equal(u.decor.filter((d) => d.k === 'lantern' && d.lit).length, u.traders.length + (u.miner ? 1 : 0), 'and a lantern going (and the old miner\'s)');
   for (const o of u.traders) assert.ok(!world.isBlocked(o.x + 50, o.y + 40, 10) || !world.isBlocked(o.x - 50, o.y + 40, 10) || !world.isBlocked(o.x, o.y + 60, 10), 'you can get to him');
   assert.deepEqual(generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).traders, generateUnderground({ width: 13500, height: 13500, seed: config.underground.seed }).traders, 'always the same spots');
   const p = world.spawnPlayer('p1', null, { id: 1, name: 'p1', bank: 0, guest: false });

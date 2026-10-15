@@ -5,7 +5,7 @@ import { censor, rudeName } from '../moderation.js';
 
 export const ClientMsg = Object.freeze({
   JOIN: 'join', // { t, name, look: { skin, shirt, pants, hat }, token? } -> spawn or respawn (token = logged-in session)
-  INPUT: 'input', // { t, seq, angle, throttle, boost (sprint), aim, fire, reload, use (E: doors/vehicles), slot, gas, steer, drift, rob (F held) }
+  INPUT: 'input', // { t, seq, angle, throttle, boost (sprint), aim, fire, reload, use (E: doors/vehicles), slot, gas, steer, drift, rob (F held), light (flashlight on, underground) }
   PING: 'ping', // { t, ts }
   CHAT: 'chat', // { t, text }
   REPORT: 'report', // { t, id (player id), reason, text } report a player to the admin
@@ -128,7 +128,7 @@ const validators = {
     const aim = isFiniteNumber(m.aim) ? m.aim : m.angle;
     const unit = (v) => (isFiniteNumber(v) ? Math.min(Math.max(v, -1), 1) : 0);
     const slot = Number.isInteger(m.slot) && m.slot >= 0 && m.slot < config.player.inventorySize ? m.slot : null;
-    return { t: m.t, seq: m.seq, angle: m.angle, throttle, boost: m.boost === true, aim, fire: m.fire === true, reload: m.reload === true, use: m.use === true, slot, gas: unit(m.gas), steer: unit(m.steer), drift: m.drift === true, rob: m.rob === true };
+    return { t: m.t, seq: m.seq, angle: m.angle, throttle, boost: m.boost === true, aim, fire: m.fire === true, reload: m.reload === true, use: m.use === true, slot, gas: unit(m.gas), steer: unit(m.steer), drift: m.drift === true, rob: m.rob === true, light: m.light === true };
   },
 
   [ClientMsg.CHAT]: (m) => {
