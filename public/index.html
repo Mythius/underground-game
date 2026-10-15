@@ -7035,14 +7035,24 @@
         if (steps.dist > stride) {
           steps.dist = 0;
           const inside = insideBuilding(me.x, me.y);
-          if (!swimming && inFloodWater(me.x, me.y)) sfx('splash', null, 0.25); // (splashing through a flood)
-          else sfx(swimming ? 'swim' : winter && !inside && !onRoad(me.x, me.y) ? 'snowStep' : 'footstep', null, 0.6);
+          if (!swimming && inFloodWater(me.x, me.y)) sfx('splash', null, 0.15); // (splashing through a flood)
+          else sfx(swimming ? 'swim' : winter && !inside && !onRoad(me.x, me.y) ? 'snowStep' : 'footstep', null, 0.3);
         }
+      }
+      // The homeless underground: the same footsteps as they walk, from where they are.
+      if (under && me && playing) {
+        for (const [id, h] of shownHomeless) {
+          const last = steps.homeless.get(id);
+          steps.homeless.set(id, { x: h.x, y: h.y, dist: last ? last.dist + (Math.hypot(h.x - last.x, h.y - last.y) < 50 ? Math.hypot(h.x - last.x, h.y - last.y) : 0) : 0 });
+          const cur = steps.homeless.get(id);
+          if (cur.dist > 70) { cur.dist = 0; sfx(inFloodWater(h.x, h.y) ? 'splash' : 'footstep', { x: h.x, y: h.y }, 0.3); }
+        }
+        if (steps.homeless.size > shownHomeless.size + 20) for (const id of steps.homeless.keys()) if (!shownHomeless.has(id)) steps.homeless.delete(id);
       }
       steps.pick = (steps.pick ?? 0) - dt;
       if (crimeState.rob?.[0] === 'lockpick' && steps.pick <= 0) { steps.pick = 0.35; sfx('lockpick'); }
     }
-    const steps = { dist: 0 };
+    const steps = { dist: 0, homeless: new Map() };
 
     // ---- map editor ----------------------------------------------------------------
     //
@@ -12016,16 +12026,12 @@
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       const w = ctx.measureText(text).width + 16, h = 22;
-      ctx.fillStyle = 'rgba(250, 248, 240, .94)';
-      ctx.strokeStyle = 'rgba(0, 0, 0, .45)';
-      ctx.lineWidth = 1.5;
+      ctx.fillStyle = 'rgba(0, 0, 0, .6)'; // see-through black, white writing
       ctx.beginPath();
       ctx.roundRect(x - w / 2, y - h - 6, w, h, 8);
-      ctx.moveTo(x - 5, y - 6.5); ctx.lineTo(x, y); ctx.lineTo(x + 5, y - 6.5);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillRect(x - 4.5, y - 8, 9, 3); // hide the box's edge where the tail joins
-      ctx.fillStyle = '#1d1d1d';
+      ctx.moveTo(x - 5, y - 6); ctx.lineTo(x, y); ctx.lineTo(x + 5, y - 6);
+      ctx.fill(); // (one fill, so the tail doesn't darken where it meets the box)
+      ctx.fillStyle = '#fff';
       ctx.fillText(text, x, y - h / 2 - 6);
       ctx.restore();
     }
@@ -12725,6 +12731,7 @@
 
     // ---- giant rats (the server's: they come for you): three times an ordinary rat, mangy and dark, eyes glowing red ----
     let shownRats = new Map();
+    let shownHomeless = new Map();
     const GIANT = 3;
     const ratEyes = (r) => [-1, 1].map((side) => ({ x: r.x + (Math.cos(r.angle) * 11 - Math.sin(r.angle) * side * 2.6) * GIANT, y: r.y + (Math.sin(r.angle) * 11 + Math.cos(r.angle) * side * 2.6) * GIANT }));
     function drawGiantRat(r, id, now) {
@@ -14293,7 +14300,8 @@
         if (r.x < viewBox.l - 80 || r.x > viewBox.r + 80 || r.y < viewBox.t - 80 || r.y > viewBox.b + 80) continue;
         drawGiantRat(r, id, frameTime);
       }
-      for (const [id, h] of view.homeless ?? []) {
+      shownHomeless = view.homeless ?? new Map();
+      for (const [id, h] of shownHomeless) {
         if (h.x < viewBox.l - 60 || h.x > viewBox.r + 60 || h.y < viewBox.t - 60 || h.y > viewBox.b + 60) continue;
         drawHomeless(h, id, frameTime);
       }
