@@ -938,7 +938,6 @@
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
-      if (under && !flashHinted) { flashHinted = true; toast(`🔦 It's dark down here — ${touchMode ? '🔦' : 'C'} for your flashlight`); }
       rats.list = []; // (the last world's rats)
       solidGroups = [...buildings, ...[...terrain.trees.map((t) => t.trunk), ...(terrain.rails ?? []), ...(terrain.blocks ?? []), ...(under?.rocks ?? [])].map((rect) => ({ ...rect, walls: [rect] })), ...(under?.doors ?? []).map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] })),
         ...(under?.decor ?? []).filter((d) => d.k === 'tnt').map((d) => ({ x: d.x, y: d.y, w: d.w, h: d.h, walls: [], doors: [d] }))]; // (a crate of dynamite: solid till it goes off — d.open)
@@ -8128,7 +8127,7 @@
       }
       if (playing && e.code === 'KeyG' && myRoadblock()) { send({ t: 'bribe' }); return; } // (the sound plays when it's paid)
       if (playing && e.code === 'KeyC' && me?.car && document.activeElement !== chatInput) { send({ t: 'lights' }); return; }
-      if (playing && e.code === 'KeyC' && under && !e.repeat && document.activeElement !== chatInput) { flashlight = !flashlight; sfx('torch'); return; } // the flashlight, underground
+      if (playing && e.code === 'KeyC' && under && !e.repeat && document.activeElement !== chatInput) { flashlight = !flashlight; sfx('torch'); if (!torchUsed) { torchUsed = true; try { localStorage.setItem('ug-torch', '1'); } catch {} } return; } // the flashlight, underground
       if (playing && e.code === 'KeyH' && me?.car?.type === 'police' && !e.repeat && document.activeElement !== chatInput) { send({ t: 'siren' }); return; } // a stolen Militsiya car's siren
       if (playing && (e.code === 'KeyV' || e.code === 'KeyN') && (me?.car || riding) && !e.repeat && document.activeElement !== chatInput) { send({ t: 'radio', action: e.code === 'KeyV' ? 'toggle' : 'next' }); return; } // the car radio
       if (playing && e.code === 'KeyP' && !me?.car && !e.repeat && document.activeElement !== chatInput) { // pet the cat (in my arms, or one beside me that knows me)
@@ -13513,7 +13512,8 @@
     // campfire, the oil hall's strip lights, fires, gunfire, the tunnels' signal lamps — and flashlights (C), which
     // shine the way you aim and stop at the rock. Everyone sees everyone's beam. Drawn at low resolution, like the night.
     let flashlight = false; // mine switched on
-    let flashHinted = false; // told about it (once a visit to the page)
+    let torchUsed = false; // switched it on at least once (remembered): till then, a hint over my head down here
+    try { torchUsed = localStorage.getItem('ug-torch') === '1'; } catch {}
     let lastShown = new Map(); // the players as drawn this frame: their beams
     const UG_DARK = 0.97; // how much of the view the dark hides, away from any light
     const BEAM = { range: 640, half: 0.44, core: 0.22, rays: 64 };
@@ -13621,6 +13621,23 @@
       ctx.globalCompositeOperation = 'source-over';
       for (const [id, r] of shownRats) drawRatEyeGlow(r, id, performance.now(), 0.8); // the giant rats' eyes glow through the dark
       ctx.restore();
+      if (!torchUsed && me && playing && !hiddenSelf) { // first time down here: how to see anything
+        const text = touchMode ? 'Tap 🔦 for your flashlight' : 'Press C for your flashlight';
+        const x = (me.x - camera.x) * viewZ + w / 2, y = (me.y - camera.y) * viewZ + h / 2 - 78 + 3 * Math.sin(now / 300);
+        ctx.save();
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.font = '600 15px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(text).width + 26;
+        ctx.fillStyle = 'rgba(20, 20, 20, .85)';
+        ctx.strokeStyle = '#f5c542';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(x - tw / 2, y - 15, tw, 30, 15); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#ffe9a8';
+        ctx.fillText(text, x, y + 1);
+        ctx.restore();
+      }
     }
 
     // The minimap only shows the parts of the underground you've been through (this visit).
