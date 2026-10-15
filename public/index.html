@@ -46,6 +46,8 @@
     #open-character { margin-top: 1rem; font: inherit; font-size: .9rem; padding: .45rem 1rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #eee; cursor: pointer; }
     #open-character:hover, #open-character[aria-expanded="true"] { border-color: #f4c430; }
     .customize[hidden] { display: none; }
+    #locked-why { font-size: .75rem; color: #f4c430; margin-top: .3rem; }
+    .start button.locked { background: #333; color: #777; border-color: #444; }
     #won-count { font-size: .75rem; color: #999; margin-top: .3rem; }
     @media (max-width: 560px) { .customize { grid-template-columns: 1fr; justify-items: center; } }
     #game { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; }
@@ -591,12 +593,13 @@
         <div class="look-row"><span>Hat</span>
           <div class="hat-pick"><button type="button" data-step="-1" aria-label="Previous hat">◀</button><span id="hat-name"></span><button type="button" data-step="1" aria-label="Next hat">▶</button></div>
         </div>
-        <div class="look-row" id="coat-row" hidden><span>Coat</span>
+        <div class="look-row" id="coat-row"><span>Coat</span>
           <div class="hat-pick"><button type="button" data-coat="-1" aria-label="Previous coat">◀</button><span id="coat-name"></span><button type="button" data-coat="1" aria-label="Next coat">▶</button></div>
         </div>
-        <div class="look-row" id="shades-row" hidden><span>Shades</span>
+        <div class="look-row" id="shades-row"><span>Shades</span>
           <div class="hat-pick"><button type="button" id="shades-toggle" aria-pressed="false"></button></div>
         </div>
+        <div id="locked-why" hidden></div>
         <div id="won-count"></div>
         <button type="button" id="randomize">🎲 Random look</button>
       </div>
@@ -1430,6 +1433,13 @@
 
     document.getElementById('start').onsubmit = (e) => {
       e.preventDefault();
+      const locked = lockedPieces();
+      if (locked.length) {
+        toast(`🔒 You haven't won the ${locked.map((w) => w.name.toLowerCase()).join(' or the ')} yet — take it off in 👤 Character to start`, 4000);
+        const panel = document.getElementById('character');
+        if (panel.hidden) document.getElementById('open-character').click();
+        return;
+      }
       play.disabled = true;
       initAudio(); // browsers only allow sound after a click
       if (isAdmin && session && worldPref === 'underground') send({ t: 'world', to: 'underground', token: session.token }); // (the server forgets between visits)
@@ -5271,21 +5281,29 @@
           return b;
         }));
       }
-      // Only what I've won: a hat I haven't got goes back to the cap.
-      if (!owned.has(looks.hats[myLook.hat])) myLook.hat = Math.max(0, looks.hats.indexOf('cap'));
-      if (myLook.coat && !owned.has(myLook.coat)) myLook.coat = null;
-      if (myLook.shades && !owned.has('shades')) myLook.shades = false;
-      document.getElementById('hat-name').textContent = HAT_NAMES[looks.hats[myLook.hat]] ?? looks.hats[myLook.hat];
-      const coats = WARDROBE.filter((w) => w.part === 'coat' && owned.has(w.id));
-      document.getElementById('coat-row').hidden = !coats.length;
-      document.getElementById('coat-name').textContent = WARDROBE.find((w) => w.id === myLook.coat)?.name ?? 'None';
-      document.getElementById('shades-row').hidden = !owned.has('shades');
+      // Every piece can be tried on to look at; one I haven't won shows 🔒 and how to win it, and Start waits till it's off.
+      if (!looks.hats[myLook.hat]) myLook.hat = Math.max(0, looks.hats.indexOf('cap'));
+      const hatId = looks.hats[myLook.hat];
+      const lock = (id) => (owned.has(id) ? '' : '🔒 ');
+      document.getElementById('hat-name').textContent = lock(hatId) + (HAT_NAMES[hatId] ?? hatId);
+      document.getElementById('coat-name').textContent = (myLook.coat ? lock(myLook.coat) : '') + (WARDROBE.find((w) => w.id === myLook.coat)?.name ?? 'None');
       const shadesBtn = document.getElementById('shades-toggle');
-      shadesBtn.textContent = myLook.shades ? '🕶️ On' : 'Off';
+      shadesBtn.textContent = myLook.shades ? `${lock('shades')}🕶️ On` : 'Off';
       shadesBtn.setAttribute('aria-pressed', String(Boolean(myLook.shades)));
+      const locked = lockedPieces();
+      document.getElementById('locked-why').hidden = !locked.length;
+      document.getElementById('locked-why').textContent = locked.map((w) => `🔒 ${w.name}: ${w.why ?? 'not won yet'}`).join(' · ');
+      play.classList.toggle('locked', locked.length > 0);
+      play.title = locked.length ? 'Take off what you haven\'t won to start' : '';
       const winnable = WARDROBE.filter((w) => !w.free);
       document.getElementById('won-count').textContent = `${winnable.filter((w) => owned.has(w.id)).length} of ${winnable.length} hats and outfits won — do things round town to win more`;
       drawPreview();
+    }
+
+    /** The pieces I'm trying on but haven't won (Start won't go while there are any). */
+    function lockedPieces() {
+      const ids = [looks.hats[myLook.hat], myLook.coat, myLook.shades && 'shades'].filter((id) => id && !owned.has(id));
+      return ids.map((id) => WARDROBE.find((w) => w.id === id) ?? { id, name: HAT_NAMES[id] ?? id });
     }
 
     function lookChanged() {
@@ -5302,14 +5320,14 @@
 
     for (const b of document.querySelectorAll('.hat-pick button[data-step]')) {
       b.onclick = () => {
-        const mine = ownedHats(), i = Math.max(0, mine.indexOf(myLook.hat));
-        myLook.hat = mine[(i + Number(b.dataset.step) + mine.length) % mine.length];
+        const n = looks.hats.length; // (all of them, won or not, to look at)
+        myLook.hat = ((myLook.hat ?? 0) + Number(b.dataset.step) + n) % n;
         lookChanged();
       };
     }
     for (const b of document.querySelectorAll('.hat-pick button[data-coat]')) {
       b.onclick = () => {
-        const mine = [null, ...WARDROBE.filter((w) => w.part === 'coat' && owned.has(w.id)).map((w) => w.id)], i = Math.max(0, mine.indexOf(myLook.coat ?? null));
+        const mine = [null, ...WARDROBE.filter((w) => w.part === 'coat').map((w) => w.id)], i = Math.max(0, mine.indexOf(myLook.coat ?? null));
         myLook.coat = mine[(i + Number(b.dataset.coat) + mine.length) % mine.length];
         lookChanged();
       };
