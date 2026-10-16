@@ -33,6 +33,8 @@ import { radioAt } from '../radio.js';
 import { Furnishings, pick } from './furnishing.js';
 import { Prison } from './prison.js';
 import { Underground, rockRects } from './underground.js';
+import { Story } from './tutorial.js';
+import { Sisters } from './sister.js';
 
 /**
  * Pure simulation state. Knows nothing about sockets.
@@ -235,6 +237,8 @@ export class World {
     this.giantRats = map?.underground ? new GiantRats(this, map.underground) : null; // (and rats the size of dogs)
     this.oilHall = map?.underground?.oil ? new OilHall(this, map.underground) : null; // (the oil hall: its watchers, workers and prisoners)
     this.flood = map?.underground ? new Flood(this, map.underground) : null; // (flash floods down there while it rains in town)
+    this.tutorial = map?.tutorial ? new Story(this, map.tutorial) : null; // (the tutorial world: each newcomer's story)
+    this.sisters = new Sisters(this); // Katya: in her cell underground, then at home in town
     this.rebuildGrid();
   }
 
@@ -935,6 +939,7 @@ export class World {
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
+    this.tutorial?.drop(p);
     if (p.vehicle) this.leaveSeat(p);
     if (p.holdingCat) this.cats.putDown(p);
     p.alive = false;
@@ -1089,6 +1094,8 @@ export class World {
       if (this.pickups.size < this.opts.pickupMax) this.grid.insert(this.spawnPickup());
     }
     this.underground?.step(dt);
+    this.tutorial?.step(dt);
+    this.sisters.step(dt);
     return { deaths, doorChanges, explosions };
   }
 
@@ -1174,6 +1181,7 @@ export class World {
 
   /** Someone else's car (or a Militsiya one) is locked to you (not their teammates) until its lock is picked. */
   carLockedFor(v, p) {
+    if (v.storyOf) return v.storyOf !== p; // (a newcomer's Lada, in the tutorial: theirs alone)
     if (v.police) return !v.picked;
     if (!v.owner || v.owner === p.account || v.picked) return false;
     const owner = [...this.players.values()].find((o) => o.account === v.owner);
@@ -1446,7 +1454,7 @@ export class World {
     for (const v of this.vehicles.values()) {
       const d = v.driver;
       // Players drive with their input; police cruisers with the police AI's.
-      const input = d ? d.input : v.ai ?? null;
+      const input = v.script ?? (d ? d.input : v.ai ?? null); // (the tutorial's black ice takes the wheel)
       // Parked and still (most of them): nothing to simulate until something drives or shoves it.
       v.idle = !input && Math.abs(v.vx) + Math.abs(v.vy) < 1;
       if (v.idle) {
@@ -1463,7 +1471,7 @@ export class World {
       // Space with vodka in the boost tank (players only): burn it.
       v.boosting = Boolean(d && !v.police && input.boost && v.boost > 0 && gas > 0);
       if (v.boosting) v.boost = Math.max(0, v.boost - config.vehicles.boost.burnPerSec * dt);
-      stepVehicle(v, v.stats, gas, input?.steer ?? 0, input?.drift ?? false, dt, this, collide, this.gripScale * surface, v.boosting);
+      stepVehicle(v, v.stats, gas, input?.steer ?? 0, input?.drift ?? false, dt, this, collide, v.script?.grip ?? this.gripScale * surface, v.boosting);
       if ((d || v.stolenBy) && !v.police) v.fuel = Math.max(0, v.fuel - Math.hypot(v.x - fromX, v.y - fromY) * config.fuel.perUnit); // (a gangster joyriding burns it too)
       v.slipping = Math.abs(vehicleMotion(v).lateral) > 90;
       if (d) {

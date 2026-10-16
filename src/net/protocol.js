@@ -46,7 +46,8 @@ export const ClientMsg = Object.freeze({
   TRAPDOOR: 'trapdoor', // { t, id, action? } E on a bunker's trapdoor (id: the bunker): open it with a guard's key; action 'down': climb down it (once open); 'up': up the ladder you're at, underground
   MINER: 'miner', // { t } E on the old miner underground: borrow his pickaxe (or give it back)
   TRADER: 'trader', // { t, item: 'bread' | 'bat' | 'knife' | 'molotov' } the trader in a bunker underground: one bottle of vodka for it
-  WORLD: 'world', // { t, to: 'town' | 'underground', token } admin: which world to play in (now, if playing, and on every spawn)
+  WORLD: 'world', // { t, to: 'town' | 'underground' | 'tutorial', token } admin: which world to play in (now, if playing, and on every spawn)
+  STORY: 'story', // { t, action: 'skip' } a newcomer in the tutorial: skip it, straight to town
   CREW: 'crew', // { t, action: 'away' | 'out' | 'fire' | 'mode' (mode: 'follow' | 'wait') | 'post' (post: building id), id } the clipboard: your goons and guards
   HIRE: 'hire', // { t, action: 'goon' | 'guard' (id = building to guard) | 'hitman' (id = target player) | 'dismiss' (id = hire), id? } at the bar
 });
@@ -94,6 +95,7 @@ export const ServerMsg = Object.freeze({
   ACHIEVE: 'achieve', // { t, id } you earned an achievement (the full list comes with SPAWNED)
   UNLOCK: 'unlock', // { t, id } you won a hat, coat or shades (the full list comes with WELCOME; yours with SPAWNED)
   ERROR: 'error', // { t, code, message }
+  STORY: 'story', // { t, kind, stage, … } the tutorial: the next step of my story, or something Katya says (lifted, katya_mad…)
 });
 
 const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -238,8 +240,9 @@ const validators = {
 
   [ClientMsg.TRAPDOOR]: (m) => (Number.isInteger(m.id) && [undefined, 'down', 'up'].includes(m.action) ? { t: m.t, id: m.id, action: m.action ?? null } : null),
   [ClientMsg.MINER]: (m) => ({ t: m.t }),
+  [ClientMsg.STORY]: (m) => (m.action === 'skip' ? { t: m.t, action: m.action } : null),
   [ClientMsg.TRADER]: (m) => (config.underground.trades.includes(m.item) ? { t: m.t, item: m.item } : null),
-  [ClientMsg.WORLD]: (m) => (['town', 'underground'].includes(m.to) && typeof m.token === 'string' && m.token.length <= 100 ? { t: m.t, to: m.to, token: m.token } : null),
+  [ClientMsg.WORLD]: (m) => (['town', 'underground', 'tutorial'].includes(m.to) && typeof m.token === 'string' && m.token.length <= 100 ? { t: m.t, to: m.to, token: m.token } : null),
 
   [ClientMsg.CREW]: (m) =>
     ['away', 'out', 'fire', 'mode', 'post'].includes(m.action) && Number.isInteger(m.id) && (m.action !== 'mode' || m.mode === 'follow' || m.mode === 'wait') && (m.action !== 'post' || Number.isInteger(m.post))

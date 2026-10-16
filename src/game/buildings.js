@@ -286,6 +286,27 @@ export const BUILDING_TYPES = {
     floor: '#7a5434', wall: '#5b3a1e', roof: '#4a3020', pattern: 'planks',
   }),
 
+  // The tutorial's log cabin: a big front room (kitchen and stove, the table, the fire) and a bedroom
+  // through a door on the east side. Front door south (to the driveway), back door north (to the lake).
+  logcabin: () => ({
+    w: 440, h: 300,
+    walls: [
+      ...perimeter(440, 300, 16, { s: door(0.3, 60), n: door(0.3, 60) }),
+      ...wallLine(false, 300, 16, 284, 12, door(0.5, 56)), // the bedroom's wall
+      fireplace(16, 150, 20, 50, 1, 0), // on the west wall
+      fit('stove', 190, 16, 46, 40, '#3a3a3a'),
+      fit('fridge', 244, 16, 44, 40, '#e6e4dc'),
+    ],
+    decor: [
+      { x: 40, y: 158, w: 40, h: 34, c: '#6b3a2a' }, // a rag rug before the fire
+      fit('logs', 22, 210, 40, 50, '#7a5230'), // firewood by the hearth (what's left of it)
+      { x: 316, y: 190, w: 60, h: 40, c: '#5a3b5e' }, // a rug by the bed
+    ],
+    roofDecor: [chimney(18, 164)],
+    furnish: furnish([['bed', 360, 24, 3], ['table', 110, 130, 0], ['chair', 82, 150, 2], ['chair', 156, 150, 0]]),
+    floor: '#7a5434', wall: '#5b3a1e', roof: '#e8eef2', pattern: 'planks', // (snow on the roof)
+  }),
+
   barn: () => ({
     w: 420, h: 300,
     walls: [

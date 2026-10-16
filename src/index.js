@@ -414,8 +414,10 @@ function handleMessage(client, msg) {
           client.account = { id: null, name: msg.name, bank: config.accounts.startingBank, guest: true };
         }
       }
-      // Everyone (re)spawns in town; the admin can pick the underground (🕳 in the admin menu).
-      const world = client.admin && client.worldPref === 'underground' ? 'underground' : 'town';
+      // Everyone (re)spawns in town — newcomers in the tutorial till they're through it (or skip it); the
+      // admin can pick any world (🕳 in the admin menu).
+      const newcomer = !client.account?.guest && client.account?.tutorial === false;
+      const world = client.admin && client.worldPref ? client.worldPref : newcomer ? 'tutorial' : 'town';
       if (client.room && client.room.kind !== world) rooms.place(client, world);
       client.room?.spawn(client, msg.name, msg.look);
       break;
@@ -428,6 +430,9 @@ function handleMessage(client, msg) {
       client.send({ t: ServerMsg.DONE, what: 'world', to: client.room?.kind ?? 'town' });
       break;
     }
+    case ClientMsg.STORY: // skip the tutorial: straight to town
+      if (client.room === rooms.tutorial && client.player?.alive) rooms.leaveTutorial(client, 'skip');
+      break;
     case ClientMsg.BANK:
       client.room?.bank(client, msg.action, msg.amount);
       break;

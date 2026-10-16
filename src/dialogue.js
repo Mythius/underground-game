@@ -71,6 +71,13 @@ export const DIALOGUE = [
     { id: 'prisonerFree', name: 'Oil hall — prisoner let out', note: 'Running out of an opened cell.', lines: ['Thank you! Thank you!', 'Spasibo, friend! I won\'t forget!', 'Out! I\'m OUT!', 'God bless you, stranger!'] },
     { id: 'minerLend', name: 'Old miner — lending his pickaxe', note: 'When he hands you his pickaxe (E).', lines: ['Take it, take it. Bring it back. BRING IT BACK.', 'Hit the shiny bits. Not your foot. Hehe.', 'My pick. Mine. Yours a little while.', 'Gold sleeps in the walls. Wake it gently.'] },
   ] },
+  { group: 'Katya (your sister)', kinds: [
+    { id: 'sisterCell', name: 'Katya — in her cell', note: 'Your sister, locked in the last cell of the oil hall underground, when you come near (only you see her there).', lines: ['It\'s me! It\'s Katya! Get me out of here!', 'The overseer has the key — on his belt!', 'I knew you\'d come. I KNEW it.', 'Don\'t let him see you!'] },
+    { id: 'sisterFree', name: 'Katya — freed, hugging you (crying)', note: 'She runs out of the cell and hugs you, crying.', lines: ['You came… you actually came…', 'I thought I\'d never see you again!', 'Don\'t let go. Not yet.', 'They burned the house… I saw it from the car…', 'I\'m sorry, I\'m sorry, I\'m just so happy…'] },
+    { id: 'sisterFollow', name: 'Katya — following you out', note: 'Now and then while she follows you through the underground.', lines: ['Slower! I\'ve been in a box for weeks!', 'Which way is up?', 'Stay close. Please.', 'Is that a rat? That\'s a RAT.', 'Just get us home.'] },
+    { id: 'sisterHome', name: 'Katya — at home', note: 'At your house (a bought one), when you walk up to her.', lines: ['Welcome home!', 'I made tea. It\'s mostly hot water.', 'Nice place. Don\'t get used to it.', 'Did you eat today?', 'Dad would be proud of you. Sort of.'] },
+    { id: 'sisterPoor', name: 'Katya — at the starter house (calling you poor)', note: 'At your starter house, when you walk up: she wants something bigger.', lines: ['You live HERE? You\'re so poor.', 'Buy a bigger house already!', 'The cabin had more room than this, and it burned down.', 'I\'ve seen bigger kennels.', 'When are we moving somewhere decent?'] },
+  ] },
   { group: 'Militsiya', kinds: [
     { id: 'police', name: 'Front desk — hello', note: 'You walk up to the desk officer at a МИЛИЦИЯ station (apply to join here).', lines: ['Want to serve? Fill in the form.', 'Documents?', 'The Militsiya is hiring.', 'Next.'] },
     { id: 'prisonGuard', name: 'Prison guard', note: 'You walk past a guard patrolling inside the wire.', lines: ['Keep moving, zek.', 'Back to the coal face.', 'The coal won\'t dig itself.', 'Eyes down.', 'Hands where I can see them.'] },

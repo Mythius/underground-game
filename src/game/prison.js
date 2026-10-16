@@ -203,7 +203,7 @@ export class Prison {
     p.lastKnown = null;
     p.hideSpot = null;
     p.escaping = false;
-    p.jailed = { prison: true, quota: sentence.quota, coal: sentence.coal, bail: sentence.bail, stash: p.inventory };
+    p.jailed = { prison: true, quota: sentence.quota, coal: sentence.coal, bail: sentence.bail, stash: p.inventory, ...(sentence.lyosha ? { lyosha: config.tutorial.lyoshaSec } : {}) }; // (a newcomer from the tutorial: Lyosha's coming for them)
     p.inventory = p.inventory.map(() => null);
     p.inventory[0] = { type: 'pickaxe', tool: true, site: this.building.id };
     p.selected = 0;
@@ -211,7 +211,7 @@ export class Prison {
     p.x = at.x;
     p.y = at.y;
     if (p.account) {
-      p.account.prison = { quota: sentence.quota, coal: sentence.coal, bail: sentence.bail };
+      p.account.prison = { quota: sentence.quota, coal: sentence.coal, bail: sentence.bail, ...(sentence.lyosha ? { lyosha: true } : {}) };
       this.onChange?.(p.account);
     }
     return true;
@@ -232,6 +232,17 @@ export class Prison {
       this.onChange?.(p.account);
     }
     this.events.push({ player: p, kind: 'prison_out', how, by });
+  }
+
+  /**
+   * Lyosha bribes the newcomer out: he drives them to their starter house, gives them some money to start
+   * with — and their sister's knife (what the warden was keeping: the knife they spawned with).
+   */
+  #lyosha(p) {
+    this.release(p, 'lyosha');
+    const home = this.world.homes.homeOf(p.account);
+    if (home) Object.assign(p, this.world.homes.spawnPoint(home));
+    p.cash += config.tutorial.lyoshaCash;
   }
 
   /** A clear spot in the emptiest cell (or on the parade ground, if the camp has no cells). */
@@ -509,7 +520,7 @@ export class Prison {
 
   #saveSentence(p) {
     if (!p.account) return;
-    p.account.prison = { quota: p.jailed.quota, coal: p.jailed.coal, bail: p.jailed.bail };
+    p.account.prison = { quota: p.jailed.quota, coal: p.jailed.coal, bail: p.jailed.bail, ...(p.jailed.lyosha !== undefined ? { lyosha: true } : {}) };
     this.onChange?.(p.account);
   }
 
@@ -532,6 +543,10 @@ export class Prison {
     for (const p of w.players.values()) {
       if (p.alive && p.escaping && Math.hypot(p.x - mid.x, p.y - mid.y) > Math.max(b.w, b.h) / 2 + c.sniperRange) this.#gotAway(p);
       if (!p.alive || !p.jailed?.prison) continue;
+      if (p.jailed.lyosha !== undefined && (p.jailed.lyosha -= dt) <= 0) { // the newcomer's father's old friend has paid the warden off
+        this.#lyosha(p);
+        continue;
+      }
       // Past the outer fence: escaped.
       if (!inRect(b, p.x, p.y)) {
         this.#escaped(p);

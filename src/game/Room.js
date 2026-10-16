@@ -134,7 +134,7 @@ export class Room {
 
   #step(dt) {
     if (this.ownEnv) this.env.step(dt);
-    const town = this.kind === 'town'; // (no rain underground, and its lake never freezes)
+    const town = this.kind !== 'underground'; // (no rain underground, and its lake never freezes; the tutorial's always winter)
     this.world.gripScale = town ? 1 - (1 - config.environment.rainGrip) * this.env.intensity('rain') : 1;
     this.world.frozen = town && this.env.season.name === 'winter';
     this.world.night = this.env.isNight;
@@ -171,6 +171,14 @@ export class Room {
     for (const e of this.world.underground?.events.splice(0) ?? []) {
       const { player, ...rest } = e;
       this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest, miner: true });
+    }
+    for (const e of this.world.tutorial?.events.splice(0) ?? []) { // the newcomer's story: what Katya says, the next step
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.STORY, ...rest });
+    }
+    for (const e of this.world.sisters.events.splice(0)) { // Katya: let out of her cell, hugging you
+      const { player, ...rest } = e;
+      this.#clientForPlayer(player)?.send({ t: ServerMsg.POLICE, ...rest });
     }
     for (const e of this.world.bears.events.splice(0)) {
       const { player, ...rest } = e;
@@ -301,7 +309,8 @@ export class Room {
     for (const { victim, killer } of deaths) {
       // What they carried is on their body now: nothing to come back with.
       // (Died inside the wire: the warden still has your things, and you'll be back in the camp.)
-      if (victim.account?.id && !victim.account.guest) this.#store('setCarried', victim.account.id, 0, victim.jailed?.prison ? carriedSlots(victim) : null);
+      // (In the tutorial you've nothing of your own on you: what you had saved from before stays saved.)
+      if (victim.account?.id && !victim.account.guest && this.kind !== 'tutorial') this.#store('setCarried', victim.account.id, 0, victim.jailed?.prison ? carriedSlots(victim) : null);
       const client = this.#clientForPlayer(victim);
       if (client) {
         client.player = null;
@@ -311,6 +320,10 @@ export class Room {
       this.broadcast({ t: ServerMsg.PLAYER_LEFT, id: victim.id });
     }
     if (this.teams.changed.size) this.#sendTeams();
+    for (const p of this.world.tutorial?.finished.splice(0) ?? []) { // the story's over: off to the gulag
+      const c = this.#clientForPlayer(p);
+      if (c) this.onTutorialDone?.(c, 'crash');
+    }
   }
 
   /**
@@ -357,6 +370,7 @@ export class Room {
     w.hires.online = (account) => [...this.clients].some((c) => c.account === account);
     w.hires.onCrewChange = (account) => account.id && !account.guest && this.#store('setCrew', account.id, w.hires.crewSave(account));
     w.onFinesChange = (account) => account.id && !account.guest && this.#store('setFines', account.id, account.fines);
+    w.sisters.onFree = (account) => account.id && !account.guest && this.#store('setSister', account.id, true);
     w.prison.onChange = (account) => account.id && !account.guest && this.#store('setPrison', account.id, account.prison ?? null);
   }
 
@@ -404,6 +418,7 @@ export class Room {
   }
 
   #saveCarried(p) {
+    if (this.kind === 'tutorial') return; // (nothing from the tutorial comes along)
     if (p.account?.id && !p.account.guest) this.#store('setCarried', p.account.id, p.cash, carriedSlots(p));
   }
 
@@ -500,6 +515,7 @@ export class Room {
       roomId: this.id,
       world: { width: this.world.width, height: this.world.height, kind: this.kind },
       underground: this.world.underground?.layout ?? null, // the maze down there: its grid of cells and what's in it
+      tutorial: this.world.tutorial ? (({ cabin, spots, lake, iceHoles, woodlot, park, route, crash }) => ({ cabin, spots, lake, iceHoles, woodlot, park, route, crash }))(this.world.tutorial.layout) : null, // the newcomer's cabin, and where their story happens
       flood: this.world.flood ? config.flood : null, // (how fast a flash flood's wave goes)
       tickRate: config.tickRate,
       snapshotRate: this.snapshotRate,
@@ -516,7 +532,7 @@ export class Room {
       furnish: { list: this.world.furnishings.list(), kinds: PLACEABLE, cabinetSlots: config.furnishing.cabinetSlots, reach: config.furnishing.reach, placeReach: config.furnishing.placeReach, nudge: config.furnishing.nudge },
       cats: { reach: config.cats.reach },
       crows: { reach: config.crows.reach },
-      fishing: { rodPrice: config.fishing.rodPrice, pulls: config.fishing.pulls, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
+      fishing: { rodPrice: config.fishing.rodPrice, showSec: config.fishing.showSec, lineReach: config.fishing.lineReach, cast: config.fishing.cast },
       env: this.env.state(),
       achievements: ACHIEVEMENTS,
       wardrobe: WARDROBE,
@@ -698,6 +714,7 @@ export class Room {
       restoreSlots(player, account.carried);
     }
     if (account?.prison && this.kind === 'town') this.world.prison.jail(player, 0, account.prison); // still serving a sentence
+    if (this.kind === 'tutorial') this.world.tutorial.start(player); // waking up in the cabin: the story starts over
     client.player = player;
     client.name = player.name;
     client.send({
@@ -1048,6 +1065,11 @@ export class Room {
       if (error) client.send({ t: ServerMsg.ERROR, code: error });
       return;
     }
+    const told = this.world.tutorial?.pickpocket(p); // (Katya: she has your money)
+    if (told) {
+      if (told.amount) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: told.amount, unnoticed: false });
+      return;
+    }
     const result = this.world.pickpocket(p);
     if (typeof result === 'string') client.send({ t: ServerMsg.ERROR, code: result });
     else if (result?.amount !== undefined) client.send({ t: ServerMsg.POLICE, kind: 'stole', amount: result.amount, unnoticed: result.unnoticed, food: result.food });
@@ -1166,7 +1188,9 @@ export class Room {
       visions: Object.entries(me.visions ?? {}).map(([kind, left]) => [kind, Math.ceil(left)]),
       holdup: me.heldUp ? [Math.max(0, Math.round(me.heldUp.left * 10) / 10), me.heldUp.of, Math.ceil(me.heldUp.grace ?? 0)] : null, // a gangster's got me at gunpoint: [seconds left, of, seconds left to stop moving] // vodka's (and the mixes') effects on how I see, stacked: [[kind, seconds left]]
       cabinet: me.openCabinet ? this.world.furnishings.contents(me, me.openCabinet) : null, // [id, slots] while I have one open
-      fish: this.world.fishing.view(me), // my line: [x, y] waiting, or [x, y, t, cycle, from, to, pulls] while a fish fights
+      ...(this.world.tutorial ? { story: this.world.tutorial.view(me) } : {}), // the newcomer's story (see Story.view)
+      sis: this.world.sisters.view(me), // my sister, as only I see her (in her cell, running to me, following) — see Sisters.view
+      fish: this.world.fishing.view(me), // my line: [x, y] waiting, or [x, y, t, showSec, hooked id] once the fish shows (see Fishing.view)
       inv: me.inventory.map((s) => (s?.good ? ['goods', s.good, s.qty] : s?.food ? ['food', s.food, s.qty] : s?.tool ? ['tool', s.type] : s ? [s.type, s.ammo, Math.ceil(s.reloadTimer * 10) / 10, s.illegal ? 1 : 0] : null)), // (a gun: [type, ammo, reload, unregistered])
     };
   }
@@ -1242,6 +1266,7 @@ export class Room {
           homeless: this.world.homeless?.visible(cx, cy, config.world.viewDistance) ?? [],
           rats: this.world.giantRats?.visible(cx, cy, config.world.viewDistance) ?? [],
           oilfolk: this.world.oilHall?.visible(cx, cy, config.world.viewDistance) ?? [],
+          sisters: this.world.sisters.visible(cx, cy, config.world.viewDistance), // everyone's sisters, at home
           flood: flood, // the flash flood: [water %, seconds till the wave, how far it's got, traders gone, miner gone] (0: none)
           tnt: this.world.tnt.some((c) => c.blown) ? this.world.tnt.filter((c) => c.blown).map((c) => c.decor) : 0, // crates of dynamite that have gone off (their index in the decor)
           cats: this.world.cats.visible(cx, cy, config.world.viewDistance, me),

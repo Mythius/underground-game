@@ -10,7 +10,7 @@ export const ACHIEVEMENTS = [
   { id: 'drive', icon: '🚗', name: 'Learn to drive', how: 'Walk up to a car and press E to get in. W/S to drive and brake, A/D to steer, Shift to drift, C for the lights. Other people\'s cars are locked — buying your own is the honest way.' },
   { id: 'work', icon: '⛏️', name: 'Honest labour', how: 'Go to a work site (the mine, the logging camp or the farm). Borrow a tool from the foreman, click rocks, trees or wheat to gather, then sell your haul back to the foreman.' },
   { id: 'job', icon: '📦', name: 'Delivery run', how: 'Press J (☰ → Jobs on a phone) for the job board. Accept a job, pick up the cargo where it says and deliver it before time runs out.' },
-  { id: 'fish', icon: '🎣', name: 'Gone fishing', how: 'Buy a fishing rod at a shop, stand at the water\'s edge, hold the rod and click to cast. When a fish bites, pull it in as it tires.' },
+  { id: 'fish', icon: '🎣', name: 'Gone fishing', how: 'Buy a fishing rod at a shop, stand at the water\'s edge, hold the rod and click to cast. The fish flashes gold at the surface for a split second — click right then to pull it out.' },
   { id: 'sell', icon: '💰', name: 'Buy low, sell high', how: 'Markets buy and sell goods. Press E at a market and sell something you carry. Goods fetch more where they\'re scarce.' },
   { id: 'process', icon: '⚙️', name: 'Make something', how: 'Bring raw goods (ore, logs, wheat…) to a factory in town and press E to process them into something worth more, for a small fee.' },
   { id: 'buy_car', icon: '🚙', name: 'Wheels of your own', how: 'Visit the car dealership, press E, and buy a car with money from your bank. It\'s locked to everyone but you.' },

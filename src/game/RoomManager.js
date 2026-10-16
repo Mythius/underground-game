@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { loadSavedMap } from './mapFile.js';
 import { Room } from './Room.js';
 import { undergroundMap } from './underground.js';
+import { WinterMorning, tutorialMap } from './tutorial.js';
 
 /** Places clients into rooms, creating new ones as existing rooms fill up. */
 export class RoomManager {
@@ -17,6 +18,8 @@ export class RoomManager {
     this.map = loadSavedMap(); // the admin-saved map, or null for random maps
     this.underground = null; // the room for the world under the town, while anyone's down there
     this.idleTimer = null; // (stops the underground a while after the last one leaves)
+    this.tutorial = null; // the newcomers' world (the cabin in the woods), while any newcomer's in it
+    this.tutorialTimer = null;
   }
 
   /** The town room the underground lies under (the saved one). */
@@ -38,6 +41,65 @@ export class RoomManager {
     this.underground = room;
     logger.info('underground loaded', { room: room.id, ms: Math.round(performance.now() - t) });
     return room;
+  }
+
+  /** The tutorial's room, started up when a newcomer needs it (always winter, always morning). */
+  #tutorialRoom() {
+    clearTimeout(this.tutorialTimer);
+    if (this.tutorial) return this.tutorial;
+    const t = performance.now();
+    const room = new Room(tutorialMap(), this.store, { kind: 'tutorial', env: new WinterMorning() });
+    room.onBankChange = this.onBankChange;
+    room.onTravel = (client, to, at) => this.travel(client, to, at);
+    room.onTutorialDone = (client, how) => this.leaveTutorial(client, how);
+    this.rooms.set(room.id, room);
+    room.start();
+    this.tutorial = room;
+    logger.info('tutorial loaded', { room: room.id, ms: Math.round(performance.now() - t) });
+    return room;
+  }
+
+  /** No newcomers left in it: stop it after a while. */
+  #idleTutorial() {
+    const room = this.tutorial;
+    if (!room || room.size) return;
+    clearTimeout(this.tutorialTimer);
+    this.tutorialTimer = setTimeout(() => {
+      if (this.tutorial !== room || room.size) return;
+      room.stop();
+      this.rooms.delete(room.id);
+      this.tutorial = null;
+      logger.info('tutorial unloaded', { room: room.id });
+    }, config.tutorial.idleSec * 1000);
+    this.tutorialTimer.unref?.();
+  }
+
+  #roomFor(to) {
+    return to === 'underground' ? this.#undergroundRoom() : to === 'tutorial' ? this.#tutorialRoom() : this.town;
+  }
+
+  #left(room) {
+    if (room === this.underground) this.#idleUnderground();
+    if (room === this.tutorial) this.#idleTutorial();
+  }
+
+  /**
+   * Out of the tutorial for good, on to town: they skipped it (`how` 'skip': home, as usual), or the black
+   * ice put them into a tree ('crash': they wake up in the gulag, owing more coal than they'll ever dig).
+   * Nothing from the tutorial comes along.
+   */
+  leaveTutorial(client, how) {
+    const from = client.room, account = client.account;
+    if (!from || from !== this.tutorial || !this.town) return false;
+    if (account?.id && !account.guest && this.store) {
+      this.store.setTutorial(account.id, true); // (what they had saved from before the tutorial is untouched: it never saves anything)
+      if (how === 'crash' && !account.prison) this.store.setPrison(account.id, { quota: config.tutorial.quota, coal: 0, bail: config.tutorial.bail, lyosha: true });
+    } else if (account) account.tutorial = true;
+    from.removeClient(client, { travel: true });
+    this.town.addClient(client);
+    if (client.name) this.town.spawn(client, client.name, client.look ?? null);
+    this.#idleTutorial();
+    return true;
   }
 
   /** Nobody down there: stop it after a while (loot and all start afresh next time). */
@@ -62,11 +124,12 @@ export class RoomManager {
   travel(client, to, at = null) {
     const from = client.room;
     if (!from || from.kind === to) return false;
-    const dest = to === 'underground' ? this.#undergroundRoom() : this.town;
+    const dest = this.#roomFor(to);
     if (!dest) return false;
     const carry = from.takeOut(client);
     if (!carry) {
-      if (from === this.underground) this.#idleUnderground();
+      this.#left(from);
+      if (dest !== from && !dest.size) this.#left(dest);
       return false;
     }
     dest.addClient(client);
@@ -78,7 +141,7 @@ export class RoomManager {
     }
     const spot = !at ? null : to === 'underground' ? dest.world.underground.arrival(at.x, at.y) : at.vent ? dest.world.ventArrival() : dest.world.trapdoorArrival(at.x, at.y); // (the oil hall office's ladder: up out of a sewer vent)
     dest.bringIn(client, carry, spot);
-    if (from === this.underground) this.#idleUnderground();
+    this.#left(from);
     return true;
   }
 
@@ -86,11 +149,11 @@ export class RoomManager {
   place(client, to) {
     const from = client.room;
     if (!from || from.kind === to) return;
-    const dest = to === 'underground' ? this.#undergroundRoom() : this.town;
+    const dest = this.#roomFor(to);
     if (!dest) return;
     from.removeClient(client, { travel: true });
     dest.addClient(client);
-    if (from === this.underground) this.#idleUnderground();
+    this.#left(from);
   }
 
   /** The map the editor should start from: the saved one, or what the first room is using. */
@@ -138,9 +201,9 @@ export class RoomManager {
     const room = client.room;
     if (!room) return;
     room.removeClient(client);
-    if (room === this.underground) {
+    if (room === this.underground || room === this.tutorial) {
       this.town?.release(client.account); // (logged off down there: their things up in town are put away)
-      return this.#idleUnderground();
+      return this.#left(room);
     }
     // Keep one room warm; tear down extra empty rooms.
     if (room.size === 0 && [...this.rooms.values()].filter((r) => r.kind === 'town').length > 1) {
@@ -168,6 +231,7 @@ export class RoomManager {
 
   stopAll() {
     clearTimeout(this.idleTimer);
+    clearTimeout(this.tutorialTimer);
     for (const room of this.rooms.values()) room.stop();
     this.rooms.clear();
   }

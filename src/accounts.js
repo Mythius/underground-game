@@ -81,9 +81,13 @@ export class AccountStore {
     if (!has('accounts', 'fines')) this.db.exec('ALTER TABLE accounts ADD COLUMN fines INTEGER NOT NULL DEFAULT 0'); // newcomer fines used (a fine instead of stars for the first few crimes)
     if (!has('accounts', 'achievements')) this.db.exec('ALTER TABLE accounts ADD COLUMN achievements TEXT'); // JSON: ids of the achievements earned
     if (!has('accounts', 'wardrobe')) this.db.exec('ALTER TABLE accounts ADD COLUMN wardrobe TEXT'); // JSON: hats and coats won ({ have, drank, smuggled })
+    if (!has('accounts', 'tutorial')) this.db.exec('ALTER TABLE accounts ADD COLUMN tutorial INTEGER NOT NULL DEFAULT 1'); // done (or skipped) the tutorial: everyone before it counts as done; new accounts start at 0
+    if (!has('accounts', 'sister')) this.db.exec('ALTER TABLE accounts ADD COLUMN sister INTEGER NOT NULL DEFAULT 0'); // Katya's been let out of her cell (she lives at their house)
     if (!has('accounts', 'crew')) this.db.exec('ALTER TABLE accounts ADD COLUMN crew TEXT'); // JSON: their goons and guards ({ role, mode, post, out })
     this.q = {
-      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison, fines, achievements, crew, wardrobe FROM accounts WHERE id = ?'),
+      accountById: this.db.prepare('SELECT id, name, bank, cash, carried, home_items, cop, prison, fines, achievements, crew, wardrobe, tutorial, sister FROM accounts WHERE id = ?'),
+      setSister: this.db.prepare('UPDATE accounts SET sister = ? WHERE id = ?'),
+      setTutorial: this.db.prepare('UPDATE accounts SET tutorial = ? WHERE id = ?'),
       setCrew: this.db.prepare('UPDATE accounts SET crew = ? WHERE id = ?'),
       setAchievements: this.db.prepare('UPDATE accounts SET achievements = ? WHERE id = ?'),
       setWardrobe: this.db.prepare('UPDATE accounts SET wardrobe = ? WHERE id = ?'),
@@ -92,7 +96,7 @@ export class AccountStore {
       setHomeItems: this.db.prepare('UPDATE accounts SET home_items = ? WHERE id = ?'),
       setCop: this.db.prepare('UPDATE accounts SET cop = ? WHERE id = ?'),
       accountByName: this.db.prepare('SELECT id FROM accounts WHERE name = ?'),
-      insertAccount: this.db.prepare('INSERT INTO accounts (name, bank, created_at) VALUES (?, ?, ?)'),
+      insertAccount: this.db.prepare('INSERT INTO accounts (name, bank, created_at, tutorial) VALUES (?, ?, ?, 0)'),
       identity: this.db.prepare('SELECT account_id, secret FROM identities WHERE provider = ? AND subject = ?'),
       insertIdentity: this.db.prepare('INSERT INTO identities (provider, subject, account_id, secret) VALUES (?, ?, ?, ?)'),
       insertSession: this.db.prepare('INSERT INTO sessions (token, account_id, expires_at) VALUES (?, ?, ?)'),
@@ -116,6 +120,8 @@ export class AccountStore {
       this.db.prepare('INSERT INTO migrations (name, done_at) VALUES (?, ?)').run(name, Date.now());
     };
     // Testing money for accounts made before the starting balance went up.
+    // Everyone who was playing before the tutorial gets it once too (they can skip it).
+    once('tutorial-for-everyone', () => this.db.prepare('UPDATE accounts SET tutorial = 0').run());
     once(`top-up-${config.accounts.topUpTo}`, () => this.db.prepare('UPDATE accounts SET bank = ? WHERE bank < ?').run(config.accounts.topUpTo, config.accounts.topUpTo));
   }
 
@@ -201,7 +207,7 @@ export class AccountStore {
     const row = this.q.accountById.get(id);
     if (!row) return null;
     const json = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
-    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison), fines: row.fines, achievements: json(row.achievements) ?? [], crew: json(row.crew) ?? [], wardrobe: json(row.wardrobe) ?? {} };
+    return { id: row.id, name: row.name, bank: row.bank, cash: row.cash, carried: json(row.carried), homeItems: json(row.home_items), cop: Boolean(row.cop), prison: json(row.prison), fines: row.fines, achievements: json(row.achievements) ?? [], crew: json(row.crew) ?? [], wardrobe: json(row.wardrobe) ?? {}, tutorial: Boolean(row.tutorial), sisterFree: Boolean(row.sister) };
   }
 
   /** The furniture placed in their home (cabinets with what's in them), in the home's own layout coordinates. */
@@ -237,6 +243,20 @@ export class AccountStore {
     this.q.setWardrobe.run(JSON.stringify(wardrobe ?? {}), id);
     const live = this.liveAccounts.get(id);
     if (live) live.wardrobe = wardrobe;
+  }
+
+  /** Done with (or skipped) the tutorial: from now on they play in town. */
+  setTutorial(id, done) {
+    this.q.setTutorial.run(done ? 1 : 0, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.tutorial = Boolean(done);
+  }
+
+  /** Katya's out of her cell for good. */
+  setSister(id, free) {
+    this.q.setSister.run(free ? 1 : 0, id);
+    const live = this.liveAccounts.get(id);
+    if (live) live.sisterFree = Boolean(free);
   }
 
   /** How many newcomer fines they've had (a fine instead of stars for their first few crimes). */

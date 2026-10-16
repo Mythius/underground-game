@@ -346,6 +346,20 @@
     #jailscreen div { background: rgba(0, 0, 0, .8); padding: 1rem 1.6rem; border-radius: .7rem; font-size: 1.3rem; font-weight: 700; color: #fff; text-align: center; }
     #jailscreen small { display: block; font-size: .8rem; color: #aaa; font-weight: 400; margin-top: .3rem; }
     .rob { background: #8b1a1a !important; border-color: #c0392b !important; color: #fff !important; }
+    /* The tutorial: what to do next (with the keys for it), a skip button; the blackout after the crash, and the story cards. */
+    #storyhud { position: fixed; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: .6rem; align-items: center;
+      max-width: min(36rem, calc(100vw - 2rem)); padding: .5rem .8rem; border-radius: .6rem; background: rgba(16, 22, 30, .85); color: #eef3f7;
+      border: 1px solid #9fc3e0; font-size: .9rem; font-weight: 600; line-height: 1.35; }
+    #storyhud[hidden] { display: none; }
+    #storyhud b { color: #f4c430; background: rgba(255, 255, 255, .1); border-radius: .25rem; padding: 0 .3rem; }
+    #storyhud button { flex: none; font: inherit; font-size: .75rem; padding: .3rem .55rem; border-radius: .4rem; border: 1px solid #555; background: #262626; color: #bbb; cursor: pointer; }
+    #storyhud button:hover { border-color: #f4c430; color: #fff; }
+    body.touch #storyhud { top: .6rem; font-size: .78rem; }
+    #storyfade { position: fixed; inset: 0; z-index: 8; background: #000; opacity: 0; transition: opacity 1.4s ease; display: grid; place-items: center; pointer-events: none; }
+    #storyfade.on { opacity: 1; pointer-events: auto; }
+    #storyfade[hidden] { display: none; }
+    #storyfade p { max-width: min(34rem, calc(100vw - 3rem)); color: #e8e4da; font-size: 1.15rem; line-height: 1.6; text-align: center; font-style: italic; transition: opacity .6s; }
+    #storyfade small { display: block; margin-top: 1.2rem; color: #777; font-style: normal; font-size: .8rem; }
     #jobhud { position: fixed; top: 3.2rem; left: 50%; transform: translateX(-50%); z-index: 2; padding: .4rem .8rem; border-radius: .5rem;
       background: rgba(0, 0, 0, .65); color: #fff; font-size: .85rem; font-weight: 600; border: 1px solid #f4c430; max-width: calc(100vw - 30rem); text-align: center; }
     #game { transition: filter 1.5s ease; }
@@ -609,7 +623,7 @@
     </div>
     <button type="button" id="open-admin">🔐 Admin</button>
     <div class="editor-buttons" id="admin-panel" hidden>
-      <button type="button" id="open-editor">🛠 Map editor</button><label id="world-pick" title="Which world you play (and respawn) in">Spawn in <select id="world-switch"><option value="town">🏙 Town</option><option value="underground">🕳 Underground</option></select></label>
+      <button type="button" id="open-editor">🛠 Map editor</button><label id="world-pick" title="Which world you play (and respawn) in">Spawn in <select id="world-switch"><option value="town">🏙 Town</option><option value="underground">🕳 Underground</option><option value="tutorial">🌲 Tutorial</option></select></label>
       <button type="button" id="open-sounds">🔊 Sound editor</button><button type="button" id="open-dialogue">💬 Dialogue editor</button><button type="button" id="open-reports">📋 Reports</button>
     </div>
     <small id="credits">🎵 Music by Steve Oxen</small>
@@ -702,6 +716,8 @@
   <div id="jobs" hidden role="dialog" aria-label="Job board"></div>
   <div id="achpanel" hidden role="dialog" aria-label="Achievements"></div>
   <div id="jobhud" hidden></div>
+  <div id="storyhud" hidden><span></span><button type="button" id="storyskip" title="Leave the story and go straight to town">Skip tutorial ⏭</button></div>
+  <div id="storyfade" hidden><p></p></div>
   <div id="wanted" hidden></div>
   <div id="crimebar" hidden><span></span><div class="bar"><i></i></div></div>
   <div id="prisonbar" hidden><span></span><div class="bar"><i></i></div><small>Dig coal at the coal face, tip it into the bunker by the boiler house · or pay the warden at the gatehouse · back in your cell at lights out · slop at the kitchen when the bell rings</small></div>
@@ -956,6 +972,7 @@
       prisonCells.locked = Boolean(msg.prisonLocked);
       terrain = { ...terrain, ...msg.terrain };
       under = msg.underground ? prepUnderground(msg.underground) : null;
+      storyWelcome(msg);
       floodCfg = msg.flood ?? floodCfg;
       flood = null;
       rats.list = []; // (the last world's rats)
@@ -1042,10 +1059,13 @@
           if (msg.world?.kind !== world?.kind) { // off to the other world: nothing from this one carries over
             snapshots.length = 0;
             snapshot = null;
-            if (playing) toast(msg.world?.kind === 'underground' ? '🕳 You climb down the iron ladder into the dark. Cold air, the smell of damp concrete…' : '🪜 You climb back up the ladder and push the hatch open.', 4000);
+            if (playing && (msg.world?.kind === 'underground' || world?.kind === 'underground')) toast(msg.world?.kind === 'underground' ? '🕳 You climb down the iron ladder into the dark. Cold air, the smell of damp concrete…' : '🪜 You climb back up the ladder and push the hatch open.', 4000);
           }
           lastWelcome = msg;
           if (!editing) applyWelcome(msg);
+          break;
+        case 'story':
+          onStory(msg);
           break;
         case 'map_changed':
           if (editing) break;
@@ -1130,7 +1150,10 @@
             toast(msg.jail ? `🚔 Busted! No money for ${money(msg.bail)} bail — ${msg.jail}s in jail` : `🚔 Busted! Paid ${money(msg.bail)} bail${msg.seized ? ` · ${msg.seized} illegal items seized` : ''}`);
           }
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
-          if (msg.kind === 'prison_out') { sfx('doorOpen'); toast(msg.how === 'served' ? '🔓 Quota met — the warden hands your things back. Free to go.' : msg.by ? `🔓 ${msg.by} paid your bail — the warden hands your things back. Free to go.` : '🔓 Bail paid — the warden hands your things back. Free to go.', 5000); }
+          if (msg.kind === 'sister_freed') { sfx('doorOpen'); toast('🔓 KATYA! She\'s alive — she\'s running to you!', 5000); }
+          if (msg.kind === 'sister_hug') { sfx('furnish'); toast('😭 Katya throws her arms round you, sobbing. Then she follows you — she\'ll make her way home to your house.', 6000); }
+          if (msg.kind === 'prison_out' && msg.how === 'lyosha') { sfx('doorOpen'); lyoshaCard(); } // (the newcomer's way out)
+          else if (msg.kind === 'prison_out') { sfx('doorOpen'); toast(msg.how === 'served' ? '🔓 Quota met — the warden hands your things back. Free to go.' : msg.by ? `🔓 ${msg.by} paid your bail — the warden hands your things back. Free to go.` : '🔓 Bail paid — the warden hands your things back. Free to go.', 5000); }
           if (msg.kind === 'cat_fed') { sfx('meow'); sfx('eat', null, 0.5); toast('🐟 The cat wolfs it down — it\'s taken a liking to you (E: pick it up · P: pet)'); }
           if (msg.kind === 'cat_pet') sfx('purr');
           if (msg.kind === 'cat_free') { sfx('meow'); toast('🐈 The cat wriggles free and hops down'); }
@@ -1171,13 +1194,12 @@
           if (msg.kind === 'flood_wave_soon') { sfx('floodWarn'); toast(`🌊 The wave comes in ${msg.sec} seconds — get up a ladder or into the oil hall!`, 5000); }
           if (msg.kind === 'flood_wave') toast('🌊 The wave is coming through the tunnels — RUN!', 4000);
           if (msg.kind === 'flood_over') toast('🌊 The flood has drained away', 3000);
-          if (msg.kind === 'fish_bite') { sfx('splash'); toast('🎣 Fish on! It fights the line — click to pull each time it tires (goes still in the gold rings)'); }
-          if (msg.kind === 'fish_pull') sfx('splash');
+          if (msg.kind === 'fish_bite') sfx('splash'); // (the split second: pull now!)
           if (msg.kind === 'fish_caught') {
             sfx('catch');
             toast(msg.what === 'player' ? `🪝 You reeled in ${msg.name}'s ${econ.goods[msg.item]?.name ?? shop.menu[msg.item]?.name ?? weapons[msg.item]?.name ?? (msg.item === 'rod' ? 'fishing rod' : msg.item)}${msg.qty > 1 ? ` ×${msg.qty}` : ''}!` : msg.what === 'fish' ? '🐟 You landed a fish!' : msg.what === 'food' ? `🎣 Not a fish… ${shop.menu[msg.item]?.name ?? 'something to eat'}, still wrapped` : `🎣 Not a fish… a ${weapons[msg.item]?.name ?? 'gun'} someone threw in the water!`);
           }
-          if (msg.kind === 'fish_escaped') toast({ snapped: '💥 It broke free — wait for it to tire before you pull', slow: '🐟 It got away — pull when it tires', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
+          if (msg.kind === 'fish_escaped') toast({ slow: '🐟 Too slow — it got away. Click the instant it flashes at the surface', full: 'No room in your hotbar — it got away', moved: 'You moved — it got away', frozen: '🧊 The lake froze over — it got away', pulled_free: `🪝 ${msg.name ?? 'They'} pulled free`, empty: '🪝 Nothing worth taking on them', have_all: '🪝 Nothing on them you could take — you already have one of everything they carry' }[msg.why] ?? 'It got away');
           if (msg.kind === 'fish_hooked_player') { sfx('hooked'); toast(`🪝 You hooked ${msg.name}! Pull each time they tire (gold glow) — if they walk off, the line snaps`); }
           if (msg.kind === 'bear') { sfx('bearRoar'); addShake(4); toast('🐻 It heard you. It can\'t see — stand still, or run'); }
           if (msg.kind === 'prisoners_freed') { sfx('coin'); toast(`🔓 They're out and running. One grabs your hand on the way past: ${msg.cash ? money(msg.cash) : `${msg.qty} × ${econ.goods[msg.good]?.name ?? msg.good}`}. "Spasibo, spasibo!"`, 5000); }
@@ -1305,7 +1327,7 @@
           if (msg.what === 'refuel') toast('⛽ Tank filled');
           if (msg.what === 'laundered') { coins = msg.cash; bankBalance = msg.bank; if (session) { session.bank = msg.bank; showBank(msg.bank); } sfx('coin'); toast(`🧺 ${money(msg.amount)} through the machine and into the bank, no questions asked`); }
           if (msg.what === 'hire_vodka') toast('🍾 The barman slides a bottle across — it\'s in your hotbar');
-          if (msg.what === 'world') { toast(worldPref === 'underground' ? '🕳 You\'ll play in the underground (and respawn there) until you switch back' : '🏙 Back to playing in town'); }
+          if (msg.what === 'world') { toast(worldPref === 'underground' ? '🕳 You\'ll play in the underground (and respawn there) until you switch back' : worldPref === 'tutorial' ? '🌲 You\'ll start in the tutorial (the story from the top) every time until you switch back' : '🏙 Back to playing in town'); }
           if (msg.what === 'trapdoor_open') { sfx('furnish'); toast('🗝️ The key turns. The padlock drops away and the hatch swings up — an iron ladder goes down into the dark. (The key stays in the lock.)', 4500); }
           if (msg.what === 'vodka_sold') { sfx('coin'); toast(`🍾 The gangster takes ${Object.entries(msg.sold).map(([g, q]) => `${q} ${econ.goods[g]?.name ?? g}`).join(', ')} — +${money(msg.total)}`); }
           if (msg.what === 'pour') toast(msg.good === 'vodka' ? '🍾 Vodka poured into the boost tank — Space to burn it' : '⛽ Fuel poured into the tank');
@@ -1419,6 +1441,7 @@
       me = null;
       menu.hidden = false;
       hint.hidden = true;
+      document.getElementById('storyhud').hidden = true; // (the tutorial's)
       hotbar.hidden = true;
       staminaBar.hidden = true;
       coinsEl.hidden = true;
@@ -1445,7 +1468,7 @@
       }
       play.disabled = true;
       initAudio(); // browsers only allow sound after a click
-      if (isAdmin && session && worldPref === 'underground') send({ t: 'world', to: 'underground', token: session.token }); // (the server forgets between visits)
+      if (isAdmin && session && worldPref !== 'town') send({ t: 'world', to: worldPref, token: session.token }); // (the server forgets between visits)
       send({ t: 'join', name: nameInput.value, look: myLook, token: session?.token ?? undefined });
       nameInput.blur();
     };
@@ -1453,7 +1476,7 @@
     // Admin: play in the underground (now, and on every respawn) or back in town.
     const worldBtn = document.getElementById('world-switch');
     let worldPref = 'town';
-    try { worldPref = localStorage.getItem('ug-world') === 'underground' ? 'underground' : 'town'; } catch {}
+    try { worldPref = ['underground', 'tutorial'].includes(localStorage.getItem('ug-world')) ? localStorage.getItem('ug-world') : 'town'; } catch {}
     worldBtn.value = worldPref;
     worldBtn.onchange = () => {
       const token = adminPassword();
@@ -2083,7 +2106,7 @@
     };
     const placeEl = document.getElementById('place');
     const fuelEl = document.getElementById('fuel-gauge');
-    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force' };
+    const RAW_NAMES = { station: '🚂 Freight station', logging: '🌲 Lumberyard', farm: '🌾 Farm', mine: '⛏️ Mine', oilwell: '🛢️ Oil field', scrapyard: '🔩 Scrapyard', quarry: '🏖️ Quarry', market: '🏪 Market', gas: '⛽ Gas station', gunstore: '🔫 Gun store', dealership: '🚗 Car dealer', bar: '🍺 Bar — hire goons, guards, hitmen', police: '🚔 Militsiya — join the force', prison: '⛓ Gulag — the warden (bail, sentences)', laundry: '🧺 Laundry' };
     const PLACE_ROLES = new Set(['market', 'factory', 'gunshop', 'dealer', 'station', 'barman', 'police', 'warden', 'laundry']);
     let workNodes = new Map(); // rocks, trees and wheat at the work sites: id -> { kind, x, y, r, hp, max }
     const prisonCells = { doors: new Set(), locked: false }; // the cell doors' ids, and whether they're locked for the night
@@ -5140,7 +5163,8 @@
       const isDay = clock < env.daySec;
       const toTurn = isDay ? env.daySec - clock : env.daySec + env.nightSec - clock;
       const nextSeason = season.blend > 0 ? null : season.next; // (mid-change: it's already arriving)
-      clockEl.textContent = `${light > 0.5 ? '☀️' : '🌙'} ${clockLabel(clock)} · ${isDay ? 'night' : 'day'} in ${mmss(toTurn)}${sky.rain > 0.2 ? (season.main === 'winter' ? ' · 🌨' : ' · 🌧') : ''}${sky.fog > 0.2 ? ' · 🌫' : ''}\n${SEASON_LABELS[season.main]} · ${nextSeason ? `${SEASON_LABELS[nextSeason].split(' ')[1].toLowerCase()} in ${mmss(season.left)}` : `${SEASON_LABELS[season.next].split(' ')[1].toLowerCase()} arriving`}`;
+      if (tut) clockEl.textContent = `☀️ Morning${sky.rain > 0.2 ? ' · 🌨' : ''}\n${SEASON_LABELS.winter} — it never ends out here`; // (the tutorial: always a winter morning)
+      else clockEl.textContent = `${light > 0.5 ? '☀️' : '🌙'} ${clockLabel(clock)} · ${isDay ? 'night' : 'day'} in ${mmss(toTurn)}${sky.rain > 0.2 ? (season.main === 'winter' ? ' · 🌨' : ' · 🌧') : ''}${sky.fog > 0.2 ? ' · 🌫' : ''}\n${SEASON_LABELS[season.main]} · ${nextSeason ? `${SEASON_LABELS[nextSeason].split(' ')[1].toLowerCase()} in ${mmss(season.left)}` : `${SEASON_LABELS[season.next].split(' ')[1].toLowerCase()} arriving`}`;
 
       const skyW = Math.ceil(w * SKY_SCALE), skyH = Math.ceil(h * SKY_SCALE);
       if (skyCanvas.width !== skyW || skyCanvas.height !== skyH) {
@@ -6038,7 +6062,7 @@
       music: { title: '🎵 Background music', added: '🎵 {n} added to the background music', intro: 'Played now and then in a shuffled order: each song fades in and out, with 1–6 minutes of silence between songs. Upload as many as you like — pick several files at once. Players set how loud it is with the Music slider in ⚙ settings.' },
       fight: { title: '👊 Fight music', added: '👊 {n} added to the fight music', intro: 'Fades in when shots are fired or someone gets hurt near you, plays song after song while the fighting lasts, and fades out about 15 seconds after it stops. Shuffled. With none, the normal music carries on.' },
       chase: { title: '🚨 Car chase music', added: '🚨 {n} added to the car chase music', intro: 'Fades in when you\'re wanted, in a car, with a Militsiya siren close behind, then plays song after song for as long as the cops are after you (until you\'re no longer wanted, or get locked up), fading out about 8 seconds after. Takes priority over fight music. Shuffled. With none, the normal music carries on.' },
-      prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Played instead of the background music while you\'re locked up in the prison camp — shuffled, song after song with no silence, until you get out. With none, prisoners hear the normal background music.' },
+      prison: { title: '⛓ Prison music', added: '⛓ {n} added to the prison music', intro: 'Starts the moment you\'re in the gulag (locked up, or anywhere inside its wire) and plays over everything else — background, fight and chase music, car radios — shuffled, song after song with no silence, until you leave. With none, you hear the normal music.' },
     };
     const songList = (kind) => (kind === 'radio' ? playlist : musicLists[kind]);
     // The upload queue: songs picked for any playlist wait here, and up to UPLOAD_AT_ONCE go up together, each
@@ -6644,9 +6668,9 @@
     const ACTION_FADE_IN = 2, SWITCH_FADE = 3; // fight/chase music comes in quicker; a song cut short fades over this
     const MUSIC_GAP = [60, 360]; // silence between background / prison songs, seconds (random in this range)
     const FIGHT_HOLD = 15, CHASE_HOLD = 8; // seconds the action music keeps going after the last shot / siren
-    const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] }, none: { songs: [] } }; // (none: underground, where it's quiet) // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
+    const musicLists = { music: { songs: [] }, prison: { songs: [] }, fight: { songs: [] }, chase: { songs: [] }, none: { songs: [] }, tutorial: { songs: [] } }; // (none: underground, where it's quiet) // GET /music, /prison, /fight, /chase: [{ id, name, url, duration, volume }]
     const ACTION_MUSIC = new Set(['fight', 'chase']);
-    const REPEAT_MUSIC = new Set(['fight', 'chase', 'prison']); // songs follow one another with no silence until the event is over
+    const REPEAT_MUSIC = new Set(['fight', 'chase', 'prison', 'tutorial']); // (the tutorial: "Beauty of Russia", over and over) // songs follow one another with no silence until the event is over
     const music = { now: null, kind: 'music', queue: [], last: null, nextAt: null, fightUntil: 0, chaseUntil: 0 }; // now: { id, el, g }; times on the audio clock
     async function loadMusic(kind = 'music') {
       try {
@@ -6700,14 +6724,19 @@
         }
       }
       const has = (k) => musicLists[k].songs.length > 0;
+      // In the gulag (locked up, or anywhere inside its wire): the prison music, over everything else.
+      const inGulag = Boolean(prisonState) || (me && playing && buildings.some((b) => b.type === 'prison' && me.x > b.x && me.x < b.x + b.w && me.y > b.y && me.y < b.y + b.h));
+      musicLists.tutorial.songs = musicLists.music.songs.filter((x) => /beauty of russia/i.test(x.name)); // (one of the background songs)
       const kind = under ? 'none' // (no music down in the underground)
+        : tut && ['blackcar', 'fire', 'chase', 'crash'].includes(storyStage()) ? (has('chase') ? 'chase' : has('fight') ? 'fight' : 'tutorial') // (the black car's come: action music)
+        : tut ? 'tutorial' // (the tutorial: only "Beauty of Russia", on repeat)
+        : inGulag && has('prison') ? 'prison'
         : now < music.chaseUntil && has('chase') ? 'chase'
-        : now < music.fightUntil && has('fight') ? 'fight'
-        : prisonState && has('prison') ? 'prison' : 'music';
+        : now < music.fightUntil && has('fight') ? 'fight' : 'music';
       if (kind !== music.kind) {
         const was = music.kind;
-        // Action starts at once; after it, the calm music comes back after the usual silence; prison <-> outside soon.
-        const gap = ACTION_MUSIC.has(kind) ? 0 : ACTION_MUSIC.has(was) && kind === 'music' ? musicGap() : 5;
+        // Action and the gulag start at once; after action, the calm music comes back after the usual silence; out of the gulag, soon.
+        const gap = ACTION_MUSIC.has(kind) || kind === 'prison' || kind === 'tutorial' ? 0 : ACTION_MUSIC.has(was) && kind === 'music' ? musicGap() : 5;
         if (music.now) stopMusic(gap, SWITCH_FADE);
         Object.assign(music, { kind, queue: [], nextAt: now + gap });
       }
@@ -6733,7 +6762,7 @@
       }
       // Fade in at the start and out towards the end.
       const t = m.el.currentTime, dur = Number.isFinite(m.el.duration) ? m.el.duration : song.duration;
-      const env = Math.max(0, Math.min(1, t / (ACTION_MUSIC.has(kind) ? ACTION_FADE_IN : MUSIC_FADE_IN), (dur - t) / MUSIC_FADE_OUT));
+      const env = Math.max(0, Math.min(1, t / (ACTION_MUSIC.has(kind) || kind === 'prison' ? ACTION_FADE_IN : MUSIC_FADE_IN), (dur - t) / MUSIC_FADE_OUT));
       m.g.gain.setTargetAtTime((settings.music ?? 40) / 100 * 0.5 * song.volume * env, now, 0.1);
     }
 
@@ -6756,7 +6785,7 @@
       const ear = me && playing ? me : null;
       const inCar = me?.car?.id ?? riding ?? null;
       const want = new Set();
-      if (ear && !settings.mute) {
+      if (ear && !settings.mute && music.kind !== 'prison') { // (the gulag's music drowns out any car radio)
         for (const [id, v] of snapshots.at(-1)?.vehicles ?? []) {
           if (!v.radio) continue;
           const d = id === inCar ? 0 : Math.hypot(v.x - ear.x, v.y - ear.y);
@@ -6886,6 +6915,296 @@
      * The albino bear from above: a great slab of yellowish-white fur, its head swinging as it walks, milky
      * blind eyes, a pink nose; its breath smoking in the cold on every out-breath. A health bar while it's hurting.
      */
+    // ---- the tutorial: a newcomer's story (the cabin in the woods, Katya, the black car, the fire) ----------------
+    // The server runs it (src/game/tutorial.js) and tells me my stage, where Katya and the black car are; the
+    // rest — what she says, the snowball, the burning cabin, what to do next — is drawn here, for me alone.
+    const STORY_STAGES = ['wake', 'rod', 'fish', 'back', 'axe', 'blackcar', 'fire', 'chase', 'crash'];
+    const KATYA_LOOK = { skin: '#f3d2b3', shirt: '#2f5d8a', pants: '#3a3030', hat: 'ushanka', coat: '#8a2f3c' };
+    let tut = null; // the tutorial's layout (from the welcome), or null in any other world
+    let story = null; // [stage, seconds in it, Katya [x, y, angle] | 0, black car [x, y, angle] | 0, cash she's holding, mad]
+    const storyLook = { katya: null, black: null, say: null, sayUntil: 0, ball: null, ballThrown: false, passed: false, hudKey: '', fadeLines: null };
+    const storyStage = () => (story ? STORY_STAGES[story[0]] : null);
+    const storyHudEl = document.getElementById('storyhud');
+    const storyFadeEl = document.getElementById('storyfade');
+    document.getElementById('storyskip').onclick = () => {
+      if (!confirm('Skip the story and go straight to town?')) return;
+      send({ t: 'story', action: 'skip' });
+    };
+
+    /** In (or out of) the tutorial world. */
+    function storyWelcome(msg) {
+      tut = msg.tutorial ?? null;
+      story = null;
+      Object.assign(storyLook, { katya: null, black: null, say: null, ball: null, ballThrown: false, passed: false, hudKey: '' });
+      storyHudEl.hidden = true;
+    }
+
+    function katyaSays(text, sec = 7) {
+      storyLook.say = text;
+      storyLook.sayUntil = performance.now() + sec * 1000;
+    }
+
+    /** The server's word on my story: the next step, or something that happened. */
+    function onStory(msg) {
+      const lines = {
+        rod: "Fridge is empty, sleepyhead. Here — Dad's old rod. There's a hole cut in the ice out back. Go catch us breakfast!",
+        axe: "Stove's gone cold too. Take the axe — the good birches are out past the bend in the driveway. Don't chop your foot off.",
+      };
+      if (lines[msg.kind]) katyaSays(lines[msg.kind], 9);
+      if (msg.kind === 'rod') { sfx('pickup'); toast('🎣 Katya hands you a fishing rod', 3000); }
+      if (msg.kind === 'axe') { sfx('pickup'); toast('🪓 Katya hands you the axe', 3000); }
+      if (msg.kind === 'dads_spot') katyaSays("You got one! This was Dad's favourite spot, you know. He'd sit out here on his bucket for hours, smoking, not saying a word…", 7);
+      if (msg.kind === 'lifted') { sfx('pickpocket'); katyaSays(`…and he taught me this. Felt nothing, did you? ${money(msg.amount)} — mine now. Come up behind someone, quiet, tap F. Want it back? Try it on me. Now bring that fish in, I'll fry it.`, 13); toast(`🤏 Katya picked your pocket: −${money(msg.amount)} — that's how it's done`, 5000); }
+      if (msg.kind === 'katya_mad') { sfx('error'); katyaSays('HEY! Not on me, you little thief! …Fine. Keep it. You learn fast.', 8); }
+      if (msg.kind === 'katya_empty') katyaSays("My pockets are empty, thief. Go and fish!", 4);
+      if (msg.kind === 'blackcar') toast('🚗 An engine… someone coming up the driveway? Nobody ever comes out here.', 5000);
+      if (msg.kind === 'passed') { storyLook.passed = true; toast("🚘 A black Mercedes, no plates. It doesn't slow down — it's heading for the house.", 5000); }
+      if (msg.kind === 'fire') { sfx('molotov'); toast('🔥 Smoke over the trees… the cabin is burning! KATYA!', 6000); }
+      if (msg.kind === 'chase') { sfx('skid'); toast('🚗 The black Mercedes is tearing off down the road — after it!', 5000); }
+      if (msg.kind === 'crash') storyBlackout();
+    }
+
+    /** What to do next, with the keys for it. */
+    function storyHint() {
+      const st = storyStage(), k = (pc, phone) => `<b>${touchMode ? phone : pc}</b>`;
+      if (st === 'wake') return `🛏 Katya's calling you for breakfast. ${k('W A S D', 'left stick')} to walk · ${k('E', 'E')} opens doors — out to the kitchen.${storyLook.ball ? ` (${k('E', 'E')} on the snowball to look at it)` : ''}`;
+      if (st === 'rod') return `🎣 Out the back door to the lake. Pick the rod (${k('1–5', 'tap it')}), aim at the hole in the ice and ${k('click', 'fire')} to cast.`;
+      if (st === 'fish' && inv.some((x) => x?.[0] === 'goods' && x[1] === 'fish')) return '🐟 Got one! Katya\'s coming out to see.';
+      if (st === 'fish') return `🎣 Watch the float. The fish flashes gold at the surface for a split second — ${k('click', 'fire')} right then to pull it out. Too slow and it's gone: cast again.`;
+      if (st === 'back') return story?.[4] ? `🐟 Take the fish in to Katya. She has your ${money(story[4])} — creep up <i>behind</i> her and tap ${k('F', 'F')} to pick her pocket… if you dare.` : '🐟 Take the fish in to Katya, in the kitchen.';
+      if (st === 'axe') return `🪓 Follow the driveway round the bend to the birches (the arrow). Select the axe and ${k('hold the mouse', 'hold fire')} to chop a tree down.`;
+      if (st === 'blackcar') return storyLook.passed ? `🔥 Something's wrong at the house. ${k('Hold Shift', 'push the stick all the way')} to sprint home!` : '🪓 Keep chopping…';
+      const drive = touchMode ? `drive with the ${k('', 'left stick')}` : `${k('W', '')} gas · ${k('S', '')} brake · ${k('A D', '')} steer`;
+      if (st === 'fire') return `🚗 Katya's gone! Your Lada's out front — ${k('E', 'E')} to get in. ${drive}.`;
+      if (st === 'chase') return `🚗 Don't lose the black Mercedes! ${drive}. Mind the ice…`;
+      return null;
+    }
+
+    function updateStoryHud() {
+      const hint = tut && playing && story ? storyHint() : null;
+      if (!hint) { storyHudEl.hidden = true; return; }
+      storyHudEl.hidden = false;
+      if (hint !== storyLook.hudKey) { storyLook.hudKey = hint; storyHudEl.firstElementChild.innerHTML = hint; }
+    }
+
+    /** E on the snowball by the bed. */
+    function inspectSnowball() {
+      toast('❄️ Packed hard — more ice than snow, with gravel off the driveway in it. That hurt. Typical Katya.', 5000);
+    }
+
+    /** The black ice: the screen goes black, a few lines, and you wake up in the gulag. */
+    function storyBlackout() {
+      sfx('skid');
+      setTimeout(() => { sfx('crash'); addShake(18); }, 1100);
+      const lines = [
+        'The wheel goes light in your hands. Black ice.',
+        'A birch trunk fills the windscreen —',
+        '…',
+        'Voices. Rough hands. The smell of diesel and wet wool.',
+        'You wake on a plank bunk behind barbed wire. A guard bangs the bars: "Up! That wreck cost the state. You owe the camp 2,000 coal."',
+      ];
+      storyLook.fadeLines = lines;
+      setTimeout(() => showFade(lines, 2600, () => toast('⛏ Dig coal at the coal face and tip it into the bunker by the boiler house…', 6000)), 1600);
+    }
+
+    /** Fade to black and show `lines` one by one (`each` ms apiece), then fade back; `done` after. */
+    function showFade(lines, each = 3500, done = null) {
+      const p = storyFadeEl.firstElementChild;
+      storyFadeEl.hidden = false;
+      requestAnimationFrame(() => storyFadeEl.classList.add('on'));
+      let i = 0;
+      const next = () => {
+        if (i >= lines.length) {
+          storyFadeEl.classList.remove('on');
+          setTimeout(() => { storyFadeEl.hidden = true; done?.(); }, 1500);
+          return;
+        }
+        p.style.opacity = 0;
+        setTimeout(() => { p.innerHTML = lines[i++]; p.style.opacity = 1; setTimeout(next, each); }, 600);
+      };
+      setTimeout(next, 900);
+    }
+
+    /** Lyosha pays the warden off: who he is, the house, the money, Katya's knife. */
+    function lyoshaCard() {
+      showFade([
+        'Two minutes later, a man in a leather jacket leans on the warden\'s counter, peeling banknotes off a fat roll. "This one\'s with me."',
+        '"Remember me? Lyosha. I used to fish with your father, out at the lake. Word gets around — I heard about the fire."',
+        '"A black Mercedes, no plates… I\'ll ask around. Nobody takes Katya and walks away."',
+        'He drives you into town in a rattling Volga and stops outside a little house. "Yours now. Keep your head down. Here — 500 to get you started."',
+        'He presses a knife into your hand. "This was Katya\'s. She\'d want you to have it."',
+      ], 4200, () => toast('🏠 Your house — the yellow arrow on the map. Welcome to town.', 6000));
+    }
+
+    /** Where to go next (the yellow arrow), or null. */
+    function storyTarget() {
+      const st = storyStage();
+      if (!tut || !st) return null;
+      const k = story[2] ? { x: story[2][0], y: story[2][1] } : null;
+      if (st === 'wake' || st === 'back') return k;
+      if (st === 'rod' || st === 'fish') return tut.iceHoles[0];
+      if (st === 'axe') return tut.woodlot;
+      if (st === 'blackcar') return storyLook.passed ? tut.spots.frontOut : null;
+      if (st === 'fire') return tut.park;
+      if (st === 'chase' && story[3]) return { x: story[3][0], y: story[3][1] };
+      return null;
+    }
+
+    function drawStoryArrow(now) {
+      const target = storyTarget();
+      if (!target || !me || !playing) return;
+      const d = Math.hypot(target.x - me.x, target.y - me.y);
+      if (d < 160) return;
+      const a = Math.atan2(target.y - me.y, target.x - me.x);
+      const r = (me.car ? 70 : radiusOf(me.mass) + 34) + Math.sin(now / 200) * 3;
+      ctx.save();
+      ctx.translate(me.x + Math.cos(a) * r, me.y + Math.sin(a) * r);
+      ctx.rotate(a);
+      ctx.fillStyle = '#f4c430'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(-9, -11); ctx.lineTo(-3, 0); ctx.lineTo(-9, 11); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+
+    /** The hole cut in the lake's ice (for everyone in the tutorial). */
+    function drawIceHoles(now) {
+      for (const h of tut?.iceHoles ?? []) {
+        if (h.x < viewBox.l - 100 || h.x > viewBox.r + 100 || h.y < viewBox.t - 100 || h.y > viewBox.b + 100) continue;
+        ctx.fillStyle = 'rgba(255, 255, 255, .55)'; ctx.beginPath(); ctx.ellipse(h.x, h.y, h.r + 14, h.r + 10, 0.3, 0, Math.PI * 2); ctx.fill(); // chipped ice round it
+        const g = ctx.createRadialGradient(h.x, h.y, 2, h.x, h.y, h.r);
+        g.addColorStop(0, '#0d2233'); g.addColorStop(1, '#2d5a78');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(h.x, h.y, h.r, h.r * 0.85, 0.3, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = `rgba(200, 230, 255, ${0.25 + 0.15 * Math.sin(now / 600)})`; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(h.x, h.y, h.r * 0.6, h.r * 0.5, 0.3, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = '#5a3b22'; ctx.fillRect(h.x + h.r + 8, h.y - 30, 6, 40); // an ice pick left stuck in the snow
+        ctx.fillStyle = '#9aa1a8'; ctx.fillRect(h.x + h.r + 2, h.y - 34, 18, 5);
+      }
+    }
+
+    /** Katya, the snowball, what she says. (People layer.) */
+    function drawStoryPeople(now, dt) {
+      if (!tut || !story || !playing) return;
+      const st = storyStage(), t = story[1] + (now - storyLook.at) / 1000;
+      const k = story[2];
+      if (k) {
+        const s = (storyLook.katya ??= { x: k[0], y: k[1], angle: k[2] });
+        const e = 1 - Math.exp(-dt * 10);
+        s.x += (k[0] - s.x) * e; s.y += (k[1] - s.y) * e;
+        s.angle += Math.atan2(Math.sin(k[2] - s.angle), Math.cos(k[2] - s.angle)) * e;
+        const mad = story[5] && st === 'back';
+        drawPerson({ x: s.x + (mad ? Math.sin(now / 40) * 1.5 : 0), y: s.y, r: 18, aim: s.angle, weapon: null, thrust: 0 }, KATYA_LOOK);
+        ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.angle); // her plait, down her back
+        ctx.fillStyle = '#c99a4a'; ctx.beginPath(); ctx.ellipse(-12, 0, 7, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        if (!hiddenUnderRoof(s.x, s.y) || insideBuilding(me?.x ?? 0, me?.y ?? 0)) {
+          ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#ffd1dc'; ctx.fillText('Katya', s.x, s.y - 32);
+        }
+        // The snowball: thrown from the doorway as you wake, then lying by the bed.
+        if (st === 'wake' && me) {
+          if (t > 1 && t < 1.45 && !storyLook.ballThrown) {
+            const f = (t - 1) / 0.45, bx = s.x + (me.x - s.x) * f, by = s.y + (me.y - s.y) * f - Math.sin(f * Math.PI) * 40;
+            ctx.fillStyle = 'rgba(0, 0, 0, .25)'; ctx.beginPath(); ctx.arc(s.x + (me.x - s.x) * f, s.y + (me.y - s.y) * f, 5, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#f2f6fa'; ctx.beginPath(); ctx.arc(bx, by, 7, 0, Math.PI * 2); ctx.fill();
+          }
+          if (t >= 1.45 && !storyLook.ballThrown) {
+            storyLook.ballThrown = true;
+            storyLook.ball = { x: me.x + 22, y: me.y + 18 };
+            sfx('hit'); addShake(4);
+            katyaSays('Rise and shine, sleepyhead! Breakfast — come on through!', 7);
+          }
+        }
+      }
+      const b = storyLook.ball;
+      if (b && (st === 'wake' || st === 'rod' || st === 'fish')) { // (melting away by the time you're out fishing)
+        ctx.fillStyle = '#e9eef3'; ctx.beginPath(); ctx.arc(b.x, b.y, 7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#8a8478'; for (const [dx, dy] of [[-2, -1], [2, 2], [1, -3]]) ctx.fillRect(b.x + dx, b.y + dy, 1.6, 1.6); // the gravel in it
+      }
+    }
+
+    /** A rounded speech bubble with wrapped text, its tail down to (x, y + 14). */
+    function speechBubble(x, y, text) {
+      ctx.font = '600 12px system-ui, sans-serif';
+      const words = text.split(' '), lines = [];
+      let line = '';
+      for (const w of words) { const t = line ? `${line} ${w}` : w; if (ctx.measureText(t).width > 230 && line) { lines.push(line); line = w; } else line = t; }
+      lines.push(line);
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16, h = lines.length * 16 + 8;
+      ctx.fillStyle = 'rgba(0, 0, 0, .6)'; // see-through black, white writing (like everyone else's speech)
+      ctx.beginPath(); ctx.roundRect(x - w / 2, y - h, w, h, 8); ctx.moveTo(x - 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x + 5, y); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      lines.forEach((l, i) => ctx.fillText(l, x, y - h + 5 + i * 16));
+      ctx.textBaseline = 'middle';
+    }
+
+    // ---- Katya in the main game: in her cell in the oil hall (only I see her), then at home (everyone sees her) ----
+    let mySis = null; // [state (0 running to me, 1 hugging me, 2 following, 3 in her cell), x, y, angle] or null
+    let mySisDraw = null; // where she's drawn (eased toward the server's)
+    function drawSisters(view, now, dt) {
+      if (!playing) return;
+      const label = (x, y, text) => {
+        if (hiddenUnderRoof(x, y) && !insideBuilding(me?.x ?? 0, me?.y ?? 0)) return;
+        ctx.font = '600 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#ffd1dc'; ctx.fillText(text, x, y - 32);
+      };
+      for (const [, k] of view.sisters ?? []) {
+        if (k.x < viewBox.l - 100 || k.x > viewBox.r + 100 || k.y < viewBox.t - 100 || k.y > viewBox.b + 100) continue;
+        drawPerson({ x: k.x, y: k.y, r: 18, aim: k.angle, weapon: null, thrust: 0 }, KATYA_LOOK);
+        label(k.x, k.y, k.owner === wh.account ? 'Katya' : `Katya (${k.owner}'s sister)`);
+      }
+      if (!mySis || tut) { mySisDraw = null; return; }
+      const [state, x, y, angle] = mySis;
+      const d = (mySisDraw ??= { x, y, angle });
+      const e = 1 - Math.exp(-dt * 10);
+      d.x += (x - d.x) * e; d.y += (y - d.y) * e;
+      d.angle += Math.atan2(Math.sin(angle - d.angle), Math.cos(angle - d.angle)) * e;
+      if (d.x < viewBox.l - 100 || d.x > viewBox.r + 100 || d.y < viewBox.t - 100 || d.y > viewBox.b + 100) return;
+      const sob = state === 1 ? Math.sin(now / 90) * 1.2 : 0;
+      drawPerson({ x: d.x + sob, y: d.y, r: 18, aim: d.angle, weapon: null, thrust: state === 1 ? 0.3 : 0, sitting: state === 3 }, KATYA_LOOK);
+      if (state === 1) { // crying: tears dropping off her, her arms round me
+        for (let i = 0; i < 4; i++) {
+          const ph = ((now / 700 + i / 4) % 1);
+          ctx.fillStyle = `rgba(140, 200, 255, ${0.9 * (1 - ph)})`;
+          ctx.beginPath(); ctx.arc(d.x + (i % 2 ? 7 : -7), d.y - 6 + ph * 22, 2.4, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+      label(d.x, d.y, 'Katya');
+    }
+
+    /** The black Mercedes (only I see it). */
+    function drawBlackCar(dt) {
+      const b = story?.[3];
+      if (!tut || !b || !playing) { storyLook.black = null; return; }
+      const s = (storyLook.black ??= { x: b[0], y: b[1], angle: b[2] });
+      const e = 1 - Math.exp(-dt * 8);
+      s.x += (b[0] - s.x) * e; s.y += (b[1] - s.y) * e;
+      s.angle += Math.atan2(Math.sin(b[2] - s.angle), Math.cos(b[2] - s.angle)) * e;
+      if (s.x < viewBox.l - 200 || s.x > viewBox.r + 200 || s.y < viewBox.t - 200 || s.y > viewBox.b + 200) return;
+      drawVehicle({ type: 'sports', x: s.x, y: s.y, angle: s.angle, color: '#121214' });
+    }
+
+    /** The cabin burning, and its smoke (over the roofs and the trees). */
+    function drawStoryOver(now) {
+      const st = storyStage();
+      const k = storyLook.katya;
+      if (tut && playing && story?.[2] && k && storyLook.say && now < storyLook.sayUntil) speechBubble(k.x, k.y - 50, storyLook.say); // (over the roof, so you hear her from outside)
+      if (!tut || !playing || !['fire', 'chase', 'crash'].includes(st)) return;
+      const c = tut.cabin;
+      const t = st === 'fire' ? story[1] + (now - storyLook.at) / 1000 : 60;
+      const grow = Math.min(1, 0.35 + t / 20);
+      if (c.x < viewBox.r + 600 && c.x + c.w > viewBox.l - 600 && c.y < viewBox.b + 600 && c.y + c.h > viewBox.t - 900) {
+        for (let i = 0; i < 9; i++) {
+          const fx = c.x + 40 + ((i * 97) % (c.w - 80)), fy = c.y + 40 + ((i * 61) % (c.h - 80));
+          drawFire(fx, fy, (40 + (i % 3) * 18) * grow, 10, 20, i * 7, now); // (10 s left of 20: burning full)
+        }
+        for (let i = 0; i < 14; i++) { // smoke, drifting up and off
+          const ph = ((now / 5000 + i / 14) % 1), sx = c.x + c.w / 2 + Math.sin(i * 2.1) * 120 + ph * 260, sy = c.y + c.h / 2 - ph * 800;
+          ctx.fillStyle = `rgba(60, 60, 66, ${0.22 * (1 - ph) * grow})`;
+          ctx.beginPath(); ctx.arc(sx, sy, 50 + ph * 140, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+    }
+
     function drawBear(bf, id, now) {
       const charging = bf.state === 2, moving = bf.state !== 3, R = 42;
       const t = now / 1000, gait = Math.sin(t * (charging ? 11 : bf.state === 0 ? 3.5 : 6)), sniff = bf.state === 3 ? Math.sin(t * 5) * 0.35 : 0;
@@ -8075,7 +8394,7 @@
           slot.insertAdjacentHTML('beforeend', `<span class="goods-icon">${iconHTML(`food:${w[1]}`, 40)}</span><span class="goods-qty"></span>`);
         } else if (isTool(w)) {
           slot.classList.add('goods');
-          slot.title = w[1] === 'rod' ? 'Fishing rod — click a river or lake to cast; when a fish bites, pull (click) each time it tires'
+          slot.title = w[1] === 'rod' ? 'Fishing rod — click a river or lake to cast; when the fish flashes gold, click right then to pull it out'
             : w[1] === 'cellkey' ? "Overseer's key — off the oil hall's overseer. E at a cell door opens it. It's no good outside the hall: leave and it's gone"
             : w[1] === 'bunkerkey' ? "Bunker key — off one of the governor's guards. E at a bunker's trapdoor opens it (the key stays in the lock)"
             : `${TOOL_NAMES[w[1]] ?? w[1]} — the foreman's; click to work, it goes back when you leave the site`;
@@ -8277,6 +8596,7 @@
           else if (t?.kind === 'catDown') send({ t: 'cat', action: 'drop' });
           else if (t?.kind === 'crows') { send({ t: 'crows' }); feedCrows(t.target); }
           else if (t?.kind === 'vent') inspectVent(); // a sewer vent: listen at the grate
+          else if (t?.kind === 'snowball') inspectSnowball(); // Katya's snowball, by the bed
           else if (t?.kind === 'trapdoor') rattleTrapdoor(); // a bunker's trapdoor: locked (or open: down the ladder)
           else if (t?.kind === 'miner') send({ t: 'miner' }); // the old miner: his pickaxe, lent (or back)
           else if (t?.kind === 'trader') openTrader(); // the trader: vodka for things
@@ -8874,7 +9194,9 @@
       for (const [id, x, y, angle, kind, skin, shirt, pants, hat, carrier] of msg.bodies ?? []) corpses.set(id, { x, y, angle, kind, look: { skin, shirt, pants, hat }, carrier });
       const cats = new Map();
       for (const [id, x, y, angle, move, look, petted, knows, heldBy] of msg.cats ?? []) cats.set(id, { x, y, angle, move, look, petted: petted === 1, knows: knows === 1, heldBy });
-      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, bodies: corpses });
+      const sisters = new Map(); // everyone's sisters, at home: [id, x, y, angle, her sibling's name, 1 if only the starter house]
+      for (const [id, x, y, angle, owner, poor] of msg.sisters ?? []) sisters.set(id, { x, y, angle, owner, poor: poor === 1 });
+      snapshots.push({ time: serverTime, players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, sisters, bodies: corpses });
       teamPos = new Map((msg.team ?? []).map(([id, x, y, car]) => [id, { x, y, car }]));
       while (snapshots.length > 30) snapshots.shift();
 
@@ -8955,6 +9277,9 @@
       amCop = Boolean(you.cop);
       if (JSON.stringify(you.cabinet ?? null) !== JSON.stringify(cabinetView)) { cabinetView = you.cabinet ?? null; if (furnOpen) renderFurnish(); }
       myFish = you.fish ? { v: you.fish, at: performance.now() } : null; // (the fight's clock runs on from `at`)
+      story = you.story || null; // (the tutorial: my story so far)
+      mySis = you.sis || null; // (Katya underground: in her cell, running to me, hugging me, following)
+      storyLook.at = performance.now();
       prisonState = you.prison || null;
       crimeState = { wanted: you.wanted ?? 0, jail: you.jail ?? 0, rob: you.rob ?? null, arrest: you.arrest ?? 0, holdup: you.holdup ?? null, at: performance.now() };
       const trunkKey = JSON.stringify([econ.trunk, me?.car?.id ?? null, Boolean(inv[selectedSlot])]);
@@ -9051,7 +9376,12 @@
         const fa = a.oilfolk?.get(id);
         oilfolk.set(id, fa ? { ...fb, x: lerp(fa.x, fb.x, t), y: lerp(fa.y, fb.y, t), angle: lerpAngle(fa.angle, fb.angle, t) } : fb);
       }
-      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, bodies: b.bodies };
+      const sisters = new Map();
+      for (const [id, kb] of b.sisters ?? []) {
+        const ka = a.sisters?.get(id);
+        sisters.set(id, ka ? { ...kb, x: lerp(ka.x, kb.x, t), y: lerp(ka.y, kb.y, t), angle: lerpAngle(ka.angle, kb.angle, t) } : kb);
+      }
+      return { players, bullets, vehicles, npcs, cops, crew, wolves, bears, homeless, rats, oilfolk, cats, sisters, bodies: b.bodies };
     }
 
     // ---- player drawing (top-down) ------------------------------------------
@@ -9545,13 +9875,57 @@
           ctx.stroke();
         }
         // Hand-drawn dirt paths from the map editor.
-        for (const { points, width } of terrain.trails ?? []) {
+        for (const { points, width, gravel } of terrain.trails ?? []) {
+          if (gravel) continue; // (drawn below)
           const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
           if (Math.max(...xs) < viewBox.l || Math.min(...xs) > viewBox.r || Math.max(...ys) < viewBox.t || Math.min(...ys) > viewBox.b) continue;
           ctx.lineWidth = width + extra;
           ctx.beginPath();
           points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
           ctx.stroke();
+        }
+      }
+      drawGravelTrails();
+    }
+
+    /** A polyline drawn smooth: through the midpoints, the corners rounded off. */
+    function traceSmooth(points) {
+      ctx.beginPath();
+      ctx.moveTo(...points[0]);
+      for (let i = 1; i < points.length - 1; i++) ctx.quadraticCurveTo(points[i][0], points[i][1], (points[i][0] + points[i + 1][0]) / 2, (points[i][1] + points[i + 1][1]) / 2);
+      ctx.lineTo(...points.at(-1));
+    }
+
+    /** Gravel tracks (the tutorial's driveway and road): the same gravel as the country roads round town, the same dusting of snow, the ground biting into the edges. */
+    function drawGravelTrails() {
+      const ground = GROUND[season.main];
+      for (const { points, width, gravel } of terrain.trails ?? []) {
+        if (!gravel) continue;
+        const near = points.filter(([x, y]) => x > viewBox.l - 400 && x < viewBox.r + 400 && y > viewBox.t - 400 && y < viewBox.b + 400);
+        if (!near.length) continue;
+        const i0 = Math.max(0, points.indexOf(near[0]) - 1), i1 = Math.min(points.length, points.indexOf(near.at(-1)) + 2);
+        const pts = points.slice(i0, i1);
+        ctx.lineCap = 'butt';
+        ctx.strokeStyle = GRAVEL; ctx.lineWidth = width;
+        traceSmooth(pts); ctx.stroke();
+        if (snowAmount > 0.02) { ctx.strokeStyle = `rgba(220, 226, 232, ${0.55 * snowAmount})`; ctx.stroke(); }
+        ctx.lineCap = 'round';
+        // Ragged edges, as on the town's gravel roads: bites of ground along both sides.
+        ctx.fillStyle = ground;
+        for (let i = 1; i < pts.length; i++) {
+          const [ax, ay] = pts[i - 1], [bx, by] = pts[i], len = Math.hypot(bx - ax, by - ay) || 1;
+          const nx = -(by - ay) / len, ny = (bx - ax) / len, seed = Math.round(ax * 7 + ay * 13);
+          for (let k = 0; k * 9 < len; k++) {
+            for (const edge of [-1, 1]) {
+              const h1 = hash(seed + edge * 7919, k), h2 = hash(k, seed - edge * 104729);
+              const depth = (h2 - 0.35) * 14;
+              if (depth <= 0) continue;
+              const along = k * 9 + h1 * 9, off = edge * (width / 2 - depth);
+              const px = ax + ((bx - ax) / len) * along + nx * off, py = ay + ((by - ay) / len) * along + ny * off;
+              if (px < viewBox.l || px > viewBox.r || py < viewBox.t || py > viewBox.b) continue;
+              ctx.beginPath(); ctx.arc(px, py, 3 + h1 * 7, 0, Math.PI * 2); ctx.fill();
+            }
+          }
         }
       }
     }
@@ -10964,6 +11338,19 @@
           panel(R - 26, T, 24, 7);
           break;
         }
+        case 'stove': { // an old enamelled wood stove: four iron plates, a kettle on one, the firebox door at the front
+          steel(L, T, W, D, '#3a3a3a', 3);
+          for (const [x, y] of [[0.3, 0.3], [0.7, 0.3], [0.3, 0.68], [0.7, 0.68]]) { circle(L + W * x, T + D * y, Math.min(W, D) * 0.16, '#1e1e1e'); ctx.strokeStyle = '#555'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(L + W * x, T + D * y, Math.min(W, D) * 0.1, 0, Math.PI * 2); ctx.stroke(); }
+          circle(L + W * 0.7, T + D * 0.3, Math.min(W, D) * 0.14, '#8a9aa6'); ctx.fillStyle = '#5a6a76'; ctx.fillRect(L + W * 0.7 - 1, T + D * 0.3 - 8, 2, 6); // the kettle
+          ctx.fillStyle = '#222'; ctx.fillRect(L + 4, B - 5, W - 8, 4); // the firebox door (cold)
+          break;
+        }
+        case 'fridge': { // a ЗИЛ fridge: rounded white enamel, the chrome handle, the badge
+          steel(L, T, W, D, c, 6);
+          ctx.fillStyle = '#b8bcc2'; ctx.fillRect(R - 7, T + D * 0.25, 3, D * 0.5); // the handle
+          ctx.fillStyle = '#9a2a2a'; ctx.font = 'bold 6px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('ЗИЛ', cx, cy + 2);
+          break;
+        }
         case 'logs': { // logs stacked side by side, cut ends showing their rings
           const n = Math.max(2, Math.floor(D / 11)), lh = D / n;
           for (let i = 0; i < n; i++) {
@@ -11661,6 +12048,8 @@
       if (ladder) options.push({ kind: 'ladder', dist: ladder.d, x: ladder.x, y: ladder.y - 70 });
       const trap = nearestTrapdoor();
       if (trap) options.push({ kind: 'trapdoor', dist: d({ x: trap.x + trap.w / 2, y: trap.y + trap.h / 2 }) + 10, x: trap.x + trap.w / 2, y: trap.y - 18 });
+      const ball = storyLook.ball;
+      if (ball && tut && Math.hypot(ball.x - me.x, ball.y - me.y) < 80) options.push({ kind: 'snowball', dist: d(ball) - 15, x: ball.x, y: ball.y - 26 }); // the tutorial: Katya's snowball
       const placed = nearestFurnishing();
       if (placed) options.push({ kind: 'furnish', target: placed.f, dist: placed.d, x: placed.f[2] + placed.f[4] / 2, y: placed.f[3] - 14 });
       let best = null;
@@ -12130,6 +12519,29 @@
           return null;
         });
       }
+      // Katya: in her cell (only I see her), crying as she hugs me, grumbling as she follows; at home, to her own sibling.
+      if (mySis && mySisDraw) {
+        const [state] = mySis;
+        speaker('mysis', mySisDraw.x, mySisDraw.y, 36, (s, d) => {
+          if (state === 3) {
+            if (approach(s, d, 320, 420) === 'in') { s.next = t + 9 + Math.random() * 5; return { text: pick(SPEECH.sisterCell ?? ['…']), urgent: true }; }
+            if (d < 420 && t > (s.next ?? 0)) { s.next = t + 9 + Math.random() * 5; return { text: pick(SPEECH.sisterCell ?? ['…']) }; }
+            return null;
+          }
+          if (state === 1) { if (t > (s.cry ?? 0)) { s.cry = t + SAY_SEC + 0.3; return { text: pick(SPEECH.sisterFree ?? ['…']), urgent: true }; } return null; }
+          if (state === 2) { s.next ??= t + 8; if (t > s.next) { s.next = t + 16 + Math.random() * 14; return { text: pick(SPEECH.sisterFollow ?? ['…']) }; } }
+          return null;
+        });
+      }
+      for (const [id, k] of v.sisters ?? []) {
+        if (k.owner !== wh.account) continue; // (she only talks to her own sibling)
+        speaker(`k${id}`, k.x, k.y, 36, (s, d) => {
+          const say = SPEECH[k.poor ? 'sisterPoor' : 'sisterHome'] ?? ['…'];
+          if (approach(s, d, 160, 230) === 'in') { s.next = t + 12 + Math.random() * 10; return { text: pick(say), urgent: true }; }
+          if (d < 230 && t > (s.next ?? 0)) { s.next = t + 14 + Math.random() * 12; return { text: pick(say) }; }
+          return null;
+        });
+      }
       // The oil hall: workers grumbling at the pumps; prisoners calling out from the cells.
       for (const [id, f] of v.oilfolk ?? []) {
         speaker(`o${id}`, f.x, f.y, 34, (s, d) => {
@@ -12259,17 +12671,12 @@
 
     // ---- fishing: the line, the float and the fish on the end of it, all out on the water ----------
 
-    /** Is the fish tired (time to pull) `t` seconds into the fight? Same rule as the server's tiredAt. */
-    function fishTired(t, cycle, from, to) {
-      const phase = (((t / cycle) % 1) + 1) % 1;
-      return phase >= from && phase <= to;
-    }
-    /** Seconds into my fight right now, by the server's clock. */
+    /** Seconds since the fish showed, by the server's clock. */
     const fightTime = () => myFish.v[2] + (performance.now() - myFish.at) / 1000;
 
-    /** A click with the rod: cast, pull while a fish fights, or reel in an empty line. */
+    /** A click with the rod: cast, pull the instant the fish shows, or reel in an empty line. */
     function fishClick() {
-      if (myFish?.v.length > 2) { send({ t: 'fish', action: 'pull', seen: Math.round(fightTime() * 1000) / 1000 }); sfx('reel'); }
+      if (myFish?.v.length > 2 && myFish.v[2] >= 0) { send({ t: 'fish', action: 'pull', seen: Math.round(fightTime() * 1000) / 1000 }); sfx('reel'); }
       else if (myFish) send({ t: 'fish', action: 'pull' });
       else { send({ t: 'fish', action: 'cast', angle: aimAngle() }); sfx('cast'); }
     }
@@ -12343,64 +12750,36 @@
         fishFloat(fx, fy + bob);
         return;
       }
-      const [, , , cycle, from, to, pulls, hookedId] = myFish.v;
-      const ft = fightTime();
+      const [, , since, show, hookedId] = myFish.v;
       const victim = hookedId ? shown.get(hookedId) : null;
-      if (hookedId) { // hooked onto another player: the fight's on them (no fish)
-        const [vx, vy] = victim ? [victim.x, victim.y] : [fx, fy];
-        if (fishTired(ft, cycle, from, to)) {
-          const pulse = 0.5 + 0.5 * Math.sin(t * 14);
-          const g = ctx.createRadialGradient(vx, vy, 10, vx, vy, 52);
-          g.addColorStop(0, `rgba(255, 210, 60, ${0.3 + 0.25 * pulse})`); g.addColorStop(1, 'rgba(255, 210, 60, 0)');
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(vx, vy, 52, 0, Math.PI * 2); ctx.fill();
-          fishLine(tip, { x: vx, y: vy }, 10, 'rgba(255, 230, 140, .95)', 1.6);
-          ctx.font = `900 ${18 + 4 * pulse}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0, 0, 0, .75)'; ctx.fillStyle = '#ffd23c';
-          ctx.strokeText('PULL!', vx, vy - 48); ctx.fillText('PULL!', vx, vy - 48);
-        } else {
-          const shake = Math.sin(t * 60) * 1.5;
-          fishLine(tip, { x: vx + shake, y: vy - shake }, 0, 'rgba(255, 120, 100, .95)', 2);
+      const [vx, vy] = victim ? [victim.x, victim.y] : [fx, fy];
+      const ft = since >= 0 ? fightTime() : -1;
+      const flash = ft >= 0 && ft <= show; // the split second: pull!
+      if (flash) { // a flash of gold, and the fish breaks the surface (or the hook jerks in them)
+        const pulse = 0.5 + 0.5 * Math.sin(t * 30);
+        const g = ctx.createRadialGradient(vx, vy, 4, vx, vy, 56);
+        g.addColorStop(0, `rgba(255, 210, 60, ${0.5 + 0.3 * pulse})`); g.addColorStop(1, 'rgba(255, 210, 60, 0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(vx, vy, 56, 0, Math.PI * 2); ctx.fill();
+        if (!hookedId) {
+          fishRipples(fx, fy, t, '255, 210, 60', 0.9);
+          fishShape(fx, fy, Math.atan2(p.y - fy, p.x - fx), 38, 0.9);
+          fishSplash(fx, fy, t);
         }
+        fishLine(tip, { x: vx, y: vy }, 0, 'rgba(255, 230, 140, .95)', 2);
+        ctx.font = '900 24px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0, 0, 0, .75)'; ctx.fillStyle = '#ffd23c';
+        ctx.strokeText('PULL!', vx, vy - 44); ctx.fillText('PULL!', vx, vy - 44);
+      } else if (hookedId) { // hooked onto another player, waiting for the moment: a tight line into them
+        const shake = Math.sin(t * 60) * 1.5;
+        fishLine(tip, { x: vx + shake, y: vy - shake }, 0, 'rgba(255, 120, 100, .95)', 2);
+      } else { // gone again: the float bobbing back up in the rings it left
+        fishRipples(fx, fy, t * 1.8, '235, 245, 255', 0.6);
+        fishLine(tip, { x: fx, y: fy }, 18, 'rgba(255, 255, 255, .7)', 1.3);
+        fishFloat(fx, fy);
+      }
+      if (hookedId) {
         ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('🪝', vx + 14, vy - 10); // the hook in them
-        for (let i = 0; i < fishCfg.pulls; i++) {
-          ctx.beginPath(); ctx.arc(vx + (i - (fishCfg.pulls - 1) / 2) * 16, vy + 40, 5.5, 0, Math.PI * 2);
-          ctx.fillStyle = i < pulls ? '#ffd23c' : 'rgba(0, 0, 0, .35)'; ctx.fill();
-          ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.stroke();
-        }
-        return;
-      }
-      const away = Math.atan2(fy - p.y, fx - p.x); // it pulls away from you
-      if (fishTired(ft, cycle, from, to)) {
-        // Worn out: it goes still, turned toward you, gold rings spreading round it. Pull now!
-        const pulse = 0.5 + 0.5 * Math.sin(t * 14);
-        const g = ctx.createRadialGradient(fx, fy, 4, fx, fy, 46);
-        g.addColorStop(0, `rgba(255, 210, 60, ${0.35 + 0.25 * pulse})`); g.addColorStop(1, 'rgba(255, 210, 60, 0)');
-        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(fx, fy, 46, 0, Math.PI * 2); ctx.fill();
-        fishRipples(fx, fy, t, '255, 210, 60', 0.8);
-        fishShape(fx, fy, away + Math.PI, 34, 0.8);
-        fishLine(tip, { x: fx, y: fy }, 12, 'rgba(255, 230, 140, .95)', 1.6);
-        ctx.font = `900 ${18 + 4 * pulse}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0, 0, 0, .75)'; ctx.fillStyle = '#ffd23c';
-        ctx.strokeText('PULL!', fx, fy - 40); ctx.fillText('PULL!', fx, fy - 40);
-      } else {
-        // Fighting: it thrashes from side to side away from you, the float dragged under, the line tight.
-        const side = Math.sin(ft * 19), surge = 10 + 7 * Math.sin(ft * 7);
-        const sx = fx + Math.cos(away) * surge + Math.cos(away + Math.PI / 2) * side * 14;
-        const sy = fy + Math.sin(away) * surge + Math.sin(away + Math.PI / 2) * side * 14;
-        fishRipples(sx, sy, t * 1.8, '235, 245, 255', 0.6);
-        fishShape(sx, sy, away + side * 0.8, 34, 0.75);
-        fishSplash(sx, sy, t);
-        const shake = Math.sin(t * 60) * 1.5;
-        fishLine(tip, { x: sx + shake, y: sy - shake }, 0, 'rgba(255, 120, 100, .95)', 2);
-      }
-      // How many good pulls so far: a row of beads under it, gold once earned.
-      const n = fishCfg.pulls;
-      for (let i = 0; i < n; i++) {
-        const bx = fx + (i - (n - 1) / 2) * 16, by = fy + 36;
-        ctx.beginPath(); ctx.arc(bx, by, 5.5, 0, Math.PI * 2);
-        ctx.fillStyle = i < pulls ? '#ffd23c' : 'rgba(0, 0, 0, .35)'; ctx.fill();
-        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.stroke();
       }
     }
 
@@ -14168,9 +14547,11 @@
         const { angle, throttle, boost, gas, steer, drift } = moveInput();
         // Big corrections fold in fast; the few-pixel ones that network timing causes, gently, so they don't jitter.
         const k = 1 - Math.exp(-dt * (Math.hypot(me.cx, me.cy) > 12 ? 10 : 4));
-        const ridingIn = riding ? view.vehicles.get(riding) : null;
-        if (riding) { // a passenger: sit in the car (drawn as the car), following it smoothly
+        const crashing = me.car && storyStage() === 'crash'; // (the tutorial's black ice has the wheel: the car goes where the server says)
+        const ridingIn = riding ? view.vehicles.get(riding) : crashing ? view.vehicles.get(me.car.id) : null;
+        if (riding || crashing) { // a passenger: sit in the car (drawn as the car), following it smoothly
           if (ridingIn) { me.x = ridingIn.x; me.y = ridingIn.y; }
+          if (crashing && ridingIn) Object.assign(me.car, { x: ridingIn.x, y: ridingIn.y, angle: ridingIn.angle });
           me.cx = me.cy = 0;
         } else if (me.car) {
           const carGas = me.car.fuel > 0 ? gas : emptyTankGas(me.car, gas);
@@ -14214,6 +14595,7 @@
 
       if (playing) {
         updateHud();
+        updateStoryHud();
         const used = econ.trunk ? econ.trunk[2].filter(Boolean).length : 0;
         coinsEl.textContent = `💵 ${money(coins)}  ·  🏦 ${money(bankBalance)}${econ.trunk ? `  ·  🚚 trunk ${used}/${econ.trunk[2].length} slots` : ''}`;
         fuelEl.hidden = !me?.car;
@@ -14257,6 +14639,7 @@
       drawForestFloors(viewBox.l, viewBox.t, viewBox.r, viewBox.b);
       drawPaths();
       drawWater(frameTime);
+      drawIceHoles(frameTime);
       drawRoads();
       drawRailway(frameTime);
       drawParking();
@@ -14356,6 +14739,8 @@
         drawPerson(p, p.cop === 1 ? { ...POLICE_LOOK, skin: lookOf(id).skin, hat: season.main === 'winter' ? 'ushanka' : 'furazhka' } : p.cop === 2 ? { ...PRISONER_LOOK, skin: lookOf(id).skin } : lookOf(id)); // Militsiya players wear the uniform; prisoners the camp's black
       }
       drawCats(view, shown, frameTime, true);
+      drawStoryPeople(frameTime, dt);
+      drawSisters(view, frameTime, dt);
       drawBodies(view, true);
       drawGunfire(frameTime, dt);
       drawFishing(frameTime, shown);
@@ -14372,6 +14757,7 @@
       }
       drawDust(frameTime);
       for (const v of cars.values()) drawVehicle(v);
+      drawBlackCar(dt);
       for (const v of cars.values()) drawExhaustFire(v, frameTime); // (over the cars, so the jet shows)
       for (const v of cars.values()) if (v.radio) { // radio on: notes drifting up off the roof
         ctx.font = '700 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -14569,7 +14955,7 @@
       if (me && playing && !me.car && !riding && holdingRod() && (!myFish || myFish.v.length <= 2)) { // rod in hand: what a click does
         ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0, 0, 0, .7)'; ctx.lineWidth = 3;
-        const t = myFish ? '🎣 waiting for a bite… (click to reel in)' : '🎣 click the water to cast (or a player, to hook them)';
+        const t = myFish ? '🎣 click the instant the fish flashes gold (clicking before reels in)' : '🎣 click the water to cast (or a player, to hook them)';
         ctx.strokeText(t, me.x, me.y - 52); ctx.fillText(t, me.x, me.y - 52);
       }
       if (me && playing && sleepInfo) { // asleep: who else is, and how to get up
@@ -14630,6 +15016,8 @@
       updateCrimeHud();
       drawJobArrow(frameTime);
       drawAchArrow(frameTime);
+      drawStoryArrow(frameTime);
+      drawStoryOver(frameTime);
       drawPlaceLabels();
       for (const t of bankData.tellers) {
         if (t.x < viewBox.l || t.x > viewBox.r || t.y < viewBox.t || t.y > viewBox.b || hiddenUnderRoof(t.x, t.y)) continue;

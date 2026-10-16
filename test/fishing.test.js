@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { config } from '../src/config.js';
 import { World } from '../src/game/World.js';
 import { validateMap } from '../src/game/mapFile.js';
-import { tiredAt } from '../src/game/fishing.js';
 import { carriedSlots, restoreSlots } from '../src/game/Room.js';
 import { hotbarOf } from '../src/game/cargo.js';
 
@@ -29,12 +28,8 @@ function onBank({ world, p }) {
   Object.assign(p, { x: 2000 - 300 - 40, y: 1500 });
 }
 
-/** Seconds into the fight when the fish is next tired (or fighting, with `tired` false). */
-function nextMoment(f, tired) {
-  const now = Math.max(0.3, f.fishing.time - f.p.fishing.start); // (clicks just after a pull are ignored)
-  for (let t = now; t < now + 5; t += 0.01) if (tiredAt(t, f.p.fishing.cycle, f.p.fishing.window) === tired && (!tired || tiredAt(t + 0.05, f.p.fishing.cycle, f.p.fishing.window))) return t;
-  throw new Error('no such moment');
-}
+/** Seconds after the fish shows: in the split second (`inTime`), or just too late. */
+const nextMoment = (f, inTime) => (inTime ? config.fishing.showSec / 2 : config.fishing.showSec + 0.1);
 
 /** Step the world until the fish bites. */
 function waitForBite(f) {
@@ -43,7 +38,7 @@ function waitForBite(f) {
   assert.equal(f.p.fishing.phase, 'bite');
 }
 
-/** Step to `t` seconds into the fight and pull. */
+/** Step to `t` seconds after it shows and pull. */
 function pullAt(f, t) {
   while (f.fishing.time - f.p.fishing.start < t) f.world.step(1 / 60);
   return f.fishing.pull(f.p, t);
@@ -67,7 +62,7 @@ test('a rod from the shop; cast onto water only', () => {
   assert.equal(p.fishing, null);
 });
 
-test('pull while the fish is tired, three times, and it is landed', () => {
+test('pull in the split second the fish shows, and it is landed', () => {
   const f = pond();
   onBank(f);
   assert.equal(f.fishing.cast(f.p, 0), null);
@@ -75,20 +70,19 @@ test('pull while the fish is tired, three times, and it is landed', () => {
   const start = { x: f.p.fishing.x, y: f.p.fishing.y };
   const random = Math.random;
   try {
-    for (let i = 0; i < config.fishing.pulls; i++) {
-      if (i === config.fishing.pulls - 1) Math.random = () => 0.1; // a fish, not junk
+    for (let i = 0; i < 1; i++) {
+      if (i === 1 - 1) Math.random = () => 0.1; // a fish, not junk
       assert.equal(pullAt(f, nextMoment(f, true)), null);
-      if (i < config.fishing.pulls - 1) assert.equal(f.p.fishing.pulls, i + 1);
     }
   } finally {
     Math.random = random;
   }
   assert.equal(f.p.fishing, null);
   assert.equal(hotbarOf(f.p).count('fish'), 1);
-  assert.ok(Math.hypot(start.x - f.p.x, start.y - f.p.y) > 0);
+  void start;
 });
 
-test('pull while it is thrashing and it breaks free; wait too long and it swims off', () => {
+test('pull too late and it is gone; never pull and it swims off; pull before it shows and you reel in for nothing', () => {
   const f = pond();
   onBank(f);
   f.fishing.cast(f.p, 0);
@@ -96,29 +90,38 @@ test('pull while it is thrashing and it breaks free; wait too long and it swims 
   assert.equal(pullAt(f, nextMoment(f, false)), null);
   assert.equal(f.p.fishing, null);
   assert.equal(hotbarOf(f.p).count('fish'), 0);
-  assert.ok(f.fishing.events.some((e) => e.kind === 'fish_escaped' && e.why === 'snapped'));
+  assert.ok(f.fishing.events.some((e) => e.kind === 'fish_escaped' && e.why === 'slow'));
+  f.fishing.events.length = 0;
   f.fishing.cast(f.p, 0);
   waitForBite(f);
-  for (let i = 0; i < 30 * (config.fishing.giveUpSec + 1); i++) f.world.step(1 / 30);
+  for (let i = 0; i < 30; i++) f.world.step(1 / 30);
   assert.equal(f.p.fishing, null);
   assert.ok(f.fishing.events.some((e) => e.kind === 'fish_escaped' && e.why === 'slow'));
+  f.fishing.cast(f.p, 0);
+  assert.equal(f.fishing.pull(f.p, null), null, 'nothing on yet');
+  assert.equal(f.p.fishing, null);
+  assert.ok(f.fishing.events.some((e) => e.kind === 'fish_reeled'));
 });
 
-test("the player's own view of the fight counts, within the lag allowance", () => {
+test("the player's own view of the moment counts, within the lag allowance", () => {
   const f = pond();
   onBank(f);
   f.fishing.cast(f.p, 0);
   waitForBite(f);
-  const tired = nextMoment(f, true);
-  // The server is a little past the window by now, but the player clicked when they saw it tired.
-  while (f.fishing.time - f.p.fishing.start < tired + 0.2) f.world.step(1 / 60);
-  assert.equal(f.fishing.pull(f.p, tired), null);
-  assert.equal(f.p.fishing.pulls, 1);
+  const seen = nextMoment(f, true);
+  // The server is past the split second by now, but the player clicked when they saw it.
+  while (f.fishing.time - f.p.fishing.start < seen + 0.3) f.world.step(1 / 60);
+  assert.ok(f.p.fishing, 'still on the line (waiting on a laggy click)');
+  const random = Math.random;
+  Math.random = () => 0.1;
+  try { assert.equal(f.fishing.pull(f.p, seen), null); } finally { Math.random = random; }
+  assert.equal(hotbarOf(f.p).count('fish'), 1);
   // A claim far from the server's clock isn't believed.
-  const fighting = nextMoment(f, false);
-  while (f.fishing.time - f.p.fishing.start < fighting) f.world.step(1 / 60);
-  f.fishing.pull(f.p, fighting + 3);
-  assert.ok(f.p.fishing === null || f.p.fishing.pulls === 1);
+  f.fishing.cast(f.p, 0);
+  waitForBite(f);
+  while (f.fishing.time - f.p.fishing.start < config.fishing.showSec + 0.1) f.world.step(1 / 60);
+  f.fishing.pull(f.p, 0.1 - 3);
+  assert.equal(hotbarOf(f.p).count('fish'), 1, 'not another');
 });
 
 test('sometimes it is not a fish: food or a gun with a few rounds', () => {
@@ -129,9 +132,9 @@ test('sometimes it is not a fish: food or a gun with a few rounds', () => {
     waitForBite(f);
     const random = Math.random;
     try {
-      for (let i = 0; i < config.fishing.pulls; i++) {
+      for (let i = 0; i < 1; i++) {
         const t = nextMoment(f, true);
-        if (i === config.fishing.pulls - 1) { const rolls = [...roll]; Math.random = () => rolls.shift() ?? 0.5; }
+        if (i === 1 - 1) { const rolls = [...roll]; Math.random = () => rolls.shift() ?? 0.5; }
         pullAt(f, t);
       }
     } finally {
@@ -164,7 +167,7 @@ test('fish eat; the rod is yours to keep (work sites leave it alone, and it is s
   assert.ok(next.inventory.some((s) => s?.type === 'rod' && s.tool));
 });
 
-test('cast at another player: hook them, win the fight and take one random thing from their hotbar (theft)', () => {
+test('cast at another player: hook them, pull in the split second and take one random thing from their hotbar (theft)', () => {
   const f = pond();
   onBank(f);
   Object.assign(f.p, { x: 600, y: 2600 }); // dry land, nowhere near the pond
@@ -177,7 +180,8 @@ test('cast at another player: hook them, win the fight and take one random thing
   assert.ok(f.fishing.events.some((e) => e.player === mark && e.kind === 'hooked_by'), 'they are warned');
   const crimes = [];
   f.world.police.crime = (who, kind) => { crimes.push([who, kind]); return true; };
-  for (let i = 0; i < config.fishing.pulls; i++) pullAt(f, nextMoment(f, true));
+  waitForBite(f);
+  pullAt(f, nextMoment(f, true));
   assert.equal(f.p.fishing, null);
   assert.equal(hotbarOf(f.p).count('steel'), 3, 'the only thing worth taking (not the knife)');
   assert.equal(hotbarOf(mark).count('steel'), 0);
@@ -210,7 +214,8 @@ test('hooking a player reels in something they carry — even a gun like one you
   mark.inventory[2] = f.world.makeWeapon('pistol');
   f.p.inventory[3] = f.world.makeWeapon('pistol'); // you've a pistol already: you can still take theirs
   f.fishing.cast(f.p, 0);
-  for (let i = 0; i < config.fishing.pulls; i++) pullAt(f, nextMoment(f, true));
+  waitForBite(f);
+  pullAt(f, nextMoment(f, true));
   assert.equal(f.fishing.events.find((e) => e.kind === 'fish_caught')?.item, 'pistol');
   assert.equal(f.p.inventory.filter((s) => s?.type === 'pistol').length, 2);
 });
@@ -233,26 +238,4 @@ test('in winter the lakes are ice, but the rivers still run: cast into a river o
   p.fishing = null;
   Object.assign(p, { x: 2000 - 300 - 40, y: 1500 });
   assert.equal(fishing.cast(p, 0), null, 'the pond in summer');
-});
-
-test('reeling a fish in from a narrow river drags the float to the bank, but that is not ice: the fish is landed', () => {
-  const f = pond();
-  const { world, p } = f;
-  onBank(f);
-  world.water = { ...world.water, rivers: [{ points: [[3200, 0], [3200, 3000]], width: 90 }] };
-  Object.assign(p, { x: 3200 - 45 - 60, y: 1500 }); // a step back from the river's west bank
-  assert.equal(f.fishing.cast(p, 0), null);
-  waitForBite(f);
-  const random = Math.random;
-  try {
-    for (let i = 0; i < config.fishing.pulls; i++) {
-      if (i === config.fishing.pulls - 1) Math.random = () => 0.1; // a fish, not junk
-      assert.equal(pullAt(f, nextMoment(f, true)), null);
-      if (i < config.fishing.pulls - 1) world.step(1 / 30); // (the float's on the bank by now)
-    }
-  } finally {
-    Math.random = random;
-  }
-  assert.ok(!f.fishing.events.some((e) => e.why === 'frozen'), 'no "the lake froze over"');
-  assert.equal(hotbarOf(p).count('fish'), 1, 'landed');
 });

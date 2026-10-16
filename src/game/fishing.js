@@ -4,27 +4,16 @@ import { hotbarOf } from './cargo.js';
 import { STARTER_WEAPON, makeWeapon } from './entities.js';
 
 // Fishing. With a rod in hand by a river or lake, click to cast: the float lands out on the water.
-// After a while a fish bites and fights the line. It fights in cycles: thrashing most of the time, then
-// tiring for a moment (it goes still, and a ripple rings it). Click to pull while it's tired and it
-// comes closer; pull while it's thrashing and it breaks free; leave it too long and it swims off.
-// Enough good pulls lands it: usually a fish, sometimes something else that was down there.
+// After a while the fish flashes at the surface — for a split second (showSec). Click (pull) right then
+// and it's landed: usually a fish, sometimes something else that was down there. Too late and it's
+// gone; click while there's nothing on and you reel in for nothing.
 //
 // Cast at another player instead (they're in the way of the line, within reach) and you hook them:
-// the same fight, but on them — and they're warned, and can snap the line by walking off. Land it and
-// you've reeled in one random thing from their hotbar (never their starting knife). That's theft:
-// anyone who sees it (police or townsfolk) reports you, as for pickpocketing.
-//
-// The fight is the same for everyone who sees it: whether the fish is tired at time t is a pure
-// function of the bite's start, its cycle length and the windows (see tiredAt), and the client draws
-// it from the same numbers.
+// the same split second comes a moment later, on them — and they're warned, and can snap the line by
+// walking off. Pull in time and you've reeled in one random thing from their hotbar (never their
+// starting knife). That's theft: anyone who sees it (police or townsfolk) reports you, as for pickpocketing.
 
 const rand = ([a, b]) => a + Math.random() * (b - a);
-
-/** Is the fish tired (the moment to pull) `t` seconds into the fight? `window` = [start, end] as a share of the cycle. */
-export function tiredAt(t, cycle, window) {
-  const phase = (((t / cycle) % 1) + 1) % 1;
-  return phase >= window[0] && phase <= window[1];
-}
 
 export class Fishing {
   constructor(world) {
@@ -36,6 +25,7 @@ export class Fishing {
   /** Is (x, y) open water a float can sit on (not dry land, not a bridge, not a frozen lake)? */
   #water(x, y) {
     const w = this.world;
+    if (w.iceHoles?.some((h) => Math.hypot(x - h.x, y - h.y) < h.r)) return true; // (a hole cut in the ice)
     const water = w.frozen ? { rivers: w.water.rivers, lakes: [] } : w.water; // (the lakes are ice in winter)
     if (waterDistance(water, x, y).d > -12) return false;
     return !w.roads.some((r) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h);
@@ -55,8 +45,7 @@ export class Fishing {
     if (!Number.isFinite(angle)) return 'no_water';
     const victim = this.#playerInLine(p, angle);
     if (victim) {
-      p.fishing = { x: victim.x, y: victim.y, from: { x: p.x, y: p.y }, victim, hookedAt: { x: victim.x, y: victim.y }, phase: 'bite', pulls: 0 };
-      this.#newRound(p.fishing);
+      p.fishing = { x: victim.x, y: victim.y, from: { x: p.x, y: p.y }, victim, hookedAt: { x: victim.x, y: victim.y }, phase: 'wait', biteAt: this.time + rand(config.fishing.hookBiteSec) };
       this.events.push({ player: p, kind: 'fish_hooked_player', name: victim.name });
       this.events.push({ player: victim, kind: 'hooked_by', name: p.name });
       return null;
@@ -91,49 +80,28 @@ export class Fishing {
   }
 
   /**
-   * A pull. `seen` is how far into the fight (seconds) the player saw it when they clicked; it's trusted
-   * only within slackSec of the server's clock (lag), and otherwise the server's own clock decides.
+   * A pull. `seen` is how far into the fish's moment (seconds) the player saw it when they clicked; it's
+   * trusted only within slackSec of the server's clock (lag), and otherwise the server's own clock decides.
    */
   pull(p, seen) {
     const f = p.fishing;
     if (!f) return 'no_line';
     const r = config.fishing;
-    if (f.phase === 'wait') { // nothing on it yet: reel in
+    if (f.phase === 'wait') { // nothing showing yet: reel in (for nothing)
       p.fishing = null;
       this.events.push({ player: p, kind: 'fish_reeled' });
-      return null;
-    }
-    if (this.time < f.nextPull) return null; // (one pull at a time)
-    const now = this.time - f.start;
-    const t = Number.isFinite(seen) && Math.abs(seen - now) <= r.slackSec ? seen : now;
-    if (!tiredAt(t, f.cycle, f.window)) {
-      p.fishing = null;
-      this.events.push({ player: p, kind: 'fish_escaped', why: 'snapped' });
       if (f.victim) this.events.push({ player: f.victim, kind: 'hook_free' });
       return null;
     }
-    f.pulls++;
-    // It comes in a third of the way toward you each time (a hooked player just stays hooked where they are).
-    const left = r.pulls - f.pulls + 1;
-    if (!f.victim) {
-      f.x += (p.x - f.x) / (left + 1);
-      f.y += (p.y - f.y) / (left + 1);
+    const now = this.time - f.start;
+    const t = Number.isFinite(seen) && Math.abs(seen - now) <= r.slackSec ? seen : now;
+    if (t < 0 || t > r.showSec) { // too late: it's gone
+      p.fishing = null;
+      this.events.push({ player: p, kind: 'fish_escaped', why: 'slow' });
+      if (f.victim) this.events.push({ player: f.victim, kind: 'hook_free' });
+      return null;
     }
-    if (f.pulls >= r.pulls) return f.victim ? this.#landPlayer(p, f.victim) : this.#land(p);
-    this.#newRound(f);
-    this.events.push({ player: p, kind: 'fish_pull', pulls: f.pulls, of: r.pulls });
-    return null;
-  }
-
-  /** The fish starts fighting again: a fresh window somewhere in the cycle, and a fresh clock to give up on. */
-  #newRound(f) {
-    const r = config.fishing;
-    f.cycle = r.cycleSec * (0.85 + Math.random() * 0.3);
-    const start = 0.35 + Math.random() * (1 - r.tiredShare - 0.4); // never right at the start: watch it first
-    f.window = [start, start + r.tiredShare];
-    f.start = this.time;
-    f.until = this.time + r.giveUpSec;
-    f.nextPull = this.time + 0.25;
+    return f.victim ? this.#landPlayer(p, f.victim) : this.#land(p);
   }
 
   /** Landed: usually a fish, sometimes something else. */
@@ -141,7 +109,7 @@ export class Fishing {
     const r = config.fishing;
     p.fishing = null;
     const w = this.world;
-    if (Math.random() < r.fishChance) {
+    if (w.tutorial || Math.random() < r.fishChance) { // (breakfast, in the tutorial: always a fish)
       if (hotbarOf(p).room('fish') < 1) return this.#full(p);
       hotbarOf(p).add('fish', 1);
       this.events.push({ player: p, kind: 'fish_caught', what: 'fish' });
@@ -230,10 +198,9 @@ export class Fishing {
       }
       if (f.phase === 'wait' && this.time >= f.biteAt) {
         f.phase = 'bite';
-        f.pulls = 0;
-        this.#newRound(f);
+        f.start = this.time;
         this.events.push({ player: p, kind: 'fish_bite' });
-      } else if (f.phase === 'bite' && this.time > f.until) {
+      } else if (f.phase === 'bite' && this.time > f.start + config.fishing.showSec + config.fishing.slackSec) { // (missed it: a late click is still judged by what they saw)
         p.fishing = null;
         this.events.push({ player: p, kind: 'fish_escaped', why: 'slow' });
         if (f.victim) this.events.push({ player: f.victim, kind: 'hook_free' });
@@ -241,13 +208,12 @@ export class Fishing {
     }
   }
 
-  /** For the snapshot: [x, y] while waiting, [x, y, secondsIntoFight, cycle, windowStart, windowEnd, pulls, hooked player id or 0] while it fights. */
+  /** For the snapshot: [x, y] while waiting (on a hooked player: [x, y, 0, 0, their id]), [x, y, secondsIntoTheMoment, showSec, hooked player id or 0] once it shows. */
   view(p) {
     const f = p.fishing;
     if (!f) return null;
     const at = [Math.round(f.x), Math.round(f.y)];
-    if (f.phase !== 'bite') return at;
-    const r3 = (n) => Math.round(n * 1000) / 1000;
-    return [...at, r3(this.time - f.start), r3(f.cycle), r3(f.window[0]), r3(f.window[1]), f.pulls, f.victim?.id ?? 0];
+    if (f.phase !== 'bite') return f.victim ? [...at, -1, 0, f.victim.id] : at;
+    return [...at, Math.round((this.time - f.start) * 1000) / 1000, config.fishing.showSec, f.victim?.id ?? 0];
   }
 }

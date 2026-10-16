@@ -557,18 +557,16 @@ export const config = Object.freeze({
     // 1 to `most` things, by the relative odds in `odds`. Empty ones are looked at again every restockSec.
     loot: { chance: 0.5, most: 3, restockSec: 900, odds: { bread: 4, burger: 3, drink: 3, feast: 0.5, rod: 1.2, bat: 1, pistol: 0.6 }, pistolAmmo: [1, 5] },
   },
-  // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while a fish bites and
-  // fights the line; every `cycleSec` (± a little) it tires for `tiredShare` of the cycle, and that's when
-  // you pull (click). Pull while it's fighting and it breaks free. `pulls` good pulls land it.
+  // Fishing: buy a rod at a shop, stand by a river or lake, click to cast. After a while (biteSec) the fish
+  // flashes at the surface for just showSec: click (pull) in that split second and it's yours. Too late
+  // and it's gone; click before it shows and you've reeled in for nothing. Cast again.
   fishing: {
     rodPrice: 150,
     cast: [70, 240], // how far out the float lands (from you, toward the mouse), if there's water there
     biteSec: [4, 12], // waiting for a bite
-    cycleSec: 1.8,
-    tiredShare: 0.28,
-    pulls: 3,
-    giveUpSec: 9, // no pull for this long and it swims off
-    slackSec: 0.35, // allowance for lag when judging a pull (what the player saw vs. the server's clock)
+    hookBiteSec: [1, 3], // a hooked player: this long till the moment to pull
+    showSec: 0.5, // the fish is there to be pulled for this long
+    slackSec: 0.5, // allowance for lag when judging a pull (what the player saw vs. the server's clock)
     lineReach: 40, // walk further than this from where you cast and the line comes in
     hookBreak: 160, // a hooked player who walks this far from where they were hooked snaps the line
     fishChance: 0.8, // otherwise something else is on the hook:
@@ -925,5 +923,40 @@ export const config = Object.freeze({
     // A hitman drives his own car, parks in range and snipes: he lines up each shot for aimSec (a red
     // laser shows), likes to be range[0]–range[1] away, and drives again when you're past driveFrom.
     hitman: { name: 'Hitman', fee: 6000, contractSec: 600, refundShare: 0.5, max: 1, weapon: 'sniper', car: 'sedan', range: [450, 1150], aimSec: 1.1, spread: 0.02, driveFrom: 1600 },
+  },
+  // Katya, your sister (src/game/sister.js): locked in the oil hall's last cell till you open it (stand within
+  // freeReach of its door, open); she runs out to you (runSpeed), hugs you hugSec, then follows followGap behind
+  // (at least walkSpeed; she catches straight up past lostRange). At home she ambles (homeSpeed) from spot to
+  // spot, stopping homeWait seconds at each.
+  sister: { freeReach: 220, runSpeed: 320, walkSpeed: 160, hugSec: 4, lostRange: 700, followGap: 60, homeSpeed: 70, homeWait: [2, 6], radius: 16 },
+  // The tutorial (src/game/tutorial.js): a third world, only for new accounts — a log cabin in a snowed-in
+  // forest, the lake out back, a long winding gravel driveway. Half the underground's area, but long
+  // (width × height). Always winter, always morning, a little snow falling. It runs while a newcomer's in
+  // it and stops idleSec after the last one leaves. Each player's story (their sister Katya, the black car,
+  // the fire) is theirs alone. You start with startCash (Katya lifts it while you fish); the black car
+  // starts blackLead ahead of you on the driveway and comes at blackSpeed; in the chase it keeps about
+  // chaseGap ahead of your car (chaseSpeed: [when you're right behind, normally, when you've fallen back]).
+  // Black ice halfway across the map (at crashX) puts you into a tree; you wake in the gulag owing quota
+  // coal, and lyoshaSec later your father's old friend Lyosha bribes you out, drives you to your starter
+  // house and gives you lyoshaCash.
+  tutorial: {
+    width: 18000,
+    height: 5000,
+    idleSec: 60,
+    startCash: 50,
+    katyaSpeed: 170,
+    beatSec: 3.5, // a pause between one thing in the story and the next (time to look round)
+    talkReach: 150, // close enough to Katya for her to hand you something
+    blackLead: 1900,
+    blackSpeed: 430,
+    chaseGap: 750,
+    chaseSpeed: [520, 330, 140],
+    crashX: 9000,
+    crashSec: 2.4, // sliding into the tree, then the screen goes black…
+    blackoutSec: 3.5, // …for this long before you wake up in the gulag
+    quota: 2000,
+    bail: 1000000, // (nobody's paying that: Lyosha bribes the warden instead)
+    lyoshaSec: 120,
+    lyoshaCash: 500,
   },
 });
