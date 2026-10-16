@@ -7,7 +7,7 @@ import { config } from '../config.js';
 // starter house, where she tells you how poor you are — wandering round inside, for everyone to see.
 // Nothing can hurt her.
 
-const STATES = { run: 0, hug: 1, follow: 2, cell: 3 };
+const STATES = { run: 0, hug: 1, follow: 2, cell: 3, leave: 4 };
 const HOME_TYPES_NOT = new Set(['garage', 'garages']); // (nobody lives in a garage)
 
 export class Sisters {
@@ -59,6 +59,16 @@ export class Sisters {
           s.angle = Math.atan2(p.y - s.y, p.x - s.x);
           if (d > p.radius + 30) this.#walk(s, p.x, p.y, c.runSpeed * dt, p.radius + 22);
           if (s.t > c.hugSec) Object.assign(s, { state: 'follow', t: 0 });
+        } else if (s.state === 'leave') { // off up the ladder ahead of you, and home
+          this.#walk(s, s.ladder.x, s.ladder.y, c.runSpeed * dt, 0);
+          if (Math.hypot(s.ladder.x - s.x, s.ladder.y - s.y) < 20 || s.t > 6) {
+            p.sis = null;
+            this.events.push({ player: p, kind: 'sister_home' });
+          }
+        } else if (s.state === 'follow' && this.world.underground?.ladderNear(p, c.ladderReach)) { // you're at a ladder: she says she'll see you at home, and goes up first
+          s.ladder = this.world.underground.ladderNear(p, c.ladderReach);
+          Object.assign(s, { state: 'leave', t: 0 });
+          this.events.push({ player: p, kind: 'sister_leaving' });
         } else if (d > c.lostRange) Object.assign(s, { x: p.x - Math.cos(p.input.aim ?? 0) * 60, y: p.y - Math.sin(p.input.aim ?? 0) * 60 }); // (fell behind: she catches up)
         else this.#walk(s, p.x, p.y, Math.min(c.runSpeed, Math.max(c.walkSpeed, d * 2)) * dt, c.followGap);
       }
@@ -110,7 +120,7 @@ export class Sisters {
     return Math.hypot(s.x - was.x, s.y - was.y) < go * 0.1;
   }
 
-  /** My sister, as only I see her: [state (0 running to me, 1 hugging me, 2 following, 3 in her cell), x, y, angle], or 0. */
+  /** My sister, as only I see her: [state (0 running to me, 1 hugging me, 2 following, 3 in her cell, 4 off up a ladder), x, y, angle], or 0. */
   view(p) {
     const r = (n) => Math.round(n * 10) / 10;
     if (p.sis) return [STATES[p.sis.state], r(p.sis.x), r(p.sis.y), Math.round(p.sis.angle * 100) / 100];

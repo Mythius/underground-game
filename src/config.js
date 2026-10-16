@@ -928,7 +928,8 @@ export const config = Object.freeze({
   // freeReach of its door, open); she runs out to you (runSpeed), hugs you hugSec, then follows followGap behind
   // (at least walkSpeed; she catches straight up past lostRange). At home she ambles (homeSpeed) from spot to
   // spot, stopping homeWait seconds at each.
-  sister: { freeReach: 220, runSpeed: 320, walkSpeed: 160, hugSec: 4, lostRange: 700, followGap: 60, homeSpeed: 70, homeWait: [2, 6], radius: 16 },
+  // Walk up to a ladder with her in tow (within ladderReach) and she goes up it ahead of you, home.
+  sister: { ladderReach: 220, freeReach: 220, runSpeed: 320, walkSpeed: 160, hugSec: 4, lostRange: 700, followGap: 60, homeSpeed: 70, homeWait: [2, 6], radius: 16 },
   // The tutorial (src/game/tutorial.js): a third world, only for new accounts — a log cabin in a snowed-in
   // forest, the lake out back, a long winding gravel driveway. Half the underground's area, but long
   // (width × height). Always winter, always morning, a little snow falling. It runs while a newcomer's in

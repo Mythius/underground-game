@@ -39,6 +39,17 @@ test("Katya's in the oil hall's last cell (only her sibling sees her); open it a
   p.x += 300;
   for (let t = 0; t < 4; t += 1 / 30) world.step(1 / 30);
   assert.ok(Math.hypot(p.x - p.sis.x, p.y - p.sis.y) < 200, 'she keeps up');
+  // At a ladder: she says she'll see you at home, and goes up it first.
+  const ladder = world.underground.layout.ladders.find((l) => !l.vent);
+  Object.assign(p, { x: ladder.x + 60, y: ladder.y });
+  Object.assign(p.sis, { x: ladder.x + 120, y: ladder.y });
+  world.step(1 / 30);
+  assert.equal(p.sis.state, 'leave');
+  assert.ok(s.events.some((e) => e.kind === 'sister_leaving'));
+  for (let t = 0; t < 7 && p.sis; t += 1 / 30) world.step(1 / 30);
+  assert.equal(p.sis, null, 'gone up ahead of you');
+  assert.ok(s.events.some((e) => e.kind === 'sister_home'));
+  assert.equal(s.view(p), 0, 'and not back in the cell');
   const other = world.spawnPlayer('olga', null, null);
   other.account = { id: 6, name: 'olga', bank: 0, guest: false, sisterFree: false };
   assert.equal(s.view(other)[0], 3, 'everyone else still has their own Katya in there');

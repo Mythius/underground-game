@@ -1151,7 +1151,8 @@
           }
           if (msg.kind === 'released') toast('🔓 Released — keep your nose clean');
           if (msg.kind === 'sister_freed') { sfx('doorOpen'); toast('🔓 KATYA! She\'s alive — she\'s running to you!', 5000); }
-          if (msg.kind === 'sister_hug') { sfx('furnish'); toast('😭 Katya throws her arms round you, sobbing. Then she follows you — she\'ll make her way home to your house.', 6000); }
+          if (msg.kind === 'sister_home') toast('🪜 Katya climbs up the ladder ahead of you — she\'ll be waiting at your place.', 5000);
+          if (msg.kind === 'sister_hug') { sfx('furnish'); toast('😭 Katya throws her arms round you, sobbing. Get her to a ladder and she\'ll head home to your place.', 6000); }
           if (msg.kind === 'prison_out' && msg.how === 'lyosha') { sfx('doorOpen'); lyoshaCard(); } // (the newcomer's way out)
           else if (msg.kind === 'prison_out') { sfx('doorOpen'); toast(msg.how === 'served' ? '🔓 Quota met — the warden hands your things back. Free to go.' : msg.by ? `🔓 ${msg.by} paid your bail — the warden hands your things back. Free to go.` : '🔓 Bail paid — the warden hands your things back. Free to go.', 5000); }
           if (msg.kind === 'cat_fed') { sfx('meow'); sfx('eat', null, 0.5); toast('🐟 The cat wolfs it down — it\'s taken a liking to you (E: pick it up · P: pet)'); }
@@ -12529,6 +12530,7 @@
             return null;
           }
           if (state === 1) { if (t > (s.cry ?? 0)) { s.cry = t + SAY_SEC + 0.3; return { text: pick(SPEECH.sisterFree ?? ['…']), urgent: true }; } return null; }
+          if (state === 4) { if (!s.left) { s.left = true; return { text: pick(SPEECH.sisterLeave ?? ['See you at home!']), urgent: true }; } return null; }
           if (state === 2) { s.next ??= t + 8; if (t > s.next) { s.next = t + 16 + Math.random() * 14; return { text: pick(SPEECH.sisterFollow ?? ['…']) }; } }
           return null;
         });
